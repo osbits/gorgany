@@ -1,16 +1,16 @@
 package provider
 
 import (
-	"graecoFramework"
 	"graecoFramework/command"
 	"graecoFramework/db"
+	"graecoFramework/http"
 	"log"
 )
 
 var FrameworkRegistrar *Registrar
 
 type Registrar struct {
-	controllers graecoFramework.Controllers
+	controllers http.Controllers
 	providers   IProviders
 	dbConfigs   map[db.Type]map[string]any // dbConfigs = { "postgres": {"host": "localhost", "port": "5432"...}, "mongo": {"host": "localhost"}
 	commands    command.ICommands
@@ -18,17 +18,17 @@ type Registrar struct {
 
 func InitRegistrar() {
 	FrameworkRegistrar = &Registrar{
-		controllers: make(graecoFramework.Controllers, 0),
+		controllers: make(http.Controllers, 0),
 		providers:   make(IProviders, 0),
 		dbConfigs:   make(map[db.Type]map[string]any, 0),
 	}
 }
 
-func (thiz *Registrar) RegisterController(controller graecoFramework.IController) {
+func (thiz *Registrar) RegisterController(controller http.IController) {
 	thiz.controllers = append(thiz.controllers, controller)
 }
 
-func (thiz *Registrar) GetControllers() graecoFramework.Controllers {
+func (thiz *Registrar) GetControllers() http.Controllers {
 	return thiz.controllers
 }
 
