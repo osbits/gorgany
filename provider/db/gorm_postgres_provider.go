@@ -1,0 +1,33 @@
+package db
+
+import (
+	"fmt"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	db2 "graecoFramework/db"
+	"graecoFramework/provider"
+)
+
+type GormPostgresProvider struct {
+}
+
+func NewGormPostgresProvider() *GormPostgresProvider {
+	return &GormPostgresProvider{}
+}
+
+func (thiz GormPostgresProvider) InitProvider() {
+	dataSource := thiz.GetDataSource()
+	fmt.Println(dataSource)
+	db, err := gorm.Open(postgres.Open(dataSource), &gorm.Config{})
+	if err != nil {
+		panic(err)
+	}
+
+	db2.Gorm = db
+}
+
+func (thiz GormPostgresProvider) GetDataSource() string {
+	config := provider.FrameworkRegistrar.GetDbConfig(db2.PostgreSQL)
+	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
+		config["Host"].(string), config["Port"].(int), config["Username"].(string), config["Password"].(string), config["DBName"].(string), config["SSLMode"].(string))
+}
