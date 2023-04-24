@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+var ServerTimezone *time.Location
+
 type App struct {
 	httpServer *http.Server
 }
