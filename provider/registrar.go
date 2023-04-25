@@ -10,10 +10,11 @@ import (
 var FrameworkRegistrar *Registrar
 
 type Registrar struct {
-	controllers http.Controllers
-	providers   IProviders
-	dbConfigs   map[db.Type]map[string]any // dbConfigs = { "postgres": {"host": "localhost", "port": "5432"...}, "mongo": {"host": "localhost"}
-	commands    command.ICommands
+	controllers     http.Controllers
+	providers       IProviders
+	dbConfigs       map[db.Type]map[string]any // dbConfigs = { "postgres": {"host": "localhost", "port": "5432"...}, "mongo": {"host": "localhost"}
+	commands        command.ICommands
+	sessionLifetime int //in seconds
 }
 
 func InitRegistrar() {
@@ -59,4 +60,15 @@ func (thiz *Registrar) RegisterCommand(command command.ICommand) {
 
 func (thiz *Registrar) GetCommands() command.ICommands {
 	return thiz.commands
+}
+
+func (thiz *Registrar) SetSessionLifetime(lifetime int) {
+	thiz.sessionLifetime = lifetime
+}
+
+func (thiz *Registrar) GetSessionLifetime() int {
+	if thiz.sessionLifetime == 0 {
+		return 3600
+	}
+	return thiz.sessionLifetime
 }

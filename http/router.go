@@ -18,7 +18,8 @@ func GetRouter() *chi.Mux {
 }
 
 type RouteConfig struct {
-	Path    string
-	Method  Method
-	Handler HandlerFunc
+	Path        string
+	Method      Method
+	Handler     HandlerFunc
+	Middlewares []IMiddleware
 }

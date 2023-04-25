@@ -6,9 +6,12 @@ import (
 	"net/http"
 )
 
+type IMiddleware interface {
+	Handle(handlerFunc HandlerFunc) HandlerFunc
+}
 type HandlerFunc func(message Message)
 
-func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc) {
+func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc, middlewares []IMiddleware) {
 	message := Message{
 		writer:  w,
 		request: r,
@@ -20,7 +23,17 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc) {
 		}
 	}()
 
-	handler(message)
+	if len(middlewares) == 0 {
+		handler(message)
+		return
+	}
+
+	h := middlewares[len(middlewares)-1].Handle(handler)
+
+	for i := len(middlewares) - 2; i >= 0; i-- {
+		h = middlewares[i].Handle(h)
+	}
+	h(message)
 }
 
 func Catch(err any, message Message) {

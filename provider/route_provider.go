@@ -29,25 +29,26 @@ func (thiz RouteProvider) initRoutes() {
 		routesConfig := c.GetRoutes()
 		for _, routeConfig := range routesConfig {
 			handler := routeConfig.Handler
+			thiz.router.With()
 			switch routeConfig.Method {
 			case http.GET:
 				thiz.router.Get(routeConfig.Path, func(w http2.ResponseWriter, r *http2.Request) {
-					http.Dispatch(w, r, handler)
+					http.Dispatch(w, r, handler, routeConfig.Middlewares)
 				})
 				break
 			case http.PUT:
 				thiz.router.Put(routeConfig.Path, func(w http2.ResponseWriter, r *http2.Request) {
-					http.Dispatch(w, r, handler)
+					http.Dispatch(w, r, handler, routeConfig.Middlewares)
 				})
 				break
 			case http.DELETE:
 				thiz.router.Delete(routeConfig.Path, func(w http2.ResponseWriter, r *http2.Request) {
-					http.Dispatch(w, r, handler)
+					http.Dispatch(w, r, handler, routeConfig.Middlewares)
 				})
 				break
 			case http.POST:
 				thiz.router.Post(routeConfig.Path, func(w http2.ResponseWriter, r *http2.Request) {
-					http.Dispatch(w, r, handler)
+					http.Dispatch(w, r, handler, routeConfig.Middlewares)
 				})
 				break
 			default:

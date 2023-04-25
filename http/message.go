@@ -3,6 +3,7 @@ package http
 import (
 	"fmt"
 	"github.com/go-chi/chi"
+	"graecoFramework/auth"
 	"graecoFramework/provider/view"
 	"graecoFramework/util"
 	"io"
@@ -14,6 +15,7 @@ import (
 )
 
 const OneTimeParamsCookieName = "oneTimeParams"
+const SessionCookieName = "sessionToken"
 
 type Message struct {
 	writer  http.ResponseWriter
@@ -52,11 +54,18 @@ func (thiz Message) GetHeader() http.Header {
 	return thiz.request.Header
 }
 
-func (thiz Message) GetCookies() []*http.Cookie {
-	return thiz.request.Cookies()
+func (thiz Message) GetCookie(key string) (*http.Cookie, error) {
+	cookie, err := thiz.request.Cookie(key)
+	if err != nil {
+		return nil, err
+	}
+	return cookie, nil
 }
 
 func (thiz Message) Render(template string, options map[string]any) {
+	if options == nil {
+		options = make(map[string]any)
+	}
 	oneTimeParams := thiz.OneTimeParams()
 	for key, values := range oneTimeParams {
 		options[key] = values
@@ -134,6 +143,10 @@ func (thiz Message) RedirectWithParams(url string, redirectCode int, params map[
 	http.Redirect(thiz.writer, thiz.request, url, redirectCode)
 }
 
+func (thiz Message) Redirect(url string, redirectCode int) {
+	http.Redirect(thiz.writer, thiz.request, url, redirectCode)
+}
+
 func (thiz Message) OneTimeParams() map[string][]string {
 	oneTimeParams := url2.Values{}
 
@@ -163,4 +176,36 @@ func (thiz Message) GetOneTimeParam(key string) string {
 
 func (thiz Message) ClearOneTimeParams() {
 	thiz.SetCookie(OneTimeParamsCookieName, "", 10)
+}
+
+func (thiz Message) Login(user auth.Authenticable) {
+	sessionStorage := auth.GetSessionStorage()
+	sessionToken, expiresAt, err := sessionStorage.NewSession(user)
+	if err != nil {
+		panic(err) //todo
+	}
+	thiz.SetCookie(SessionCookieName, sessionToken, int(expiresAt.Sub(time.Now()).Seconds()))
+}
+
+func (thiz Message) Logout() {
+	sessionStorage := auth.GetSessionStorage()
+	sessionCookie, err := thiz.request.Cookie(SessionCookieName)
+	if err != nil {
+		return
+	}
+	sessionToken := sessionCookie.Value
+	sessionStorage.Logout(sessionToken)
+	thiz.SetCookie(SessionCookieName, "", 10)
+}
+
+func (thiz Message) IsLoggedIn() bool {
+	sessionStorage := auth.GetSessionStorage()
+
+	sessionCookie, err := thiz.request.Cookie(SessionCookieName)
+	if err != nil {
+		return false
+	}
+
+	sessionToken := sessionCookie.Value
+	return sessionStorage.IsLoggedIn(sessionToken)
 }
