@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"graecoFramework/auth/service"
 	"graecoFramework/command"
 	"graecoFramework/db"
 	"graecoFramework/http"
@@ -15,6 +16,7 @@ type Registrar struct {
 	dbConfigs       map[db.Type]map[string]any // dbConfigs = { "postgres": {"host": "localhost", "port": "5432"...}, "mongo": {"host": "localhost"}
 	commands        command.ICommands
 	sessionLifetime int //in seconds
+	userService     service.IUserService
 }
 
 func InitRegistrar() {
@@ -71,4 +73,12 @@ func (thiz *Registrar) GetSessionLifetime() int {
 		return 3600
 	}
 	return thiz.sessionLifetime
+}
+
+func (thiz *Registrar) SetUserService(service service.IUserService) {
+	thiz.userService = service
+}
+
+func (thiz *Registrar) GetUserService() service.IUserService {
+	return thiz.userService
 }

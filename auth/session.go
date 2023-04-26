@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/google/uuid"
+	"graecoFramework/auth/service"
+	"net/http"
 	"time"
 )
 
@@ -31,17 +33,11 @@ func initSessionClear() {
 	}()
 }
 
-// interfaces
-type Authenticable interface {
-	GetUsername() string
-	GetPassword() string
-}
-
 type ISessionStorage interface {
-	NewSession(user Authenticable) (string, time.Time, error)
+	NewSession(user service.Authenticable) (string, time.Time, error)
 	IsLoggedIn(sessionToken string) bool
 	Logout(sessionToken string)
-	CurrentUser()
+	CurrentUser(ctx context.Context) (service.Authenticable, error)
 	ClearExpiredSessions()
 }
 
@@ -65,7 +61,7 @@ func NewMemorySession() *MemorySession {
 }
 
 // NewSession returns generated session token
-func (thiz *MemorySession) NewSession(user Authenticable) (string, time.Time, error) {
+func (thiz *MemorySession) NewSession(user service.Authenticable) (string, time.Time, error) {
 	uid := uuid.NewString()
 	now := time.Now()
 
@@ -113,24 +109,23 @@ func (thiz *MemorySession) ClearExpiredSessions() {
 	}
 }
 
-func (thiz *MemorySession) CurrentUser(ctx context.Context) Authenticable {
-	//message := ctx.Value("httpMessage").(*http.Message)
-	//cookie, err := message.GetCookie(http.SessionCookieName)
-	//if err != nil {
-	//	return nil
-	//}
-	//sessionToken := cookie.Value
-	//session, ok := thiz.sessions[sessionToken]
-	//if !ok {
-	//	return nil
-	//}
-	//
-	//if session.isExpired() {
-	//	return nil
-	//}
-	//
-	//session.username
-	panic("implement me")
+func (thiz *MemorySession) CurrentUser(ctx context.Context) (service.Authenticable, error) {
+	request := ctx.Value("request").(*http.Request)
+	cookie, err := request.Cookie("sessionToken")
+	if err != nil {
+		return nil, nil
+	}
+	sessionToken := cookie.Value
+	session, ok := thiz.sessions[sessionToken]
+	if !ok {
+		return nil, nil
+	}
+
+	if session.isExpired() {
+		return nil, nil
+	}
+
+	return service.GetAuthEntityService().GetByUsername(session.username)
 }
 
 // DbSession, not implemented yet

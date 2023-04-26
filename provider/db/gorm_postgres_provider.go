@@ -23,7 +23,7 @@ func (thiz GormPostgresProvider) InitProvider() {
 		panic(err)
 	}
 
-	db2.Gorm = db
+	db2.SetDbInstance("gorm", db2.GormWrapper{Gorm: db})
 }
 
 func (thiz GormPostgresProvider) GetDataSource() string {

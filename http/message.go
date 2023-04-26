@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/go-chi/chi"
 	"graecoFramework/auth"
+	"graecoFramework/auth/service"
 	"graecoFramework/provider/view"
 	"graecoFramework/util"
 	"io"
@@ -70,6 +71,11 @@ func (thiz Message) Render(template string, options map[string]any) {
 	for key, values := range oneTimeParams {
 		options[key] = values
 	}
+
+	//ctx := context.WithValue(thiz.request.Context(), "request", thiz.request)
+	//authUser, _ := auth.GetSessionStorage().CurrentUser(ctx)
+
+	options["currentAuthUser"] = nil //Authenticable instance, access only to username and password
 
 	err := view.Engine.Render(thiz.writer, template, options)
 	if err != nil {
@@ -178,7 +184,7 @@ func (thiz Message) ClearOneTimeParams() {
 	thiz.SetCookie(OneTimeParamsCookieName, "", 10)
 }
 
-func (thiz Message) Login(user auth.Authenticable) {
+func (thiz Message) Login(user service.Authenticable) {
 	sessionStorage := auth.GetSessionStorage()
 	sessionToken, expiresAt, err := sessionStorage.NewSession(user)
 	if err != nil {
