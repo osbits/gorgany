@@ -5,17 +5,17 @@ import (
 	"gorm.io/gorm"
 )
 
-var dbInstance map[string]IDbWrapper
+var wrappers map[string]IDbWrapper
 
 func SetDbInstance(name string, db IDbWrapper) {
-	if dbInstance == nil {
-		dbInstance = make(map[string]IDbWrapper)
+	if wrappers == nil {
+		wrappers = make(map[string]IDbWrapper)
 	}
-	dbInstance[name] = db
+	wrappers[name] = db
 }
 
-func GetDbInstance(name string) IDbWrapper {
-	return dbInstance[name]
+func GetWrapper(name string) IDbWrapper {
+	return wrappers[name]
 }
 
 type IDbWrapper interface {

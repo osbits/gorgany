@@ -6,6 +6,7 @@ import (
 	"graecoFramework/util"
 	template2 "html/template"
 	"io"
+	"os"
 	"path"
 )
 
@@ -28,6 +29,7 @@ func (thiz *AmberEngine) Render(output io.Writer, templateName string, opts map[
 		opts = make(map[string]any)
 	}
 	opts = thiz.registerFunctions(opts)
+	opts = thiz.registerDefaultOptions(opts)
 
 	templatePath := path.Join(thiz.viewDir, fmt.Sprintf("%s.%s", templateName, thiz.ext))
 	err := compiler.ParseFile(templatePath)
@@ -53,6 +55,17 @@ func (thiz *AmberEngine) registerFunctions(opts map[string]any) map[string]any {
 		"InArray": util.InArray,
 		"Pluck":   util.Pluck,
 	}
+
+	return opts
+}
+
+func (thiz *AmberEngine) registerDefaultOptions(opts map[string]any) map[string]any {
+	appName := os.Getenv("APP_NAME")
+	if appName == "" {
+		appName = "Gograeco"
+	}
+
+	opts["AppName"] = appName
 
 	return opts
 }

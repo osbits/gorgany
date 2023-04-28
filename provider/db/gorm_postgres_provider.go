@@ -17,7 +17,6 @@ func NewGormPostgresProvider() *GormPostgresProvider {
 
 func (thiz GormPostgresProvider) InitProvider() {
 	dataSource := thiz.GetDataSource()
-	fmt.Println(dataSource)
 	db, err := gorm.Open(postgres.Open(dataSource), &gorm.Config{})
 	if err != nil {
 		panic(err)

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"fmt"
 	"github.com/go-chi/chi"
 	"graecoFramework/auth"
@@ -72,10 +73,7 @@ func (thiz Message) Render(template string, options map[string]any) {
 		options[key] = values
 	}
 
-	//ctx := context.WithValue(thiz.request.Context(), "request", thiz.request)
-	//authUser, _ := auth.GetSessionStorage().CurrentUser(ctx)
-
-	options["currentAuthUser"] = nil //Authenticable instance, access only to username and password
+	options = thiz.addOptionsToView(options)
 
 	err := view.Engine.Render(thiz.writer, template, options)
 	if err != nil {
@@ -214,4 +212,13 @@ func (thiz Message) IsLoggedIn() bool {
 
 	sessionToken := sessionCookie.Value
 	return sessionStorage.IsLoggedIn(sessionToken)
+}
+
+func (thiz Message) addOptionsToView(options map[string]any) map[string]any {
+	ctx := context.WithValue(thiz.request.Context(), "request", thiz.request)
+	authUser, _ := auth.GetSessionStorage().CurrentUser(ctx)
+
+	options["currentAuthUser"] = authUser //Authenticable instance, access only to username and password
+
+	return options
 }
