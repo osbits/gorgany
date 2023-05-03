@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"github.com/go-chi/chi"
 	"graecoFramework/auth"
-	"graecoFramework/auth/service"
+	"graecoFramework/model"
 	"graecoFramework/provider/view"
 	"graecoFramework/util"
 	"io"
@@ -182,7 +182,7 @@ func (thiz Message) ClearOneTimeParams() {
 	thiz.SetCookie(OneTimeParamsCookieName, "", 10)
 }
 
-func (thiz Message) Login(user service.Authenticable) {
+func (thiz Message) Login(user model.Authenticable) {
 	sessionStorage := auth.GetSessionStorage()
 	sessionToken, expiresAt, err := sessionStorage.NewSession(user)
 	if err != nil {
@@ -214,11 +214,16 @@ func (thiz Message) IsLoggedIn() bool {
 	return sessionStorage.IsLoggedIn(sessionToken)
 }
 
-func (thiz Message) addOptionsToView(options map[string]any) map[string]any {
+func (thiz Message) CurrentUser() (model.Authenticable, error) {
 	ctx := context.WithValue(thiz.request.Context(), "request", thiz.request)
-	authUser, _ := auth.GetSessionStorage().CurrentUser(ctx)
+	authUser, err := auth.GetSessionStorage().CurrentUser(ctx)
+	return authUser, err
+}
 
-	options["currentAuthUser"] = authUser //Authenticable instance, access only to username and password
+func (thiz Message) addOptionsToView(options map[string]any) map[string]any {
+	authUser, _ := thiz.CurrentUser()
+
+	options["currentAuthUser"] = authUser
 
 	return options
 }

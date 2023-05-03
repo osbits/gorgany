@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/google/uuid"
 	"graecoFramework/auth/service"
+	"graecoFramework/model"
 	"net/http"
 	"time"
 )
@@ -34,10 +35,10 @@ func initSessionClear() {
 }
 
 type ISessionStorage interface {
-	NewSession(user service.Authenticable) (string, time.Time, error)
+	NewSession(user model.Authenticable) (string, time.Time, error)
 	IsLoggedIn(sessionToken string) bool
 	Logout(sessionToken string)
-	CurrentUser(ctx context.Context) (service.Authenticable, error)
+	CurrentUser(ctx context.Context) (model.Authenticable, error)
 	ClearExpiredSessions()
 }
 
@@ -61,7 +62,7 @@ func NewMemorySession() *MemorySession {
 }
 
 // NewSession returns generated session token
-func (thiz *MemorySession) NewSession(user service.Authenticable) (string, time.Time, error) {
+func (thiz *MemorySession) NewSession(user model.Authenticable) (string, time.Time, error) {
 	uid := uuid.NewString()
 	now := time.Now()
 
@@ -109,7 +110,7 @@ func (thiz *MemorySession) ClearExpiredSessions() {
 	}
 }
 
-func (thiz *MemorySession) CurrentUser(ctx context.Context) (service.Authenticable, error) {
+func (thiz *MemorySession) CurrentUser(ctx context.Context) (model.Authenticable, error) {
 	request := ctx.Value("request").(*http.Request)
 	cookie, err := request.Cookie("sessionToken")
 	if err != nil {

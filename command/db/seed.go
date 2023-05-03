@@ -35,10 +35,10 @@ func (thiz SeedCommand) Execute() {
 
 	total := 0
 	for _, seeder := range seeders {
-		var seederDomain *db.Seeder
+		var seederDomain db.Seeder
 		gormInstance.First(&seederDomain, "name = ?", seeder.Name())
 
-		if seederDomain != nil {
+		if thiz.isSeederExists(seederDomain) {
 			continue
 		}
 
@@ -64,4 +64,8 @@ func (thiz SeedCommand) Execute() {
 
 func (thiz SeedCommand) GetSignature() string {
 	return "db:seed"
+}
+
+func (thiz SeedCommand) isSeederExists(seeder db.Seeder) bool {
+	return !seeder.Date.IsZero() && seeder.Name != ""
 }

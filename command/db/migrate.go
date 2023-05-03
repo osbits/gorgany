@@ -1,7 +1,6 @@
 package db
 
 import (
-	"database/sql/driver"
 	"fmt"
 	"gorm.io/gorm"
 	"graecoFramework/db"
@@ -9,7 +8,7 @@ import (
 	"time"
 )
 
-type MigrationClosure func(tx driver.Tx) error
+type MigrationClosure func(db *gorm.DB) error
 
 type Migration interface {
 	Up() MigrationClosure
@@ -38,10 +37,10 @@ const (
 )
 
 func (thiz MigrateCommand) Execute() {
-	migrationKind := MigrationType(os.Args[2])
 	if len(os.Args) < 3 {
 		panic("Use 'cli db:migrate up' or 'cli db:migrate down'")
 	}
+	migrationKind := MigrationType(os.Args[2])
 
 	switch migrationKind {
 	case Up:
@@ -60,44 +59,30 @@ func (thiz MigrateCommand) GetSignature() string {
 
 func (thiz MigrateCommand) up() {
 	gormInstance := db.GetWrapper("gorm").GetInstance().(*gorm.DB)
-	dbInstance, err := gormInstance.DB()
-	if err != nil {
-		panic(err)
-	}
 
-	err = gormInstance.AutoMigrate(&db.Migration{})
+	err := gormInstance.AutoMigrate(&db.Migration{})
 	if err != nil {
 		panic("Unable to migrate table `migrations`")
 	}
 
 	for _, migration := range migrations {
-		var migrationDomain *db.Migration
+		var migrationDomain db.Migration
 		gormInstance.First(&migrationDomain, "name = ?", migration.Name())
-
-		if migrationDomain != nil {
+		if thiz.isMigrationExists(migrationDomain) {
 			continue
 		}
+		fmt.Println("next")
 
 		fmt.Printf("Migration %s is executing\n", migration.Name())
-		tx, err := dbInstance.Begin()
-		if err != nil {
-			panic("Unable to start transaction. " + err.Error())
-		}
+		tx := gormInstance.Begin()
 
 		closure := migration.Up()
-		err = closure(tx)
+		err = closure(gormInstance)
 		if err != nil {
-			txErr := tx.Rollback()
-			if txErr != nil {
-				panic("Unable to rollback transaction. " + txErr.Error())
-			}
-			panic(err)
+			tx.Rollback()
 		}
 
-		err = tx.Commit()
-		if err != nil {
-			panic("Unable to commit transaction. " + err.Error())
-		}
+		tx.Commit()
 
 		gormInstance.Create(&db.Migration{
 			Name: migration.Name(),
@@ -111,4 +96,8 @@ func (thiz MigrateCommand) up() {
 
 func (thiz MigrateCommand) down() {
 
+}
+
+func (thiz MigrateCommand) isMigrationExists(migration db.Migration) bool {
+	return !migration.Date.IsZero() && migration.Name != ""
 }

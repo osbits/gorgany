@@ -1,14 +1,11 @@
 package service
 
-type Authenticable interface {
-	GetUsername() string
-	GetPassword() string
-}
+import "graecoFramework/model"
 
 type IUserService interface {
-	Get(id uint64) (Authenticable, error)
-	GetByUsername(username string) (Authenticable, error)
-	Save(authEntity Authenticable) error
+	Get(id uint64) (model.Authenticable, error)
+	GetByUsername(username string) (model.Authenticable, error)
+	Save(authEntity model.Authenticable) error
 }
 
 var userService IUserService
