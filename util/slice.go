@@ -54,6 +54,26 @@ func InterfaceSlice(slice interface{}) []interface{} {
 	return ret
 }
 
+func UniqueSlice[T any](slice []T) []T {
+	resSlice := make([]T, 0)
+
+	for _, sliceValue := range slice {
+		isExistsInResSlice := false
+		for _, valueInResSlice := range resSlice {
+			reflectedValue := reflect.ValueOf(sliceValue)
+			reflectedValue2 := reflect.ValueOf(valueInResSlice)
+			if fmt.Sprintf("%v", convertValueToString(reflectedValue2)) == fmt.Sprintf("%v", convertValueToString(reflectedValue)) {
+				isExistsInResSlice = true
+			}
+		}
+		if !isExistsInResSlice {
+			resSlice = append(resSlice, sliceValue)
+		}
+	}
+
+	return resSlice
+}
+
 func convertValueToString(vf reflect.Value) any {
 	switch vf.Kind() {
 	case reflect.String:

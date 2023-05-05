@@ -7,6 +7,7 @@ import (
 	"graecoFramework"
 	"graecoFramework/db"
 	"graecoFramework/model"
+	"graecoFramework/util"
 	"reflect"
 )
 
@@ -50,8 +51,6 @@ func (thiz DynamicAccessService) ResolveFilterAccessCondition(domain any, user m
 				}
 				return &AccessFilterCondition{Field: columnName, Value: dynamicAccess.DomainPropertyValue}, true
 			}
-		} else {
-			//todo
 		}
 	}
 
@@ -61,7 +60,7 @@ func (thiz DynamicAccessService) ResolveFilterAccessCondition(domain any, user m
 	return nil, false
 }
 
-func (thiz DynamicAccessService) ResolveAccessForRecord(record model.DomainExtension, user model.Authenticable, fullAccess bool) bool {
+func (thiz DynamicAccessService) IsAbleToAction(record model.DomainExtension, user model.Authenticable, action graecoFramework.DynamicAccessActionType) bool {
 	reflectedCurrentUserValue := reflect.ValueOf(user.(model.DomainExtension).GetDomain())
 	reflectedDomainType := reflect.TypeOf(record.GetDomain()).Elem()
 
@@ -78,13 +77,8 @@ func (thiz DynamicAccessService) ResolveAccessForRecord(record model.DomainExten
 		if currentUserPropertyValue != dynamicAccess.UserPropertyValue {
 			continue
 		}
-		if fullAccess {
-			if dynamicAccess.DomainProperty == "" {
-				return true
-			}
-			return thiz.isAccessAllowed(record, dynamicAccess.DomainProperty, dynamicAccess.DomainPropertyValue)
-		} else {
-			//todo
+		if action == dynamicAccess.Constraint {
+			return true
 		}
 	}
 
@@ -92,6 +86,82 @@ func (thiz DynamicAccessService) ResolveAccessForRecord(record model.DomainExten
 		return true
 	}
 	return false
+}
+
+func (thiz DynamicAccessService) ResolveAccessForRecord(record model.DomainExtension, user model.Authenticable) bool {
+	reflectedCurrentUserValue := reflect.ValueOf(user.(model.DomainExtension).GetDomain())
+	reflectedDomainType := reflect.TypeOf(record.GetDomain()).Elem()
+
+	domainName := reflectedDomainType.Name()
+
+	gormInstance := db.GetWrapper("gorm").GetInstance().(*gorm.DB)
+
+	dynamicAccesses := make([]*model.DynamicAccess, 0)
+	gormInstance.Find(&dynamicAccesses, "domain_name = ?", domainName)
+
+	for _, dynamicAccess := range dynamicAccesses {
+		reflectedUserProperty := reflectedCurrentUserValue.Elem().FieldByName(dynamicAccess.UserProperty)
+		currentUserPropertyValue := fmt.Sprintf("%v", reflectedUserProperty.Interface())
+		if currentUserPropertyValue != dynamicAccess.UserPropertyValue {
+			continue
+		}
+		if dynamicAccess.DomainProperty == "" {
+			return true
+		}
+		return thiz.isAccessAllowed(record, dynamicAccess.DomainProperty, dynamicAccess.DomainPropertyValue)
+	}
+
+	if len(dynamicAccesses) == 0 {
+		return true
+	}
+	return false
+}
+
+func (thiz DynamicAccessService) ResolveActionsForRecord(record model.DomainExtension, user model.Authenticable) []graecoFramework.DynamicAccessActionType {
+	reflectedCurrentUserValue := reflect.ValueOf(user.(model.DomainExtension).GetDomain())
+	reflectedDomainType := reflect.TypeOf(record.GetDomain()).Elem()
+
+	domainName := reflectedDomainType.Name()
+
+	gormInstance := db.GetWrapper("gorm").GetInstance().(*gorm.DB)
+
+	dynamicAccesses := make([]*model.DynamicAccess, 0)
+	gormInstance.Find(&dynamicAccesses, "domain_name = ?", domainName)
+
+	accessLevels := make([]graecoFramework.DynamicAccessActionType, 0)
+	for _, dynamicAccess := range dynamicAccesses {
+		reflectedUserProperty := reflectedCurrentUserValue.Elem().FieldByName(dynamicAccess.UserProperty)
+		currentUserPropertyValue := fmt.Sprintf("%v", reflectedUserProperty.Interface())
+		if currentUserPropertyValue != dynamicAccess.UserPropertyValue {
+			continue
+		}
+
+		if dynamicAccess.DomainProperty == "" {
+			accessLevels = append(accessLevels, thiz.resolveAccessLevel(dynamicAccess)...)
+		} else if thiz.isAccessAllowed(record, dynamicAccess.DomainProperty, dynamicAccess.DomainPropertyValue) {
+			accessLevels = append(accessLevels, thiz.resolveAccessLevel(dynamicAccess)...)
+		}
+	}
+
+	if len(dynamicAccesses) == 0 {
+		return []graecoFramework.DynamicAccessActionType{graecoFramework.Show, graecoFramework.Edit, graecoFramework.Delete}
+	}
+	if len(accessLevels) > 0 {
+		return util.UniqueSlice[graecoFramework.DynamicAccessActionType](accessLevels)
+	}
+	return []graecoFramework.DynamicAccessActionType{}
+}
+
+func (thiz DynamicAccessService) resolveAccessLevel(dynamicAccess *model.DynamicAccess) []graecoFramework.DynamicAccessActionType {
+	if dynamicAccess.Constraint == graecoFramework.Create {
+		return []graecoFramework.DynamicAccessActionType{graecoFramework.Create}
+	}
+	if dynamicAccess.Constraint == graecoFramework.Delete {
+		return []graecoFramework.DynamicAccessActionType{graecoFramework.Show, graecoFramework.Edit, graecoFramework.Delete}
+	} else if dynamicAccess.Constraint == graecoFramework.Edit {
+		return []graecoFramework.DynamicAccessActionType{graecoFramework.Show, graecoFramework.Edit}
+	}
+	return []graecoFramework.DynamicAccessActionType{graecoFramework.Show}
 }
 
 func (thiz DynamicAccessService) isAccessAllowed(record model.DomainExtension, field string, value string) bool {

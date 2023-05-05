@@ -2,6 +2,7 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"github.com/go-chi/chi"
 	"graecoFramework/auth"
@@ -92,6 +93,22 @@ func (thiz Message) Response(responseBody string, statusCode int) {
 		thiz.writer.WriteHeader(500)
 		panic(fmt.Errorf("Error during response body: %s, %v", responseBody, err))
 	}
+}
+
+func (thiz Message) ResponseJSON(responseBody any, statusCode int) {
+	var respBody string
+	switch responseBody.(type) {
+	case string:
+		respBody = responseBody.(string)
+	default:
+		respBodyBytes, err := json.Marshal(responseBody)
+		if err != nil {
+			panic(err)
+		}
+		respBody = string(respBodyBytes)
+	}
+	thiz.writer.Header().Set("Content-Type", "application/json")
+	thiz.Response(respBody, statusCode)
 }
 
 func (thiz Message) ResponseBytes(responseBody []byte, statusCode int) {
@@ -218,6 +235,29 @@ func (thiz Message) CurrentUser() (model.Authenticable, error) {
 	ctx := context.WithValue(thiz.request.Context(), "request", thiz.request)
 	authUser, err := auth.GetSessionStorage().CurrentUser(ctx)
 	return authUser, err
+}
+
+func (thiz Message) GetBearerToken() string {
+	bearerToken := thiz.GetHeader().Get("Authorization")
+	token := strings.Split(bearerToken, " ")[1]
+	return token
+}
+
+func (thiz Message) GetQueryParam(key string) any {
+	values, err := url2.ParseQuery(thiz.request.URL.RawQuery)
+	if err != nil {
+		return "" //todo log
+	}
+	return values.Get(key)
+}
+
+func (thiz Message) GetBodyParam(key string) any {
+	parsedBody := make(map[string]any)
+	err := json.Unmarshal(thiz.GetBody(), &parsedBody)
+	if err != nil {
+		return "" //todo log
+	}
+	return parsedBody[key]
 }
 
 func (thiz Message) addOptionsToView(options map[string]any) map[string]any {
