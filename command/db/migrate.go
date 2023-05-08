@@ -2,8 +2,8 @@ package db
 
 import (
 	"fmt"
+	"gorgany/db"
 	"gorm.io/gorm"
-	"graecoFramework/db"
 	"os"
 	"time"
 )

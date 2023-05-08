@@ -1,4 +1,4 @@
-module graecoFramework
+module gorgany
 
 go 1.19
 

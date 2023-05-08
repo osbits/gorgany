@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/go-chi/chi"
-	"graecoFramework/auth"
-	"graecoFramework/model"
-	"graecoFramework/provider/view"
-	"graecoFramework/util"
+	"gorgany/auth"
+	"gorgany/model"
+	"gorgany/provider/view"
+	"gorgany/util"
 	"io"
 	"net/http"
 	url2 "net/url"
@@ -126,7 +126,7 @@ func (thiz Message) SetCookie(key string, value string, expiresIn int) {
 		Value:    value,
 		Path:     "/",
 		Expires:  time.Now().Add(time.Duration(expiresIn) * time.Second),
-		Secure:   false,
+		Secure:   true,
 		HttpOnly: true,
 	}
 	http.SetCookie(thiz.writer, cookie)
@@ -239,6 +239,9 @@ func (thiz Message) CurrentUser() (model.Authenticable, error) {
 
 func (thiz Message) GetBearerToken() string {
 	bearerToken := thiz.GetHeader().Get("Authorization")
+	if bearerToken == "" {
+		return ""
+	}
 	token := strings.Split(bearerToken, " ")[1]
 	return token
 }

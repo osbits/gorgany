@@ -1,8 +1,8 @@
 package provider
 
 import (
-	"graecoFramework/auth"
-	"graecoFramework/auth/service"
+	"gorgany/auth"
+	"gorgany/auth/service"
 )
 
 func NewSessionProvider() *SessionProvider {

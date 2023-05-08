@@ -2,12 +2,12 @@ package service
 
 import (
 	"fmt"
+	"gorgany"
+	"gorgany/db"
+	"gorgany/model"
+	"gorgany/util"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
-	"graecoFramework"
-	"graecoFramework/db"
-	"graecoFramework/model"
-	"graecoFramework/util"
 	"reflect"
 )
 
@@ -19,7 +19,7 @@ type AccessFilterCondition struct {
 	Value string
 }
 
-func (thiz DynamicAccessService) ResolveFilterAccessCondition(domain any, user model.Authenticable, actionType graecoFramework.DynamicAccessActionType) (*AccessFilterCondition, bool) {
+func (thiz DynamicAccessService) ResolveFilterAccessCondition(domain any, user model.Authenticable, actionType gorgany.DynamicAccessActionType) (*AccessFilterCondition, bool) {
 	reflectedCurrentUserValue := reflect.ValueOf(user.(model.DomainExtension).GetDomain())
 	reflectedDomainType := reflect.TypeOf(domain)
 
@@ -39,12 +39,12 @@ func (thiz DynamicAccessService) ResolveFilterAccessCondition(domain any, user m
 		if currentUserPropertyValue != dynamicAccess.UserPropertyValue {
 			continue
 		}
-		if dynamicAccess.Constraint == graecoFramework.Edit {
+		if dynamicAccess.Constraint == gorgany.Edit {
 			if dynamicAccess.DomainProperty == "" {
 				return nil, true
 			}
 			return &AccessFilterCondition{Field: columnName, Value: dynamicAccess.DomainPropertyValue}, true
-		} else if dynamicAccess.Constraint == graecoFramework.Show {
+		} else if dynamicAccess.Constraint == gorgany.Show {
 			if dynamicAccess.Constraint == actionType {
 				if dynamicAccess.DomainProperty == "" {
 					return nil, true
@@ -60,7 +60,7 @@ func (thiz DynamicAccessService) ResolveFilterAccessCondition(domain any, user m
 	return nil, false
 }
 
-func (thiz DynamicAccessService) IsAbleToAction(record model.DomainExtension, user model.Authenticable, action graecoFramework.DynamicAccessActionType) bool {
+func (thiz DynamicAccessService) IsAbleToAction(record model.DomainExtension, user model.Authenticable, action gorgany.DynamicAccessActionType) bool {
 	reflectedCurrentUserValue := reflect.ValueOf(user.(model.DomainExtension).GetDomain())
 	reflectedDomainType := reflect.TypeOf(record.GetDomain()).Elem()
 
@@ -117,7 +117,7 @@ func (thiz DynamicAccessService) ResolveAccessForRecord(record model.DomainExten
 	return false
 }
 
-func (thiz DynamicAccessService) ResolveActionsForRecord(record model.DomainExtension, user model.Authenticable) []graecoFramework.DynamicAccessActionType {
+func (thiz DynamicAccessService) ResolveActionsForRecord(record model.DomainExtension, user model.Authenticable) []gorgany.DynamicAccessActionType {
 	reflectedCurrentUserValue := reflect.ValueOf(user.(model.DomainExtension).GetDomain())
 	reflectedDomainType := reflect.TypeOf(record.GetDomain()).Elem()
 
@@ -128,7 +128,7 @@ func (thiz DynamicAccessService) ResolveActionsForRecord(record model.DomainExte
 	dynamicAccesses := make([]*model.DynamicAccess, 0)
 	gormInstance.Find(&dynamicAccesses, "domain_name = ?", domainName)
 
-	accessLevels := make([]graecoFramework.DynamicAccessActionType, 0)
+	accessLevels := make([]gorgany.DynamicAccessActionType, 0)
 	for _, dynamicAccess := range dynamicAccesses {
 		reflectedUserProperty := reflectedCurrentUserValue.Elem().FieldByName(dynamicAccess.UserProperty)
 		currentUserPropertyValue := fmt.Sprintf("%v", reflectedUserProperty.Interface())
@@ -144,24 +144,24 @@ func (thiz DynamicAccessService) ResolveActionsForRecord(record model.DomainExte
 	}
 
 	if len(dynamicAccesses) == 0 {
-		return []graecoFramework.DynamicAccessActionType{graecoFramework.Show, graecoFramework.Edit, graecoFramework.Delete}
+		return []gorgany.DynamicAccessActionType{gorgany.Show, gorgany.Edit, gorgany.Delete}
 	}
 	if len(accessLevels) > 0 {
-		return util.UniqueSlice[graecoFramework.DynamicAccessActionType](accessLevels)
+		return util.UniqueSlice[gorgany.DynamicAccessActionType](accessLevels)
 	}
-	return []graecoFramework.DynamicAccessActionType{}
+	return []gorgany.DynamicAccessActionType{}
 }
 
-func (thiz DynamicAccessService) resolveAccessLevel(dynamicAccess *model.DynamicAccess) []graecoFramework.DynamicAccessActionType {
-	if dynamicAccess.Constraint == graecoFramework.Create {
-		return []graecoFramework.DynamicAccessActionType{graecoFramework.Create}
+func (thiz DynamicAccessService) resolveAccessLevel(dynamicAccess *model.DynamicAccess) []gorgany.DynamicAccessActionType {
+	if dynamicAccess.Constraint == gorgany.Create {
+		return []gorgany.DynamicAccessActionType{gorgany.Create}
 	}
-	if dynamicAccess.Constraint == graecoFramework.Delete {
-		return []graecoFramework.DynamicAccessActionType{graecoFramework.Show, graecoFramework.Edit, graecoFramework.Delete}
-	} else if dynamicAccess.Constraint == graecoFramework.Edit {
-		return []graecoFramework.DynamicAccessActionType{graecoFramework.Show, graecoFramework.Edit}
+	if dynamicAccess.Constraint == gorgany.Delete {
+		return []gorgany.DynamicAccessActionType{gorgany.Show, gorgany.Edit, gorgany.Delete}
+	} else if dynamicAccess.Constraint == gorgany.Edit {
+		return []gorgany.DynamicAccessActionType{gorgany.Show, gorgany.Edit}
 	}
-	return []graecoFramework.DynamicAccessActionType{graecoFramework.Show}
+	return []gorgany.DynamicAccessActionType{gorgany.Show}
 }
 
 func (thiz DynamicAccessService) isAccessAllowed(record model.DomainExtension, field string, value string) bool {

@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/google/uuid"
-	"graecoFramework/auth/service"
-	"graecoFramework/model"
+	"gorgany/auth/service"
+	"gorgany/model"
 	"net/http"
 	"time"
 )

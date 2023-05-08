@@ -1,8 +1,9 @@
 package middleware
 
 import (
-	"graecoFramework/auth/service"
-	"graecoFramework/http"
+	"gorgany/auth/service"
+	"gorgany/http"
+	"gorgany/service/dto"
 )
 
 type JwtMiddleware struct {
@@ -14,12 +15,12 @@ func (thiz JwtMiddleware) Handle(next http.HandlerFunc) http.HandlerFunc {
 
 		token := message.GetBearerToken()
 		if token == "" {
-			message.ResponseJSON("Unauthorized", 401)
+			message.ResponseJSON(dto.WrapPayload(nil, 401, nil), 401)
 			return
 		}
 
 		if !jwtService.ValidateJwt(token) {
-			message.ResponseJSON("Unauthorized", 401)
+			message.ResponseJSON(dto.WrapPayload(nil, 401, nil), 401)
 			return
 		}
 

@@ -1,7 +1,7 @@
 package provider
 
 import (
-	"graecoFramework/command"
+	"gorgany/command"
 )
 
 type CommandProvider struct{}

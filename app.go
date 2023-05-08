@@ -1,4 +1,4 @@
-package graecoFramework
+package gorgany
 
 import (
 	"context"

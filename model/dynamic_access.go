@@ -1,8 +1,6 @@
 package model
 
-import (
-	"graecoFramework"
-)
+import "gorgany"
 
 type DynamicAccess struct {
 	Id int
@@ -17,7 +15,7 @@ type DynamicAccess struct {
 
 	UserPropertyValue string `validate:"required"`
 
-	Constraint graecoFramework.DynamicAccessActionType `validate:"required"`
+	Constraint gorgany.DynamicAccessActionType `validate:"required"`
 
 	//Fields []struct { //todo
 	//	Id              int

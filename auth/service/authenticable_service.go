@@ -1,6 +1,6 @@
 package service
 
-import "graecoFramework/model"
+import "gorgany/model"
 
 type IUserService interface {
 	Get(id uint64) (model.Authenticable, error)

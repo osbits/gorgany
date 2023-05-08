@@ -2,10 +2,10 @@ package db
 
 import (
 	"fmt"
+	db2 "gorgany/db"
+	"gorgany/provider"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
-	db2 "graecoFramework/db"
-	"graecoFramework/provider"
 )
 
 type GormPostgresProvider struct {

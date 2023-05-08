@@ -1,7 +1,7 @@
 package view
 
 import (
-	"graecoFramework/view"
+	"gorgany/view"
 )
 
 var Engine *view.AmberEngine

@@ -2,7 +2,7 @@ package service
 
 import (
 	"github.com/golang-jwt/jwt/v5"
-	"graecoFramework/model"
+	"gorgany/model"
 	"os"
 	"time"
 )

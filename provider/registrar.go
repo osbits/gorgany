@@ -1,10 +1,10 @@
 package provider
 
 import (
-	"graecoFramework/auth/service"
-	"graecoFramework/command"
-	"graecoFramework/db"
-	"graecoFramework/http"
+	"gorgany/auth/service"
+	"gorgany/command"
+	"gorgany/db"
+	"gorgany/http"
 	"log"
 )
 

@@ -2,7 +2,7 @@ package http
 
 import (
 	"fmt"
-	error2 "graecoFramework/error"
+	error2 "gorgany/error"
 	"net/http"
 )
 

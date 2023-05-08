@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"graecoFramework/http"
+	"gorgany/http"
 )
 
 type AuthMiddleware struct {

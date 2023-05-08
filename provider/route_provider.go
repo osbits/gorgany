@@ -2,7 +2,7 @@ package provider
 
 import (
 	"github.com/go-chi/chi"
-	"graecoFramework/http"
+	"gorgany/http"
 	http2 "net/http"
 )
 
