@@ -12,7 +12,3 @@ func (thiz VersionCommand) GetName() string {
 func (thiz VersionCommand) Execute() {
 	fmt.Println("Gograeco version 1.0")
 }
-
-func (thiz VersionCommand) GetSignature() string {
-	return "version"
-}

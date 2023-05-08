@@ -62,10 +62,6 @@ func (thiz SeedCommand) Execute() {
 	fmt.Printf("Seeding finished. Total inserted records: %d\n", total)
 }
 
-func (thiz SeedCommand) GetSignature() string {
-	return "db:seed"
-}
-
 func (thiz SeedCommand) isSeederExists(seeder db.Seeder) bool {
 	return !seeder.Date.IsZero() && seeder.Name != ""
 }

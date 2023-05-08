@@ -53,10 +53,6 @@ func (thiz MigrateCommand) Execute() {
 
 }
 
-func (thiz MigrateCommand) GetSignature() string {
-	return "db:migrate"
-}
-
 func (thiz MigrateCommand) up() {
 	gormInstance := db.GetWrapper("gorm").GetInstance().(*gorm.DB)
 
