@@ -39,7 +39,9 @@ func (thiz JwtService) ParseJwt(token string) (jwt.MapClaims, error) {
 	t, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
 		return []byte(os.Getenv("JWT_SECRET_KEY")), nil
 	})
-
+	if err != nil {
+		return nil, err
+	}
 	return t.Claims.(jwt.MapClaims), err
 }
 
