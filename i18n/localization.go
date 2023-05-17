@@ -2,8 +2,22 @@ package i18n
 
 import (
 	"fmt"
+	"github.com/spf13/viper"
 	"regexp"
 )
+
+func AvailableLocales() []string {
+	enabled := viper.GetBool("i18n.enabled")
+	availableLang := make([]string, 0)
+	if !enabled {
+		return availableLang
+	}
+
+	availableLang = append(availableLang, viper.GetString("i18n.lang.default"))
+	availableLang = append(availableLang, viper.GetStringSlice("i18n.lang.available")...)
+
+	return availableLang
+}
 
 func Translation(code string, opts map[string]any, locale string) string {
 	config := GetManager().GetConfig(locale)

@@ -76,7 +76,7 @@ func (thiz Message) Render(template string, options map[string]any) {
 
 	options = thiz.addOptionsToView(options)
 
-	engineRenderer := view2.NewEngineRenderer(thiz.Context())
+	engineRenderer := view2.NewEngineRenderer(view2.NewRequestWrapper(thiz.request))
 	err := engineRenderer.DoRender(thiz.writer, template, options)
 	if err != nil {
 		panic(fmt.Errorf("Error during render template '%s', %v", template, err))
@@ -264,10 +264,6 @@ func (thiz Message) GetBodyParam(key string) any {
 		return "" //todo log
 	}
 	return parsedBody[key]
-}
-
-func (thiz Message) Context() context.Context {
-	return context.WithValue(context.Background(), "locale", thiz.Locale())
 }
 
 func (thiz Message) Locale() string {

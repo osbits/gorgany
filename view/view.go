@@ -1,11 +1,16 @@
 package view
 
 import (
-	"context"
+	"fmt"
+	"github.com/go-chi/chi"
+	"github.com/spf13/viper"
 	"gorgany/i18n"
 	"gorgany/util"
 	"io"
+	"net/http"
 	"os"
+	"regexp"
+	"strings"
 )
 
 var engine Engine
@@ -18,20 +23,30 @@ func GetEngine() Engine {
 	return engine
 }
 
+// RequestWrapper
+func NewRequestWrapper(request *http.Request) *requestWrapper {
+	return &requestWrapper{request: request}
+}
+
+type requestWrapper struct {
+	request *http.Request
+}
+
+// Engine
 type Engine interface {
 	Render(w io.Writer, templateName string, opts map[string]any) error
 }
 
-func NewEngineRenderer(ctx context.Context) *EngineRenderer {
+func NewEngineRenderer(requestWrapper *requestWrapper) *EngineRenderer {
 	return &EngineRenderer{
-		Engine:  engine,
-		Context: ctx,
+		Engine:         engine,
+		requestWrapper: requestWrapper,
 	}
 }
 
 type EngineRenderer struct {
-	Engine  Engine
-	Context context.Context
+	Engine         Engine
+	requestWrapper *requestWrapper
 }
 
 func (thiz EngineRenderer) DoRender(w io.Writer, templateName string, opts map[string]any) error {
@@ -45,28 +60,6 @@ func (thiz EngineRenderer) DoRender(w io.Writer, templateName string, opts map[s
 	return thiz.Engine.Render(w, templateName, opts)
 }
 
-func (thiz EngineRenderer) registerFunctions(opts map[string]any) map[string]any {
-	opts["fn"] = map[string]any{
-		"InArray":    util.InArray,
-		"Pluck":      util.Pluck,
-		"CreateLink": thiz.CreateLink,
-		"__":         thiz.__,
-	}
-
-	return opts
-}
-
-func (thiz EngineRenderer) registerDefaultOptions(opts map[string]any) map[string]any {
-	appName := os.Getenv("APP_NAME")
-	if appName == "" {
-		appName = "Gograeco"
-	}
-
-	opts["AppName"] = appName
-
-	return opts
-}
-
 func (thiz EngineRenderer) CreateLink(url string) string {
 	return util.AddLocaleToURL(thiz.Locale(), url)
 }
@@ -76,9 +69,69 @@ func (thiz EngineRenderer) __(code string, opts ...any) string {
 }
 
 func (thiz EngineRenderer) Locale() string {
-	locale := thiz.Context.Value("locale")
-	if locale == nil {
-		panic("Context has no Locale")
+	locale := chi.URLParam(thiz.requestWrapper.request, "lang")
+	if locale == "" {
+		locale = viper.GetString("i18n.lang.default")
 	}
-	return locale.(string)
+	return locale
+}
+
+func (thiz EngineRenderer) AvailableLangsOnFront() []string {
+	availableLangsOnFront := make([]string, 0)
+	availableLocales := i18n.AvailableLocales()
+	for _, lang := range availableLocales {
+		if lang == thiz.Locale() {
+			continue
+		}
+		availableLangsOnFront = append(availableLangsOnFront, lang)
+	}
+	return availableLangsOnFront
+}
+
+func (thiz EngineRenderer) ChangeLanguageLink(locale string) string {
+	path := thiz.requestWrapper.request.URL.Path
+
+	availableLangs := viper.GetStringSlice("i18n.lang.available")
+	availableLangs = append(availableLangs, viper.GetString("i18n.lang.default"))
+
+	regex := regexp.MustCompile(fmt.Sprintf("^/(?P<lang>%s)", strings.Join(availableLangs, "|")))
+
+	processedPath := regex.ReplaceAllStringFunc(path, func(pattern string) string {
+		foundStrings := regex.FindStringSubmatch(pattern)
+		if len(foundStrings) != 2 {
+			return path
+		}
+		return "/" + locale
+	})
+
+	if processedPath == path {
+		processedPath = util.AddLocaleToURL(locale, path)
+	}
+
+	return processedPath
+}
+
+func (thiz EngineRenderer) registerFunctions(opts map[string]any) map[string]any {
+	opts["fn"] = map[string]any{
+		"InArray":            util.InArray,
+		"Pluck":              util.Pluck,
+		"CreateLink":         thiz.CreateLink,
+		"__":                 thiz.__,
+		"ChangeLanguageLink": thiz.ChangeLanguageLink,
+	}
+
+	return opts
+}
+
+func (thiz EngineRenderer) registerDefaultOptions(opts map[string]any) map[string]any {
+	appName := os.Getenv("APP_NAME")
+	if appName == "" {
+		appName = "Gorgany"
+	}
+
+	opts["AppName"] = appName
+	opts["CurrentLocale"] = thiz.Locale()
+	opts["AvailableLocales"] = thiz.AvailableLangsOnFront()
+
+	return opts
 }
