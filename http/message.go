@@ -7,8 +7,8 @@ import (
 	"github.com/go-chi/chi"
 	"gorgany/auth"
 	"gorgany/model"
-	"gorgany/provider/view"
 	"gorgany/util"
+	view2 "gorgany/view"
 	"io"
 	"net/http"
 	url2 "net/url"
@@ -76,7 +76,8 @@ func (thiz Message) Render(template string, options map[string]any) {
 
 	options = thiz.addOptionsToView(options)
 
-	err := view.Engine.Render(thiz.writer, template, options)
+	engineRenderer := view2.NewEngineRenderer(thiz.Context())
+	err := engineRenderer.DoRender(thiz.writer, template, options)
 	if err != nil {
 		panic(fmt.Errorf("Error during render template '%s', %v", template, err))
 	}
@@ -126,7 +127,7 @@ func (thiz Message) SetCookie(key string, value string, expiresIn int) {
 		Value:    value,
 		Path:     "/",
 		Expires:  time.Now().Add(time.Duration(expiresIn) * time.Second),
-		Secure:   true,
+		Secure:   false,
 		HttpOnly: true,
 	}
 	http.SetCookie(thiz.writer, cookie)
@@ -161,10 +162,12 @@ func (thiz Message) RedirectWithParams(url string, redirectCode int, params map[
 	}
 	thiz.SetCookie(OneTimeParamsCookieName, oneTimeParams.Encode(), 1)
 
+	url = util.AddLocaleToURL(thiz.Locale(), url)
 	http.Redirect(thiz.writer, thiz.request, url, redirectCode)
 }
 
 func (thiz Message) Redirect(url string, redirectCode int) {
+	url = util.AddLocaleToURL(thiz.Locale(), url)
 	http.Redirect(thiz.writer, thiz.request, url, redirectCode)
 }
 
@@ -263,10 +266,24 @@ func (thiz Message) GetBodyParam(key string) any {
 	return parsedBody[key]
 }
 
+func (thiz Message) Context() context.Context {
+	return context.WithValue(context.Background(), "locale", thiz.Locale())
+}
+
+func (thiz Message) Locale() string {
+	lang := chi.URLParam(thiz.request, "lang")
+	if lang == "" {
+		lang = "en"
+	}
+	return lang
+}
+
 func (thiz Message) addOptionsToView(options map[string]any) map[string]any {
 	authUser, _ := thiz.CurrentUser()
 
-	options["currentAuthUser"] = authUser
+	if authUser != nil {
+		options["currentUsername"] = authUser.GetUsername()
+	}
 
 	return options
 }
