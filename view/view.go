@@ -73,8 +73,8 @@ func (thiz EngineRenderer) CreateLink(url string) string {
 	return util.AddLocaleToURL(thiz.Locale(), url)
 }
 
-func (thiz EngineRenderer) __(code string, opts map[string]any) string {
-	return i18n.Translation(code, opts, thiz.Locale())
+func (thiz EngineRenderer) __(code string, opts ...any) string {
+	return i18n.TranslationWithSequence(code, thiz.Locale(), opts)
 }
 
 func (thiz EngineRenderer) Locale() string {

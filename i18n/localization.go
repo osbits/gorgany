@@ -28,3 +28,28 @@ func Translation(code string, opts map[string]any, locale string) string {
 
 	return processedMessage
 }
+
+func TranslationWithSequence(code string, locale string, opts ...any) string {
+	config := GetManager().GetConfig(locale)
+	message := config.GetString(code)
+
+	regex := regexp.MustCompile(`\{\:(?P<key>.+?)\}`)
+
+	i := 0
+	processedMessage := regex.ReplaceAllStringFunc(message, func(pattern string) string {
+		foundStrings := regex.FindStringSubmatch(pattern)
+		if len(foundStrings) != 2 {
+			return pattern
+		}
+
+		if len(opts) > i {
+			val := opts[i]
+			i++
+			return fmt.Sprintf("%v", val)
+		} else {
+			return pattern
+		}
+	})
+
+	return processedMessage
+}
