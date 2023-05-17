@@ -19,6 +19,10 @@ func InArray(value any, slice any) bool {
 func Pluck(slice any, key string) []any {
 	keySlice := make([]any, 0)
 
+	if slice == nil {
+		return keySlice
+	}
+
 	sliceArr := InterfaceSlice(slice)
 
 	for _, sliceValue := range sliceArr {

@@ -3,14 +3,12 @@ package view
 import (
 	"fmt"
 	"github.com/eknkc/amber"
-	"gorgany/util"
 	template2 "html/template"
 	"io"
-	"os"
 	"path"
 )
 
-func NewAmberEngine(dir string, extension string) *AmberEngine {
+func NewAmberEngine(dir string, extension string) Engine {
 	return &AmberEngine{viewDir: dir, ext: extension}
 }
 
@@ -24,12 +22,6 @@ func (thiz *AmberEngine) Render(output io.Writer, templateName string, opts map[
 	compiler := amber.New()
 
 	tpl := template2.New(templateName)
-
-	if opts == nil {
-		opts = make(map[string]any)
-	}
-	opts = thiz.registerFunctions(opts)
-	opts = thiz.registerDefaultOptions(opts)
 
 	templatePath := path.Join(thiz.viewDir, fmt.Sprintf("%s.%s", templateName, thiz.ext))
 	err := compiler.ParseFile(templatePath)
@@ -48,24 +40,4 @@ func (thiz *AmberEngine) Render(output io.Writer, templateName string, opts map[
 	}
 
 	return nil
-}
-
-func (thiz *AmberEngine) registerFunctions(opts map[string]any) map[string]any {
-	opts["fn"] = map[string]any{
-		"InArray": util.InArray,
-		"Pluck":   util.Pluck,
-	}
-
-	return opts
-}
-
-func (thiz *AmberEngine) registerDefaultOptions(opts map[string]any) map[string]any {
-	appName := os.Getenv("APP_NAME")
-	if appName == "" {
-		appName = "Gograeco"
-	}
-
-	opts["AppName"] = appName
-
-	return opts
 }
