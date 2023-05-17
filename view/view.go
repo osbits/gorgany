@@ -2,7 +2,6 @@ package view
 
 import (
 	"context"
-	"fmt"
 	"gorgany/i18n"
 	"gorgany/util"
 	"io"
@@ -69,7 +68,6 @@ func (thiz EngineRenderer) registerDefaultOptions(opts map[string]any) map[strin
 }
 
 func (thiz EngineRenderer) CreateLink(url string) string {
-	fmt.Println(thiz.Locale())
 	return util.AddLocaleToURL(thiz.Locale(), url)
 }
 
