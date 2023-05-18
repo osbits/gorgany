@@ -3,12 +3,20 @@ package http
 import (
 	"fmt"
 	error2 "gorgany/error"
+	"gorgany/util"
 	"net/http"
 )
 
 type IMiddleware interface {
 	Handle(handlerFunc HandlerFunc) HandlerFunc
 }
+
+var defaultMiddlewares []IMiddleware
+
+func SetDefaultMiddlewares(middlewares []IMiddleware) {
+	defaultMiddlewares = middlewares
+}
+
 type HandlerFunc func(message Message)
 
 func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc, middlewares []IMiddleware) {
@@ -22,6 +30,10 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc, middl
 			Catch(r, message)
 		}
 	}()
+
+	for _, middleware := range defaultMiddlewares {
+		middlewares = util.Prepend[IMiddleware](middlewares, middleware)
+	}
 
 	if len(middlewares) == 0 {
 		handler(message)

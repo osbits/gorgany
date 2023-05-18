@@ -24,6 +24,8 @@ func (thiz RouteProvider) InitProvider() {
 		panic("You did`nt create any controllers.")
 	}
 
+	http.SetDefaultMiddlewares(FrameworkRegistrar.middlewares)
+
 	thiz.initRoutes()
 }
 

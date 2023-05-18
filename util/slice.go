@@ -78,6 +78,14 @@ func UniqueSlice[T any](slice []T) []T {
 	return resSlice
 }
 
+func Prepend[T any](x []T, y T) []T {
+	var empty T
+	x = append(x, empty)
+	copy(x[1:], x)
+	x[0] = y
+	return x
+}
+
 func convertValueToString(vf reflect.Value) any {
 	switch vf.Kind() {
 	case reflect.String:

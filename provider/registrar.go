@@ -17,6 +17,7 @@ type Registrar struct {
 	commands        command.ICommands
 	sessionLifetime int //in seconds
 	userService     service.IUserService
+	middlewares     []http.IMiddleware
 }
 
 func InitRegistrar() {
@@ -81,4 +82,15 @@ func (thiz *Registrar) SetUserService(service service.IUserService) {
 
 func (thiz *Registrar) GetUserService() service.IUserService {
 	return thiz.userService
+}
+
+func (thiz *Registrar) RegisterMiddleware(middleware http.IMiddleware) {
+	if thiz.middlewares == nil {
+		thiz.middlewares = make([]http.IMiddleware, 0)
+	}
+	thiz.middlewares = append(thiz.middlewares, middleware)
+}
+
+func (thiz *Registrar) GetMiddlewares() []http.IMiddleware {
+	return thiz.middlewares
 }
