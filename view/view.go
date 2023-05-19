@@ -111,6 +111,10 @@ func (thiz EngineRenderer) ChangeLanguageLink(locale string) string {
 	return processedPath
 }
 
+func (thiz EngineRenderer) CurrentUrl() string {
+	return thiz.requestWrapper.request.RequestURI
+}
+
 func (thiz EngineRenderer) registerFunctions(opts map[string]any) map[string]any {
 	opts["fn"] = map[string]any{
 		"InArray":            util.InArray,
@@ -118,6 +122,7 @@ func (thiz EngineRenderer) registerFunctions(opts map[string]any) map[string]any
 		"CreateLink":         thiz.CreateLink,
 		"__":                 thiz.__,
 		"ChangeLanguageLink": thiz.ChangeLanguageLink,
+		"CurrentUrl":         thiz.CurrentUrl,
 	}
 
 	return opts
