@@ -28,9 +28,13 @@ func (thiz JwtService) GenerateJwt(user model.Authenticable) (string, error) {
 }
 
 func (thiz JwtService) ValidateJwt(token string) bool {
-	t, _ := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
+	t, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
 		return []byte(os.Getenv("JWT_SECRET_KEY")), nil
 	})
+
+	if err != nil {
+		return false
+	}
 
 	return t.Valid
 }
