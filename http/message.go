@@ -10,6 +10,7 @@ import (
 	"gorgany/util"
 	view2 "gorgany/view"
 	"io"
+	"mime/multipart"
 	"net/http"
 	url2 "net/url"
 	"reflect"
@@ -266,12 +267,62 @@ func (thiz Message) GetBodyParam(key string) any {
 	return parsedBody[key]
 }
 
+func (thiz Message) GetMultipartFormValues() *multipart.Form {
+	err := thiz.request.ParseMultipartForm(10000) //todo
+	if err != nil {
+		return nil
+	}
+	return thiz.request.MultipartForm
+}
+
 func (thiz Message) Locale() string {
 	lang := chi.URLParam(thiz.request, "lang")
 	if lang == "" {
 		lang = "en"
 	}
 	return lang
+}
+
+func (thiz Message) GetFile(key string) (*model.File, error) {
+	thiz.GetMultipartFormValues()
+	fileRequest, header, err := thiz.request.FormFile(key)
+	if err != nil {
+		return nil, err
+	}
+
+	content, err := io.ReadAll(fileRequest)
+	if err != nil {
+		return nil, err
+	}
+
+	return &model.File{
+		Name:    header.Filename,
+		Content: string(content),
+	}, nil
+}
+
+func (thiz Message) GetFiles(key string) ([]*model.File, error) {
+	files := make([]*model.File, 0)
+
+	multipartForm := thiz.GetMultipartFormValues()
+	filesRequest := multipartForm.File
+	for mapKey, val := range filesRequest {
+		if mapKey != key {
+			continue
+		}
+		for _, file := range val {
+			reader, err := file.Open()
+			if err != nil {
+				return nil, err
+			}
+			content, err := io.ReadAll(reader)
+			if err != nil {
+				return nil, err
+			}
+			files = append(files, &model.File{Name: file.Filename, Content: string(content)})
+		}
+	}
+	return files, nil
 }
 
 func (thiz Message) addOptionsToView(options map[string]any) map[string]any {
