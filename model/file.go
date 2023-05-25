@@ -15,6 +15,7 @@ type File struct {
 	Name    string
 	Path    string
 	Content string
+	Size    int64
 }
 
 func (thiz File) FullPath() string {
@@ -30,14 +31,6 @@ func (thiz File) PublicPath() string {
 
 func (thiz File) PathInPublic() string {
 	return path.Join(thiz.Path, thiz.Name)
-}
-
-func (thiz File) Size() (int64, error) {
-	fileInfo, err := os.Stat(thiz.FullPath())
-	if err != nil {
-		return 0, err
-	}
-	return fileInfo.Size(), nil
 }
 
 func (thiz File) ReadContent() (string, error) {

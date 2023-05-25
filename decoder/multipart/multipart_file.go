@@ -24,6 +24,7 @@ func DecodeFiles(filesMap map[string][]*multipart.FileHeader, dest any) error {
 		file := model.File{
 			Name:    rawFile.Filename,
 			Content: string(content),
+			Size:    rawFile.Size,
 		}
 		field.Set(reflect.ValueOf(file))
 	}

@@ -301,6 +301,7 @@ func (thiz Message) GetFile(key string) (*model.File, error) {
 	return &model.File{
 		Name:    header.Filename,
 		Content: string(content),
+		Size:    header.Size,
 	}, nil
 }
 
@@ -322,7 +323,7 @@ func (thiz Message) GetFiles(key string) ([]*model.File, error) {
 			if err != nil {
 				return nil, err
 			}
-			files = append(files, &model.File{Name: file.Filename, Content: string(content)})
+			files = append(files, &model.File{Name: file.Filename, Content: string(content), Size: file.Size})
 		}
 	}
 	return files, nil
