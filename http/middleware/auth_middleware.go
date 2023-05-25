@@ -1,11 +1,12 @@
 package middleware
 
 import (
+	"gorgany"
 	"gorgany/http"
 )
 
 type AuthMiddleware struct {
-	Role []string
+	Role []gorgany.UserRole
 }
 
 func (thiz *AuthMiddleware) Handle(next http.HandlerFunc) http.HandlerFunc {

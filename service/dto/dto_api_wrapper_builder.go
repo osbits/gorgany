@@ -6,6 +6,7 @@ func WrapPayload(payload any, status int, errors []any) *model.ApiResponseWrappe
 	dto := &model.ApiResponseWrapper{}
 	dto.Body = payload
 	dto.Status = status
+	dto.Errors = errors
 
 	switch dto.Status {
 	case 200:

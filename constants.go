@@ -8,3 +8,5 @@ const (
 	Show                           = "SHOW" //action that are above also denied
 	Create                         = "CREATE"
 )
+
+type UserRole string

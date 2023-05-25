@@ -22,6 +22,9 @@ func (thiz File) FullPath() string {
 }
 
 func (thiz File) PublicPath() string {
+	if thiz.Path == "" && thiz.Name == "" {
+		return ""
+	}
 	return path.Join("/", "public", thiz.Path, thiz.Name)
 }
 

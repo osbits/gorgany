@@ -287,6 +287,9 @@ func (thiz Message) GetFile(key string) (*model.File, error) {
 	thiz.GetMultipartFormValues()
 	fileRequest, header, err := thiz.request.FormFile(key)
 	if err != nil {
+		if strings.Contains(err.Error(), "no such file") {
+			return nil, nil
+		}
 		return nil, err
 	}
 

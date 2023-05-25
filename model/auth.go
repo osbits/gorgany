@@ -1,7 +1,9 @@
 package model
 
+import "gorgany"
+
 type Authenticable interface {
 	GetUsername() string
 	GetPassword() string
-	GetRole() string
+	GetRole() gorgany.UserRole
 }
