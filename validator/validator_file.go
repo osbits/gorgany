@@ -2,11 +2,12 @@ package validator
 
 import (
 	"encoding/json"
-	"github.com/gabriel-vasile/mimetype"
 	goValidator "github.com/go-playground/validator/v10"
 	"gorgany/model"
+	"mime"
 	"reflect"
 	"strconv"
+	"strings"
 )
 
 func ValidateFile(field reflect.Value) interface{} {
@@ -26,14 +27,19 @@ func ValidateMimeType(fl goValidator.FieldLevel) bool {
 		return false
 	}
 
+	if string(fileJson) == "{}" {
+		return true
+	}
+
 	file := &model.File{}
 	err := json.Unmarshal(fileJson, file)
 	if err != nil {
 		return false
 	}
 
-	m := mimetype.Detect([]byte(file.Content))
-	if fl.Param() == m.String() {
+	splitName := strings.Split(file.Name, ".")
+	m := mime.TypeByExtension("." + splitName[len(splitName)-1])
+	if fl.Param() == m {
 		return true
 	}
 	return false
@@ -43,6 +49,10 @@ func ValidateFileSize(fl goValidator.FieldLevel) bool {
 	fileJson, ok := fl.Field().Interface().([]byte)
 	if !ok {
 		return false
+	}
+
+	if fileJson == nil {
+		return true
 	}
 
 	file := &model.File{}
