@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"github.com/go-chi/chi"
+	"github.com/spf13/viper"
 	"net/http"
 	"os"
 	"os/exec"
@@ -20,9 +21,11 @@ type App struct {
 }
 
 func (s *App) Run(router *chi.Mux, port string) error {
-	err := s.validate()
-	if err != nil {
-		return err
+	if viper.GetBool("app.gorgany.validate") {
+		err := s.validate()
+		if err != nil {
+			return err
+		}
 	}
 
 	s.httpServer = &http.Server{
