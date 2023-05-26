@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/go-chi/chi"
+	"gorgany"
 	"gorgany/auth"
 	"gorgany/model"
 	"gorgany/util"
@@ -327,6 +328,14 @@ func (thiz Message) GetFiles(key string) ([]*model.File, error) {
 		}
 	}
 	return files, nil
+}
+
+func (thiz Message) IsApiNamespace() bool {
+	namespace := thiz.GetPathParam("namespace")
+	if namespace == string(gorgany.Api) {
+		return true
+	}
+	return false
 }
 
 func (thiz Message) addOptionsToView(options map[string]any) map[string]any {

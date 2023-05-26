@@ -3,6 +3,7 @@ package http
 import (
 	"fmt"
 	error2 "gorgany/error"
+	"gorgany/service/dto"
 	"gorgany/util"
 	"net/http"
 )
@@ -49,14 +50,17 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc, middl
 }
 
 func Catch(err any, message Message) {
-	error2.Catch(err)
-
-	concreteError, ok := err.(error2.ValidationError)
+	concreteError, ok := err.(error2.ValidationErrors)
 	if ok {
 		req := message.GetRequest()
+		if message.IsApiNamespace() {
+			message.ResponseJSON(dto.WrapPayload(nil, 422, concreteError.Errors), 200)
+			return
+		}
 		message.RedirectWithParams(req.Referer(), 301, map[string]any{"validation": concreteError.Errors})
 		return
 	}
+	error2.Catch(err)
 	//todo 500 view
 	message.Response(fmt.Sprintf("Oops... 500 error.\n %v", err), 500)
 }

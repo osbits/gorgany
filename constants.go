@@ -10,3 +10,23 @@ const (
 )
 
 type UserRole string
+
+type HttpNamespace string
+
+const (
+	Api HttpNamespace = "api"
+	Web               = "web"
+)
+
+type HttpStatusCode string
+
+const (
+	Success       HttpStatusCode = "SUCCESS"
+	Deleted                      = "DELETED"
+	BadRequest                   = "BAD_REQUEST"
+	NotAuthorized                = "NOT_AUTHORIZED"
+	Forbidden                    = "FORBIDDEN"
+	NotFound                     = "NOT_FOUND"
+	Validation                   = "VALIDATION"
+	InternalError                = "InternalError"
+)

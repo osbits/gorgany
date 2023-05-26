@@ -1,8 +1,10 @@
 package model
 
+import "gorgany"
+
 type ApiResponseWrapper struct {
-	Status     int    `json:"status"`      //todo const
-	Errors     []any  `json:"errors"`      //todo struct
-	StatusCode string `json:"status_code"` //todo const
-	Body       any    `json:"body"`
+	Status     int                    `json:"status"`
+	Errors     []any                  `json:"errors"`
+	StatusCode gorgany.HttpStatusCode `json:"status_code"`
+	Body       any                    `json:"body"`
 }

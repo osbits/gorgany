@@ -1,33 +1,48 @@
 package dto
 
-import "gorgany/model"
+import (
+	"encoding/json"
+	"fmt"
+	"gorgany"
+	"gorgany/model"
+	"gorgany/util"
+)
 
-func WrapPayload(payload any, status int, errors []any) *model.ApiResponseWrapper { //todo status and errors
+func WrapPayload(payload any, status int, errors any) *model.ApiResponseWrapper { //todo status and errors
+	t, _ := json.Marshal(errors)
+	fmt.Println(t)
 	dto := &model.ApiResponseWrapper{}
 	dto.Body = payload
 	dto.Status = status
-	dto.Errors = errors
+
+	if errors != nil {
+		dto.Errors = util.InterfaceSlice(errors)
+	}
 
 	switch dto.Status {
 	case 200:
-		dto.StatusCode = "SUCCESS"
+		dto.StatusCode = gorgany.Success
+		break
+	case 204:
+		dto.StatusCode = gorgany.Deleted
 		break
 	case 400:
-		dto.StatusCode = "BAD_REQUEST"
+		dto.StatusCode = gorgany.BadRequest
 		break
 	case 401:
-		dto.StatusCode = "Not authorized"
+		dto.StatusCode = gorgany.NotAuthorized
 		break
 	case 403:
-		dto.StatusCode = "FORBIDDEN"
-	case 404:
-		dto.StatusCode = "NOT_FOUND"
+		dto.StatusCode = gorgany.Forbidden
 		break
-	case 429:
-		dto.StatusCode = "VALIDATION"
+	case 404:
+		dto.StatusCode = gorgany.NotFound
+		break
+	case 422:
+		dto.StatusCode = gorgany.Validation
 		break
 	case 500:
-		dto.StatusCode = "INTERNAL_ERROR"
+		dto.StatusCode = gorgany.InternalError
 		break
 	}
 
