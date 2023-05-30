@@ -29,7 +29,6 @@ func (s *App) Run(router *chi.Mux, port string) error {
 		}
 	}
 
-	fmt.Println(port)
 	s.httpServer = &http.Server{
 		Addr:           ":" + port,
 		Handler:        router,
