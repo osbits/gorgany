@@ -6,17 +6,23 @@ import (
 	"regexp"
 )
 
+// return slice of langs
+func AllLocales() []string {
+	availableLang := make([]string, 0)
+	availableLang = append(availableLang, viper.GetString("i18n.lang.default"))
+	availableLang = append(availableLang, viper.GetStringSlice("i18n.lang.available")...)
+
+	return availableLang
+}
+
+// return slice of langs if i18n is enabled
 func AvailableLocales() []string {
 	enabled := viper.GetBool("i18n.enabled")
 	availableLang := make([]string, 0)
 	if !enabled {
 		return availableLang
 	}
-
-	availableLang = append(availableLang, viper.GetString("i18n.lang.default"))
-	availableLang = append(availableLang, viper.GetStringSlice("i18n.lang.available")...)
-
-	return availableLang
+	return AllLocales()
 }
 
 func Translation(code string, opts map[string]any, locale string) string {

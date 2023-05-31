@@ -76,7 +76,8 @@ func (thiz EngineRenderer) Locale() string {
 	return locale
 }
 
-func (thiz EngineRenderer) AvailableLangsOnFront() []string {
+// return slice of langs exclude current one if i18n is enabled
+func (thiz EngineRenderer) AvailableLocalesOnFront() []string {
 	availableLangsOnFront := make([]string, 0)
 	availableLocales := i18n.AvailableLocales()
 	for _, lang := range availableLocales {
@@ -136,7 +137,8 @@ func (thiz EngineRenderer) registerDefaultOptions(opts map[string]any) map[strin
 
 	opts["AppName"] = appName
 	opts["CurrentLocale"] = thiz.Locale()
-	opts["AvailableLocales"] = thiz.AvailableLangsOnFront()
+	opts["AvailableLocales"] = thiz.AvailableLocalesOnFront()
+	opts["AllLocales"] = i18n.AllLocales()
 
 	return opts
 }
