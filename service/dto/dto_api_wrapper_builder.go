@@ -1,16 +1,12 @@
 package dto
 
 import (
-	"encoding/json"
-	"fmt"
 	"gorgany"
 	"gorgany/model"
 	"gorgany/util"
 )
 
 func WrapPayload(payload any, status int, errors any) *model.ApiResponseWrapper { //todo status and errors
-	t, _ := json.Marshal(errors)
-	fmt.Println(t)
 	dto := &model.ApiResponseWrapper{}
 	dto.Body = payload
 	dto.Status = status

@@ -61,6 +61,10 @@ func Catch(err any, message Message) {
 		return
 	}
 	error2.Catch(err)
+	if message.IsApiNamespace() {
+		message.ResponseJSON(dto.WrapPayload(nil, 500, nil), 200)
+		return
+	}
 	//todo 500 view
 	message.Response(fmt.Sprintf("Oops... 500 error.\n %v", err), 500)
 }

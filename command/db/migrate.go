@@ -67,7 +67,6 @@ func (thiz MigrateCommand) up() {
 		if thiz.isMigrationExists(migrationDomain) {
 			continue
 		}
-		fmt.Println("next")
 
 		fmt.Printf("Migration %s is executing\n", migration.Name())
 		tx := gormInstance.Begin()
