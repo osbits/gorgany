@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/go-chi/chi"
+	"github.com/spf13/viper"
 	"gorgany"
 	"gorgany/auth"
 	"gorgany/model"
@@ -279,7 +280,7 @@ func (thiz Message) GetMultipartFormValues() *multipart.Form {
 func (thiz Message) Locale() string {
 	lang := chi.URLParam(thiz.request, "lang")
 	if lang == "" {
-		lang = "en"
+		lang = viper.GetString("i18n.lang.default")
 	}
 	return lang
 }
