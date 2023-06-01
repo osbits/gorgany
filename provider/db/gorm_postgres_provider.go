@@ -16,8 +16,10 @@ func NewGormPostgresProvider() *GormPostgresProvider {
 }
 
 func (thiz GormPostgresProvider) InitProvider() {
-	dataSource := thiz.GetDataSource()
-	db, err := gorm.Open(postgres.Open(dataSource), &gorm.Config{})
+	dsn := thiz.GetDataSource()
+	config := provider.FrameworkRegistrar.GetDbConfig(db2.PostgreSQL)
+	gormConfig := postgres.Config{DSN: dsn, PreferSimpleProtocol: config["PreferSimpleProtocol"].(bool)}
+	db, err := gorm.Open(postgres.New(gormConfig), &gorm.Config{})
 	if err != nil {
 		panic(err)
 	}

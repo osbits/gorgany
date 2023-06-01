@@ -10,7 +10,8 @@ type Config struct {
 
 type PostgresConfig struct {
 	Config
-	SSLMode string
+	SSLMode              string
+	PreferSimpleProtocol bool
 }
 
 type Type string
