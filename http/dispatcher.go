@@ -6,10 +6,11 @@ import (
 	"gorgany/service/dto"
 	"gorgany/util"
 	"net/http"
+	"reflect"
 )
 
 type IMiddleware interface {
-	Handle(handlerFunc HandlerFunc) HandlerFunc
+	Handle(message Message) bool
 }
 
 var defaultMiddlewares []IMiddleware
@@ -18,7 +19,7 @@ func SetDefaultMiddlewares(middlewares []IMiddleware) {
 	defaultMiddlewares = middlewares
 }
 
-type HandlerFunc func(message Message)
+type HandlerFunc any
 
 func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc, middlewares []IMiddleware) {
 	message := Message{
@@ -36,17 +37,16 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc, middl
 		middlewares = util.Prepend[IMiddleware](middlewares, middleware)
 	}
 
-	if len(middlewares) == 0 {
-		handler(message)
-		return
+	reflectedHandler := reflect.ValueOf(handler)
+	resolver := inputResolver{
+		reflectedHandler: reflectedHandler,
+		message:          message,
 	}
+	args := resolver.resolve()
 
-	h := middlewares[len(middlewares)-1].Handle(handler)
-
-	for i := len(middlewares) - 2; i >= 0; i-- {
-		h = middlewares[i].Handle(h)
+	if preProcess(middlewares, message) {
+		reflectedHandler.Call(args)
 	}
-	h(message)
 }
 
 func Catch(err any, message Message) {
@@ -67,4 +67,21 @@ func Catch(err any, message Message) {
 	}
 	//todo 500 view
 	message.Response(fmt.Sprintf("Oops... 500 error.\n %v", err), 500)
+}
+
+func preProcess(middlewares []IMiddleware, message Message) bool {
+	if len(middlewares) == 0 {
+		return true
+	}
+
+	preProcessed := true
+	for _, middleware := range middlewares {
+		res := middleware.Handle(message)
+		if res == false {
+			preProcessed = false
+			break
+		}
+	}
+
+	return preProcessed
 }

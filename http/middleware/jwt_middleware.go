@@ -9,21 +9,19 @@ import (
 type JwtMiddleware struct {
 }
 
-func (thiz JwtMiddleware) Handle(next http.HandlerFunc) http.HandlerFunc {
-	return func(message http.Message) {
-		jwtService := service.NewJwtService()
+func (thiz JwtMiddleware) Handle(message http.Message) bool {
+	jwtService := service.NewJwtService()
 
-		token := message.GetBearerToken()
-		if token == "" {
-			message.ResponseJSON(dto.WrapPayload(nil, 401, nil), 401)
-			return
-		}
-
-		if !jwtService.ValidateJwt(token) {
-			message.ResponseJSON(dto.WrapPayload(nil, 401, nil), 401)
-			return
-		}
-
-		next(message)
+	token := message.GetBearerToken()
+	if token == "" {
+		message.ResponseJSON(dto.WrapPayload(nil, 401, nil), 401)
+		return false
 	}
+
+	if !jwtService.ValidateJwt(token) {
+		message.ResponseJSON(dto.WrapPayload(nil, 401, nil), 401)
+		return false
+	}
+
+	return true
 }

@@ -28,7 +28,7 @@ func Pluck(slice any, key string) []any {
 	for _, sliceValue := range sliceArr {
 		reflectedValue := reflect.ValueOf(sliceValue)
 		reflectedField := reflectedValue.FieldByName(key)
-		keySlice = append(keySlice, convertValueToString(reflectedField))
+		keySlice = append(keySlice, ConvertReflectedValue(reflectedField))
 	}
 
 	return keySlice
@@ -66,7 +66,7 @@ func UniqueSlice[T any](slice []T) []T {
 		for _, valueInResSlice := range resSlice {
 			reflectedValue := reflect.ValueOf(sliceValue)
 			reflectedValue2 := reflect.ValueOf(valueInResSlice)
-			if fmt.Sprintf("%v", convertValueToString(reflectedValue2)) == fmt.Sprintf("%v", convertValueToString(reflectedValue)) {
+			if fmt.Sprintf("%v", ConvertReflectedValue(reflectedValue2)) == fmt.Sprintf("%v", ConvertReflectedValue(reflectedValue)) {
 				isExistsInResSlice = true
 			}
 		}
@@ -84,29 +84,4 @@ func Prepend[T any](x []T, y T) []T {
 	copy(x[1:], x)
 	x[0] = y
 	return x
-}
-
-func convertValueToString(vf reflect.Value) any {
-	switch vf.Kind() {
-	case reflect.String:
-		return vf.String()
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		return vf.Int()
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return vf.Uint()
-	case reflect.Float32, reflect.Float64:
-		return vf.Float()
-	case reflect.Bool:
-		if vf.Bool() {
-			return true
-		} else {
-			return false
-		}
-	case reflect.Array, reflect.Slice:
-		panic("Slice type is not supported yet!")
-	case reflect.Ptr:
-		panic("Pointer type is not supported yet!")
-	default:
-		return ""
-	}
 }

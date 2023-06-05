@@ -30,3 +30,10 @@ const (
 	Validation                   = "VALIDATION"
 	InternalError                = "InternalError"
 )
+
+type ContentType string
+
+const (
+	ApplicationJson   = "application/json"
+	MultipartFormData = "multipart/form-data"
+)
