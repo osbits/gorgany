@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/viper"
 	"gorgany/http"
 	http2 "net/http"
+	"reflect"
 	"strings"
 )
 
@@ -34,6 +35,13 @@ func (thiz RouteProvider) initRoutes() {
 	for _, c := range FrameworkRegistrar.GetControllers() {
 		for _, routeConfig := range c.GetRoutes() {
 			handler := routeConfig.Handler
+
+			reflectedHandler := reflect.TypeOf(handler)
+			if reflectedHandler.Kind() != reflect.Func {
+				reflectedController := reflect.TypeOf(c)
+				panic(fmt.Sprintf("Handler must be function. Controller: %s, route: %s", reflectedController.String(), routeConfig.Path))
+			}
+
 			middlewares := routeConfig.Middlewares
 
 			patterns := []string{routeConfig.Path}
