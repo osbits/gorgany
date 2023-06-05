@@ -5,10 +5,12 @@ import (
 	"github.com/go-chi/chi"
 	"gorgany"
 	"gorgany/decoder/multipart"
+	error2 "gorgany/error"
 	"gorgany/util"
 	url2 "net/url"
 	"reflect"
 	"strconv"
+	"strings"
 )
 
 type inputResolver struct {
@@ -16,7 +18,7 @@ type inputResolver struct {
 	message          Message
 }
 
-func (thiz inputResolver) resolve() []reflect.Value {
+func (thiz inputResolver) resolve() ([]reflect.Value, error) {
 	args := make([]reflect.Value, 0)
 	pathParams := thiz.collectPathParams()
 	indexOfPrimitiveArguemnt := 0
@@ -35,17 +37,24 @@ func (thiz inputResolver) resolve() []reflect.Value {
 		switch argTypeName {
 		case "string", "bool", "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64", "float32", "float64":
 			param := pathParams[indexOfPrimitiveArguemnt]
-			arg = resolvePrimitive(in.Kind(), param)
+			var err error
+			arg, err = resolvePrimitive(in.Kind(), param)
+			if err != nil {
+				return nil, err
+			}
 			indexOfPrimitiveArguemnt++
 		default:
 			contentType := thiz.message.GetHeader().Get("Content-Type")
-			resolveBodyParser(contentType, thiz.message).parse(arg)
+			err := resolveBodyParser(contentType, thiz.message).parse(arg)
+			if err != nil {
+				return nil, err
+			}
 		}
 
 		args = append(args, reflect.Indirect(reflect.ValueOf(arg)))
 	}
 
-	return args
+	return args, nil
 }
 
 func (thiz inputResolver) collectPathParams() []string {
@@ -62,16 +71,15 @@ func (thiz inputResolver) collectPathParams() []string {
 }
 
 type bodyParser interface {
-	parse(arg interface{})
+	parse(arg interface{}) error
 }
 
 func resolveBodyParser(contentType string, message Message) bodyParser {
-	switch contentType {
-	case gorgany.ApplicationJson:
+	if contentType == gorgany.ApplicationJson {
 		return jsonParser{message: message}
-	case gorgany.MultipartFormData:
+	} else if strings.Contains(contentType, gorgany.MultipartFormData) {
 		return multipartParser{message: message}
-	default:
+	} else {
 		return formParser{message: message}
 	}
 }
@@ -81,11 +89,12 @@ type jsonParser struct {
 	message Message
 }
 
-func (thiz jsonParser) parse(arg interface{}) {
+func (thiz jsonParser) parse(arg interface{}) error {
 	err := json.Unmarshal(thiz.message.GetBody(), arg)
 	if err != nil {
-		panic(err)
+		return error2.NewInputBodyParseError(thiz.message.GetBodyContent(), "json", err)
 	}
+	return nil
 }
 
 // multipart parser
@@ -93,17 +102,18 @@ type multipartParser struct {
 	message Message
 }
 
-func (thiz multipartParser) parse(arg interface{}) {
+func (thiz multipartParser) parse(arg interface{}) error {
 	multipartForm := thiz.message.GetMultipartFormValues()
 	decoder := multipart.NewFormValuesDecoder()
 	err := decoder.Decode(arg, multipartForm.Value)
 	if err != nil {
-		panic(err)
+		return error2.NewInputBodyParseError(thiz.message.GetBodyContent(), "multipart form", err)
 	}
 	err = multipart.DecodeFiles(multipartForm.File, arg)
 	if err != nil {
-		panic(err)
+		return error2.NewInputBodyParseError(thiz.message.GetBodyContent(), "multipart files", err)
 	}
+	return nil
 }
 
 // form parser
@@ -111,81 +121,83 @@ type formParser struct {
 	message Message
 }
 
-func (thiz formParser) parse(arg interface{}) {
+func (thiz formParser) parse(arg interface{}) error {
 	decoder := multipart.NewFormValuesDecoder()
 	values, err := url2.ParseQuery(thiz.message.GetBodyContent())
 	if err != nil {
-		panic(err)
+		return error2.NewInputBodyParseError(thiz.message.GetBodyContent(), "form", err)
 	}
 	err = decoder.Decode(arg, values)
 	if err != nil {
-		panic(err)
+		return error2.NewInputBodyParseError(thiz.message.GetBodyContent(), "form", err)
 	}
+
+	return nil
 }
 
 // resolve primitive values for param in handler
 type primitiveResolver interface {
-	resolve(kind reflect.Kind, value string) any
+	resolve(kind reflect.Kind, value string) (any, error)
 }
 
 // Common integer resolver
 type intResolver struct {
 }
 
-func (thiz intResolver) resolve(kind reflect.Kind, value string) any {
+func (thiz intResolver) resolve(kind reflect.Kind, value string) (any, error) {
 	var arg any
 	val, err := strconv.ParseInt(value, 10, 64)
 	if err != nil {
-		panic(err) //todo
+		return nil, error2.NewInputParamParseError(value, "int64")
 	}
 	reflectedValue := reflect.ValueOf(val)
 	arg = util.ConvertReflectedValue(reflectedValue)
-	return resolveIntegerValuer(kind, arg.(int64)).value()
+	return resolveIntegerValuer(kind, arg.(int64)).value(), nil
 }
 
 // Common uinteger resolver
 type uintResolver struct {
 }
 
-func (thiz uintResolver) resolve(kind reflect.Kind, value string) any {
+func (thiz uintResolver) resolve(kind reflect.Kind, value string) (any, error) {
 	var arg any
 	val, err := strconv.ParseUint(value, 10, 64)
 	if err != nil {
-		panic(err) //todo
+		return nil, error2.NewInputParamParseError(value, "uint64")
 	}
 	reflectedValue := reflect.ValueOf(val)
 	arg = util.ConvertReflectedValue(reflectedValue)
-	return resolveUIntegerValuer(kind, arg.(uint64)).value()
+	return resolveUIntegerValuer(kind, arg.(uint64)).value(), nil
 }
 
 // Common float resolver
 type floatResolver struct {
 }
 
-func (thiz floatResolver) resolve(kind reflect.Kind, value string) any {
+func (thiz floatResolver) resolve(kind reflect.Kind, value string) (any, error) {
 	var arg any
 	val, err := strconv.ParseFloat(value, 64)
 	if err != nil {
-		panic(err)
+		return nil, error2.NewInputParamParseError(value, "float64")
 	}
 	reflectedValue := reflect.ValueOf(val)
 	arg = util.ConvertReflectedValue(reflectedValue)
-	return resolveFloatValuer(kind, arg.(float64)).value()
+	return resolveFloatValuer(kind, arg.(float64)).value(), nil
 }
 
 // bool resolver
 type boolResolver struct {
 }
 
-func (thiz boolResolver) resolve(kind reflect.Kind, value string) any {
+func (thiz boolResolver) resolve(kind reflect.Kind, value string) (any, error) {
 	arg, err := strconv.ParseBool(value)
 	if err != nil {
-		panic(err) //todo
+		return nil, error2.NewInputParamParseError(value, "bool")
 	}
-	return arg
+	return arg, nil
 }
 
-func resolvePrimitive(kind reflect.Kind, value string) any {
+func resolvePrimitive(kind reflect.Kind, value string) (any, error) {
 	var resolver primitiveResolver
 	switch kind {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
@@ -197,7 +209,7 @@ func resolvePrimitive(kind reflect.Kind, value string) any {
 	case reflect.Bool:
 		resolver = boolResolver{}
 	default:
-		return value
+		return value, nil
 	}
 
 	return resolver.resolve(kind, value)

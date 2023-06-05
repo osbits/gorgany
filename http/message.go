@@ -1,6 +1,7 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"gorgany/util"
 	view2 "gorgany/view"
 	"io"
+	"io/ioutil"
 	"mime/multipart"
 	"net/http"
 	url2 "net/url"
@@ -47,6 +49,9 @@ func (thiz Message) GetBody() []byte {
 	if err != nil {
 		panic(fmt.Errorf("Error during read body from request, %v", err))
 	}
+	thiz.request.Body.Close()
+	thiz.request.Body = ioutil.NopCloser(bytes.NewBuffer(body))
+
 	return body
 }
 

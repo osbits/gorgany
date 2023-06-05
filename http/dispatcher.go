@@ -1,6 +1,7 @@
 package http
 
 import (
+	"errors"
 	"fmt"
 	error2 "gorgany/error"
 	"gorgany/service/dto"
@@ -42,7 +43,12 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc, middl
 		reflectedHandler: reflectedHandler,
 		message:          message,
 	}
-	args := resolver.resolve()
+
+	args, err := resolver.resolve()
+	if err != nil {
+		processParsingErrors(err, &message)
+		return
+	}
 
 	if preProcess(middlewares, message) {
 		reflectedHandler.Call(args)
@@ -84,4 +90,27 @@ func preProcess(middlewares []IMiddleware, message Message) bool {
 	}
 
 	return preProcessed
+}
+
+func processParsingErrors(err error, message *Message) {
+	var paramError *error2.InputParamParseError
+	if errors.As(err, &paramError) {
+		if message.IsApiNamespace() {
+			message.ResponseJSON(dto.WrapPayload(nil, 404, nil), 200)
+			return
+		}
+		message.Response("", 404)
+		return
+	}
+
+	var bodyError *error2.InputBodyParseError
+	if errors.As(err, &bodyError) {
+		error2.Catch(err)
+		if message.IsApiNamespace() {
+			message.ResponseJSON(dto.WrapPayload(nil, 400, nil), 200)
+			return
+		}
+		message.Response("", 400)
+		return
+	}
 }
