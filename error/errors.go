@@ -2,8 +2,16 @@ package error
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 )
+
+func PrintStacktrace(err any) {
+	fmt.Println(err)
+	buf := make([]byte, 1<<16)
+	runtime.Stack(buf, true)
+	fmt.Printf("%s", buf)
+}
 
 // Validation
 type ValidationErrors struct {
@@ -61,4 +69,15 @@ type InputBodyParseError struct {
 
 func (thiz InputBodyParseError) Error() string {
 	return fmt.Sprintf("Unable to convert body from %s. Error: %v\nBody: %s", thiz.Type, thiz.RawError, thiz.Body)
+}
+
+// JwtAuthError
+func NewJwtAuthError() *JwtAuthError {
+	return &JwtAuthError{}
+}
+
+type JwtAuthError struct{}
+
+func (thiz JwtAuthError) Error() string {
+	return "Unauthenticated. JWT is invalid or expired"
 }

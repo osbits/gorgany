@@ -2,8 +2,8 @@ package middleware
 
 import (
 	"gorgany/auth/service"
+	error2 "gorgany/error"
 	"gorgany/http"
-	"gorgany/service/dto"
 )
 
 type JwtMiddleware struct {
@@ -14,13 +14,11 @@ func (thiz JwtMiddleware) Handle(message http.Message) bool {
 
 	token := message.GetBearerToken()
 	if token == "" {
-		message.ResponseJSON(dto.WrapPayload(nil, 401, nil), 401)
-		return false
+		panic(error2.NewJwtAuthError())
 	}
 
 	if !jwtService.ValidateJwt(token) {
-		message.ResponseJSON(dto.WrapPayload(nil, 401, nil), 401)
-		return false
+		panic(error2.NewJwtAuthError())
 	}
 
 	return true

@@ -11,13 +11,14 @@ import (
 var FrameworkRegistrar *Registrar
 
 type Registrar struct {
-	controllers     http.Controllers
-	providers       IProviders
-	dbConfigs       map[db.Type]map[string]any // dbConfigs = { "postgres": {"host": "localhost", "port": "5432"...}, "mongo": {"host": "localhost"}
-	commands        command.ICommands
-	sessionLifetime int //in seconds
-	userService     service.IUserService
-	middlewares     []http.IMiddleware
+	controllers         http.Controllers
+	providers           IProviders
+	dbConfigs           map[db.Type]map[string]any // dbConfigs = { "postgres": {"host": "localhost", "port": "5432"...}, "mongo": {"host": "localhost"}
+	commands            command.ICommands
+	sessionLifetime     int //in seconds
+	userService         service.IUserService
+	middlewares         []http.IMiddleware
+	customErrorHandlers map[string]http.ErrorHandler
 }
 
 func InitRegistrar() {
@@ -93,4 +94,11 @@ func (thiz *Registrar) RegisterMiddleware(middleware http.IMiddleware) {
 
 func (thiz *Registrar) GetMiddlewares() []http.IMiddleware {
 	return thiz.middlewares
+}
+
+func (thiz *Registrar) RegisterErrorHandler(errorType string, handler http.ErrorHandler) {
+	if thiz.customErrorHandlers == nil {
+		thiz.customErrorHandlers = make(map[string]http.ErrorHandler)
+	}
+	thiz.customErrorHandlers[errorType] = handler
 }
