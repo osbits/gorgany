@@ -2,6 +2,7 @@ package http
 
 import (
 	"fmt"
+	"gorgany"
 	error2 "gorgany/error"
 	"reflect"
 )
@@ -42,7 +43,11 @@ func Catch(err error, message *Message) {
 
 func processDefaultError(err error, message *Message) {
 	error2.PrintStacktrace(err)
-	message.Response(fmt.Sprintf("Oops... 500 error.\n %v", err), 500)
+	if gorgany.GetRunMode() == gorgany.Dev {
+		message.Response(fmt.Sprintf("Oops... 500 error.\n %v", err), 500)
+	} else {
+		message.Response("Oops... Internal error.", 500)
+	}
 }
 
 func processValidationErrors(error error, message *Message) {

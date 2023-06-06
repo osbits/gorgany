@@ -15,6 +15,14 @@ import (
 	"time"
 )
 
+func GetRunMode() RunMode {
+	mode := os.Getenv("MODE")
+	if mode == "" {
+		return Dev
+	}
+	return RunMode(mode)
+}
+
 var ServerTimezone *time.Location
 
 type App struct {

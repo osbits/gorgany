@@ -1,5 +1,12 @@
 package gorgany
 
+type RunMode string
+
+const (
+	Dev  RunMode = "dev"
+	Prod         = "prod"
+)
+
 type DynamicAccessActionType string
 
 const (
