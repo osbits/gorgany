@@ -42,9 +42,9 @@ func Catch(err error, message *Message) {
 }
 
 func processDefaultError(err error, message *Message) {
-	error2.PrintStacktrace(err)
+	error2.PrintError(err)
 	if gorgany.GetRunMode() == gorgany.Dev {
-		message.Response(fmt.Sprintf("Oops... 500 error.\n %v", err), 500)
+		message.Response(fmt.Sprintf("Oops... 500 error.\n %v \n%s", err, error2.GetStacktrace()), 500)
 	} else {
 		message.Response("Oops... Internal error.", 500)
 	}
@@ -63,7 +63,7 @@ func processInputParsingError(error error, message *Message) {
 }
 
 func processBodyParsingError(error error, message *Message) {
-	error2.PrintStacktrace(error)
+	error2.PrintError(error)
 	message.Response("", 400)
 	return
 }

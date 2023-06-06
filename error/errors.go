@@ -7,11 +7,17 @@ import (
 	"strings"
 )
 
-func PrintStacktrace(err any) {
-	log.Log("").Error(err)
+func GetStacktrace() string {
 	buf := make([]byte, 1<<16)
 	runtime.Stack(buf, true)
-	log.Log("").Errorf("%s", buf)
+	stack := fmt.Sprintf("%s", buf)
+	splitStack := strings.Split(stack, "\n")
+	return strings.Join(splitStack[0:len(splitStack)-1], "\n")
+}
+
+func PrintError(err any) {
+	log.Log("").Error(err)
+	log.Log("").Error(GetStacktrace())
 }
 
 // Validation
