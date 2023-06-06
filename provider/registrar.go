@@ -5,6 +5,7 @@ import (
 	"gorgany/command"
 	"gorgany/db"
 	"gorgany/http"
+	log2 "gorgany/log"
 	"log"
 )
 
@@ -19,6 +20,7 @@ type Registrar struct {
 	userService         service.IUserService
 	middlewares         []http.IMiddleware
 	customErrorHandlers map[string]http.ErrorHandler
+	loggers             map[string]log2.Logger
 }
 
 func InitRegistrar() {
@@ -101,4 +103,11 @@ func (thiz *Registrar) RegisterErrorHandler(errorType string, handler http.Error
 		thiz.customErrorHandlers = make(map[string]http.ErrorHandler)
 	}
 	thiz.customErrorHandlers[errorType] = handler
+}
+
+func (thiz *Registrar) RegisterLogger(key string, logger log2.Logger) {
+	if thiz.loggers == nil {
+		thiz.loggers = make(map[string]log2.Logger)
+	}
+	thiz.loggers[key] = logger
 }
