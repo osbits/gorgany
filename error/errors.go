@@ -2,15 +2,16 @@ package error
 
 import (
 	"fmt"
+	"gorgany/log"
 	"runtime"
 	"strings"
 )
 
 func PrintStacktrace(err any) {
-	fmt.Println(err)
+	log.Log("").Error(err)
 	buf := make([]byte, 1<<16)
 	runtime.Stack(buf, true)
-	fmt.Printf("%s", buf)
+	log.Log("").Errorf("%s", buf)
 }
 
 // Validation

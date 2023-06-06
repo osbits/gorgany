@@ -31,7 +31,7 @@ func (thiz DefaultLogger) Error(v ...any) {
 }
 
 func (thiz DefaultLogger) Errorf(format string, v ...any) {
-	log.SetPrefix("ERROR")
+	log.SetPrefix("ERROR ")
 	log.Printf(format, v...)
 }
 
