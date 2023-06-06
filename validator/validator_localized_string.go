@@ -7,7 +7,7 @@ import (
 	"reflect"
 )
 
-func ValidateLocalizedString(field reflect.Value) interface{} {
+func validateLocalizedString(field reflect.Value) interface{} {
 	if localizedString, ok := field.Interface().(model.LocalizedString); ok {
 		localizedEntries := localizedString.Map()
 		emptyText := 0
@@ -30,7 +30,7 @@ func ValidateLocalizedString(field reflect.Value) interface{} {
 	return nil
 }
 
-func ValidateRequiredLocalizedString(fl goValidator.FieldLevel) bool {
+func validateRequiredLocalizedString(fl goValidator.FieldLevel) bool {
 	localizedEntriesRaw, ok := fl.Field().Interface().([]byte)
 	if !ok {
 		return false

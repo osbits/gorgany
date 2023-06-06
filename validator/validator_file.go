@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-func ValidateFile(field reflect.Value) interface{} {
+func validateFile(field reflect.Value) interface{} {
 	if file, ok := field.Interface().(model.File); ok {
 		jsonFile, err := json.Marshal(file)
 		if err != nil {
@@ -21,7 +21,7 @@ func ValidateFile(field reflect.Value) interface{} {
 	return nil
 }
 
-func ValidateMimeType(fl goValidator.FieldLevel) bool {
+func validateMimeType(fl goValidator.FieldLevel) bool {
 	fileJson, ok := fl.Field().Interface().([]byte)
 	if !ok {
 		return false
@@ -45,7 +45,7 @@ func ValidateMimeType(fl goValidator.FieldLevel) bool {
 	return false
 }
 
-func ValidateFileSize(fl goValidator.FieldLevel) bool {
+func validateFileSize(fl goValidator.FieldLevel) bool {
 	fileJson, ok := fl.Field().Interface().([]byte)
 	if !ok {
 		return false

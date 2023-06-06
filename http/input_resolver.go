@@ -7,6 +7,7 @@ import (
 	"gorgany/decoder/multipart"
 	error2 "gorgany/error"
 	"gorgany/util"
+	gorganyValidator "gorgany/validator"
 	url2 "net/url"
 	"reflect"
 	"strconv"
@@ -47,6 +48,10 @@ func (thiz inputResolver) resolve() ([]reflect.Value, error) {
 			contentType := thiz.message.GetHeader().Get("Content-Type")
 			err := resolveBodyParser(contentType, thiz.message).parse(arg)
 			if err != nil {
+				return nil, err
+			}
+
+			if err := gorganyValidator.ValidateStruct(arg); err != nil {
 				return nil, err
 			}
 		}
