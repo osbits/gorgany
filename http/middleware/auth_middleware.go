@@ -6,7 +6,7 @@ import (
 )
 
 type AuthMiddleware struct {
-	Role []gorgany.UserRole
+	Roles []gorgany.UserRole
 }
 
 func (thiz *AuthMiddleware) Handle(message http.Message) bool {
@@ -14,14 +14,15 @@ func (thiz *AuthMiddleware) Handle(message http.Message) bool {
 		message.Redirect("/login", 302)
 		return false
 	}
-	if thiz.Role == nil {
+	if thiz.Roles == nil || len(thiz.Roles) == 0 {
 		return true
 	}
+
 	user, err := message.CurrentUser()
 	if err != nil {
 		panic(err) //todo
 	}
-	for _, role := range thiz.Role {
+	for _, role := range thiz.Roles {
 		if role == user.GetRole() {
 			return true
 		}
