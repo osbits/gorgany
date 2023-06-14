@@ -61,6 +61,7 @@ func (thiz MigrateCommand) up() {
 		panic("Unable to migrate table `migrations`")
 	}
 
+	isError := false
 	for _, migration := range migrations {
 		var migrationDomain db.Migration
 		gormInstance.First(&migrationDomain, "name = ?", migration.Name())
@@ -74,7 +75,10 @@ func (thiz MigrateCommand) up() {
 		closure := migration.Up()
 		err = closure(gormInstance)
 		if err != nil {
+			fmt.Println(err)
 			tx.Rollback()
+			isError = true
+			break
 		}
 
 		tx.Commit()
@@ -86,7 +90,11 @@ func (thiz MigrateCommand) up() {
 		fmt.Printf("Migration %s finished\n", migration.Name())
 	}
 
-	fmt.Println("Success")
+	if isError {
+		fmt.Println("Success")
+		return
+	}
+	fmt.Println("Error")
 }
 
 func (thiz MigrateCommand) down() {

@@ -34,6 +34,7 @@ func (thiz SeedCommand) Execute() {
 	}
 
 	total := 0
+	tx := gormInstance.Begin()
 	for _, seeder := range seeders {
 		var seederDomain db.Seeder
 		gormInstance.First(&seederDomain, "name = ?", seeder.Name())
@@ -47,6 +48,7 @@ func (thiz SeedCommand) Execute() {
 		for _, model := range seeder.CollectInsertModels() {
 			res := gormInstance.Create(model)
 			if res.Error != nil {
+				tx.Rollback()
 				panic(res.Error)
 			}
 			seederCount++
@@ -59,6 +61,7 @@ func (thiz SeedCommand) Execute() {
 			Date: time.Now(),
 		})
 	}
+	tx.Commit()
 	fmt.Printf("Seeding finished. Total inserted records: %d\n", total)
 }
 
