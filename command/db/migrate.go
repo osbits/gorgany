@@ -90,7 +90,7 @@ func (thiz MigrateCommand) up() {
 		fmt.Printf("Migration %s finished\n", migration.Name())
 	}
 
-	if isError {
+	if !isError {
 		fmt.Println("Success")
 		return
 	}

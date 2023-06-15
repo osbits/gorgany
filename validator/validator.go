@@ -26,6 +26,12 @@ func New() *goValidator.Validate {
 		panic(err)
 	}
 
+	v.RegisterCustomTypeFunc(validateMapStringString, map[string]string{})
+	err = v.RegisterValidation("mapStringStringCompletelyRequired", validateRequiredMapStringString) //all langs in LocalizedString must not be empty
+	if err != nil {
+		panic(err)
+	}
+
 	return v
 }
 
