@@ -13,7 +13,6 @@ import (
 	"gorgany/util"
 	view2 "gorgany/view"
 	"io"
-	"io/ioutil"
 	"mime/multipart"
 	"net/http"
 	url2 "net/url"
@@ -50,7 +49,7 @@ func (thiz Message) GetBody() []byte {
 		panic(fmt.Errorf("Error during read body from request, %v", err))
 	}
 	thiz.request.Body.Close()
-	thiz.request.Body = ioutil.NopCloser(bytes.NewBuffer(body))
+	thiz.request.Body = io.NopCloser(bytes.NewBuffer(body))
 
 	return body
 }
