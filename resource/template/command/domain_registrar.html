@@ -1,0 +1,14 @@
+package registar
+
+import (
+    "gorgany/provider"
+    {{- range .Imports }}
+    "{{.}}"
+    {{- end }}
+)
+
+func RegisterDomains() {
+    {{- range .Registers }}
+    {{ . }}
+    {{- end }}
+}

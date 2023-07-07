@@ -21,6 +21,7 @@ type Registrar struct {
 	middlewares         []http.IMiddleware
 	customErrorHandlers map[string]http.ErrorHandler
 	loggers             map[string]log2.Logger
+	domains             map[string]interface{}
 }
 
 func InitRegistrar() {
@@ -110,4 +111,15 @@ func (thiz *Registrar) RegisterLogger(key string, logger log2.Logger) {
 		thiz.loggers = make(map[string]log2.Logger)
 	}
 	thiz.loggers[key] = logger
+}
+
+func (thiz *Registrar) RegisterDomain(key string, domain interface{}) {
+	if thiz.domains == nil {
+		thiz.domains = make(map[string]interface{})
+	}
+	thiz.domains[key] = domain
+}
+
+func (thiz *Registrar) GetDomains() map[string]interface{} {
+	return thiz.domains
 }
