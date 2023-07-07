@@ -60,6 +60,11 @@ func (thiz DiffCommand) Execute() {
 		return
 	}
 
+	if len(statements) == 0 {
+		fmt.Println("DB has actual state")
+		return
+	}
+
 	ddls := make([]string, 0)
 	for _, statement := range statements {
 		ddl := fmt.Sprintf("\t_, err = sql.Exec(\"%s\")\n\t"+
