@@ -1,12 +1,18 @@
 package db
 
 import (
+	"bytes"
 	"fmt"
 	"gorgany/db"
 	"gorgany/provider"
 	"gorgany/util"
 	"gorm.io/gorm"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"text/template"
+	"time"
 )
 
 type DiffCommand struct {
@@ -60,6 +66,10 @@ func (thiz DiffCommand) Execute() {
 		return
 	}
 
+	thiz.generateMigration(statements)
+}
+
+func (thiz DiffCommand) generateMigration(statements []string) {
 	if len(statements) == 0 {
 		fmt.Println("DB has actual state")
 		return
@@ -67,19 +77,38 @@ func (thiz DiffCommand) Execute() {
 
 	ddls := make([]string, 0)
 	for _, statement := range statements {
-		ddl := fmt.Sprintf("\t_, err = sql.Exec(\"%s\")\n\t"+
-			"if err != nil {\n\t\t"+
-			"return err\n\t"+
-			"}\n\t", strings.ReplaceAll(statement, "\"", ""))
-		ddls = append(ddls, ddl)
+		ddls = append(ddls, strings.ReplaceAll(statement, "\"", ""))
 	}
 
-	fmt.Printf("return func(dbGorm *gorm.DB) error {\n\t"+
-		"sql, err := dbGorm.DB()\n\t"+
-		"if err != nil {\n\t\t"+
-		"return err\n\t"+
-		"}\n\n"+
-		"%s"+
-		"return nil\n"+
-		"}", strings.Join(ddls, "\n\n"))
+	_, callerFilename, _, _ := runtime.Caller(0)
+	dir := filepath.Dir(callerFilename)
+
+	content, err := os.ReadFile(filepath.Join(dir, "../../resource/template/command/db_diff.html"))
+	if err != nil {
+		panic(err)
+	}
+
+	tpl, err := template.New("db_diff").Parse(string(content))
+	if err != nil {
+		panic(err)
+	}
+
+	writer := new(bytes.Buffer)
+
+	now := time.Now()
+	name := now.Format("20060102_150405.000")
+	structName := "Migration" + now.Format("20060102150405")
+	fileName := now.Format("20060102150405") + "_migration.go"
+
+	err = tpl.Execute(writer, map[string]any{"Name": name, "StructName": structName, "Statements": ddls})
+	if err != nil {
+		panic(err)
+	}
+
+	err = os.WriteFile("db/migration/"+fileName, writer.Bytes(), os.ModePerm)
+	if err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("File db/migration/%s successfully generated\n", fileName)
 }

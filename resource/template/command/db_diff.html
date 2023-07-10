@@ -1,0 +1,36 @@
+package migration
+
+import (
+    "gorgany/command/db"
+    "gorm.io/gorm"
+)
+
+type {{.StructName}} struct {
+}
+
+func (thiz {{.StructName}}) Up() db.MigrationClosure {
+    return func(dbGorm *gorm.DB) error {
+        sql, err := dbGorm.DB()
+        if err != nil {
+            return err
+        }
+        {{ range .Statements }}
+        _, err = sql.Exec("{{.}}")
+        if err != nil {
+            return err
+        }
+        {{- end }}
+
+        return nil
+    }
+}
+
+func (thiz {{.StructName}}) Down() db.MigrationClosure {
+    return func(dbGorm *gorm.DB) error {
+        return nil
+    }
+}
+
+func (thiz {{.StructName}}) Name() string {
+    return "{{.Name}}"
+}
