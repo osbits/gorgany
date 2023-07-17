@@ -12,20 +12,20 @@ type LocalizedString struct {
 	Data LocalizedStringEntries
 }
 
+func (thiz LocalizedString) TableName() string {
+	return "localized_string"
+}
+
 func (thiz LocalizedString) Text(lang string) string {
 	localizedMap := thiz.Map()
 	return localizedMap[lang]
 }
 
 func (thiz LocalizedString) Map() map[string]string {
-	localizedMap := make(map[string]string)
-	for _, entry := range thiz.Data {
-		localizedMap[entry.Lang] = entry.Text
-	}
-	return localizedMap
+	return thiz.Data
 }
 
-type LocalizedStringEntries []LocalizedStringEntry
+type LocalizedStringEntries map[string]string
 
 func (thiz *LocalizedStringEntries) Scan(value interface{}) error {
 	localizedJson, ok := value.(string)

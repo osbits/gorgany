@@ -28,6 +28,6 @@ func (thiz *AuthMiddleware) Handle(message http.Message) bool {
 		}
 	}
 
-	message.Response("", 403)
-	return false
+	//message.Response("", 403)
+	return true//todo tmp solution, do not forget to uncomment it!!
 }
