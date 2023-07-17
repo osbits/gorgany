@@ -37,6 +37,9 @@ func (thiz inputResolver) resolve() ([]reflect.Value, error) {
 
 		switch argTypeName {
 		case "string", "bool", "int", "int8", "int16", "int32", "int64", "uint", "uint8", "uint16", "uint32", "uint64", "float32", "float64":
+			if len(pathParams) < indexOfPrimitiveArguemnt {
+				continue
+			}
 			param := pathParams[indexOfPrimitiveArguemnt]
 			var err error
 			arg, err = resolvePrimitive(in.Kind(), param)
