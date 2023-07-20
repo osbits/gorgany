@@ -39,6 +39,14 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc, middl
 		middlewares = util.Prepend[IMiddleware](middlewares, middleware)
 	}
 
+	if !preProcess(middlewares, message) {
+		return
+	}
+
+	if handler == nil {
+		return
+	}
+
 	reflectedHandler := reflect.ValueOf(handler)
 	resolver := inputResolver{
 		reflectedHandler: reflectedHandler,
@@ -51,9 +59,7 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc, middl
 		return
 	}
 
-	if preProcess(middlewares, message) {
-		reflectedHandler.Call(args)
-	}
+	reflectedHandler.Call(args)
 }
 
 func preProcess(middlewares []IMiddleware, message Message) bool {
