@@ -290,7 +290,7 @@ func (c *Cors) handleActualRequest(w http.ResponseWriter, r *http.Request) bool 
 	headers.Add("Vary", "Origin")
 	if origin == "" {
 		c.logf("Actual request no headers added: missing origin")
-		return false
+		return true
 	}
 	if !c.isOriginAllowed(r, origin) {
 		c.logf("Actual request no headers added: origin '%s' not allowed", origin)
