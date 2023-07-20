@@ -12,21 +12,14 @@ import (
 // cors package is net/http handler to handle CORS related requests
 // as defined by http://www.w3.org/TR/cors/
 //
-// You can configure it by passing an option struct to cors.New:
+// You can configure it by passing an option struct to cors.NewCorsMiddleware:
 //
-//     c := cors.New(cors.Options{
+//     c := middleware.NewCorsMiddleware(cors.Options{
 //         AllowedOrigins: []string{"foo.com"},
 //         AllowedMethods: []string{"GET", "POST", "DELETE"},
 //         AllowCredentials: true,
 //     })
 //
-// Then insert the handler in the chain:
-//
-//     handler = c.Handler(handler)
-//
-// See Options documentation for more options.
-//
-// The resulting handler is a standard net/http handler.
 
 // Options is a configuration container to setup the CORS middleware.
 type Options struct {
@@ -112,8 +105,8 @@ type Cors struct {
 	optionPassthrough bool
 }
 
-// New creates a new Cors handler with the provided options.
-func New(options Options) *Cors {
+// NewCorsMiddleware creates a new Cors handler with the provided options.
+func NewCorsMiddleware(options Options) *Cors {
 	c := &Cors{
 		exposedHeaders:    convert(options.ExposedHeaders, http.CanonicalHeaderKey),
 		allowOriginFunc:   options.AllowOriginFunc,
@@ -187,7 +180,7 @@ func New(options Options) *Cors {
 // AllowAll create a new Cors handler with permissive configuration allowing all
 // origins with all standard methods with any header and credentials.
 func AllowAll() *Cors {
-	return New(Options{
+	return NewCorsMiddleware(Options{
 		AllowedOrigins: []string{"*"},
 		AllowedMethods: []string{
 			http.MethodHead,
