@@ -3,6 +3,7 @@ package provider
 import (
 	"fmt"
 	"github.com/go-chi/chi"
+	"github.com/go-chi/cors"
 	"github.com/spf13/viper"
 	"gorgany/http"
 	http2 "net/http"
@@ -32,6 +33,14 @@ func (thiz RouteProvider) InitProvider() {
 
 func (thiz RouteProvider) initRoutes() {
 	availableLangsRegex := thiz.buildLangRegex()
+
+	thiz.router.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"https://*", "http://*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		AllowCredentials: false,
+	}))
+
 	for _, c := range FrameworkRegistrar.GetControllers() {
 		for _, routeConfig := range c.GetRoutes() {
 			handler := routeConfig.Handler

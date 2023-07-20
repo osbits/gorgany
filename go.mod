@@ -20,6 +20,7 @@ require (
 	ariga.io/atlas-provider-gorm v0.0.0-20230627124731-245fee0b57e0 // indirect
 	github.com/alecthomas/kong v0.8.0 // indirect
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
+	github.com/go-chi/cors v1.2.1 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
