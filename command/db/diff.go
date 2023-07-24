@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"text/template"
@@ -49,7 +50,7 @@ func (thiz DiffCommand) Execute() {
 				fmt.Println("New domain detected, please register it.")
 				fmt.Println("Please complete one of the following steps:")
 				fmt.Println("- Register it manually, just add it to models registrar(registrar/models.go)")
-				fmt.Println("- Run `go run cmd/cli.go models:register`")
+				fmt.Println("- Run `go run cmd/cli.go domains:register`")
 				return
 			}
 		}
@@ -64,6 +65,17 @@ func (thiz DiffCommand) Execute() {
 	if err := tx.Migrator().AutoMigrate(models...); err != nil {
 		fmt.Println(err)
 		return
+	}
+
+	for _, model := range models {
+		rType := reflect.TypeOf(model)
+		for i := 0; i < rType.NumField(); i++ {
+			rField := rType.Field(i)
+			if err := tx.Migrator().CreateConstraint(model, rField.Name); err != nil {
+				fmt.Println(err)
+				return
+			}
+		}
 	}
 
 	thiz.generateMigration(statements)
