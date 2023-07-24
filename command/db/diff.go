@@ -2,12 +2,14 @@ package db
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"gorgany/db"
 	"gorgany/provider"
 	"gorgany/util"
 	"gorm.io/gorm"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -15,6 +17,8 @@ import (
 	"text/template"
 	"time"
 )
+
+const MigrationDir = "db/migration"
 
 type DiffCommand struct {
 }
@@ -71,6 +75,11 @@ func (thiz DiffCommand) Execute() {
 		rType := reflect.TypeOf(model)
 		for i := 0; i < rType.NumField(); i++ {
 			rField := rType.Field(i)
+
+			if tx.Migrator().HasConstraint(model, rField.Name) {
+				continue
+			}
+			
 			if err := tx.Migrator().CreateConstraint(model, rField.Name); err != nil {
 				fmt.Println(err)
 				return
@@ -117,10 +126,17 @@ func (thiz DiffCommand) generateMigration(statements []string) {
 		panic(err)
 	}
 
-	err = os.WriteFile("db/migration/"+fileName, writer.Bytes(), os.ModePerm)
+	if _, err := os.Stat(MigrationDir); errors.Is(err, os.ErrNotExist) {
+		err := os.Mkdir(MigrationDir, os.ModePerm)
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	err = os.WriteFile(path.Join(MigrationDir, fileName), writer.Bytes(), os.ModePerm)
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Printf("File db/migration/%s successfully generated\n", fileName)
+	fmt.Printf("File %s/%s successfully generated\n", MigrationDir, fileName)
 }
