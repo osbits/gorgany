@@ -239,7 +239,7 @@ func (c *Cors) handlePreflight(w http.ResponseWriter, r *http.Request) bool {
 
 	if origin == "" {
 		c.logf("Preflight aborted: empty origin")
-		return false
+		return true
 	}
 	if !c.isOriginAllowed(r, origin) {
 		c.logf("Preflight aborted: origin '%s' not allowed", origin)
