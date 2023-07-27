@@ -19,7 +19,7 @@ func (thiz GormPostgresProvider) InitProvider() {
 	dsn := thiz.GetDataSource()
 	config := provider.FrameworkRegistrar.GetDbConfig(db2.PostgreSQL)
 	gormConfig := postgres.Config{DSN: dsn, PreferSimpleProtocol: config["PreferSimpleProtocol"].(bool)}
-	db, err := gorm.Open(postgres.New(gormConfig), &gorm.Config{})
+	db, err := gorm.Open(postgres.New(gormConfig), &gorm.Config{DisableForeignKeyConstraintWhenMigrating: true})
 	if err != nil {
 		panic(err)
 	}

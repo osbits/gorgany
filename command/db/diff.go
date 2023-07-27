@@ -2,18 +2,23 @@ package db
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"gorgany/db"
 	"gorgany/provider"
 	"gorgany/util"
 	"gorm.io/gorm"
 	"os"
+	"path"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"text/template"
 	"time"
 )
+
+const MigrationDir = "db/migration"
 
 type DiffCommand struct {
 }
@@ -49,7 +54,7 @@ func (thiz DiffCommand) Execute() {
 				fmt.Println("New domain detected, please register it.")
 				fmt.Println("Please complete one of the following steps:")
 				fmt.Println("- Register it manually, just add it to models registrar(registrar/models.go)")
-				fmt.Println("- Run `go run cmd/cli.go models:register`")
+				fmt.Println("- Run `go run cmd/cli.go domains:register`")
 				return
 			}
 		}
@@ -64,6 +69,22 @@ func (thiz DiffCommand) Execute() {
 	if err := tx.Migrator().AutoMigrate(models...); err != nil {
 		fmt.Println(err)
 		return
+	}
+
+	for _, model := range models {
+		rType := reflect.TypeOf(model)
+		for i := 0; i < rType.NumField(); i++ {
+			rField := rType.Field(i)
+
+			if tx.Migrator().HasConstraint(model, rField.Name) {
+				continue
+			}
+			
+			if err := tx.Migrator().CreateConstraint(model, rField.Name); err != nil {
+				fmt.Println(err)
+				return
+			}
+		}
 	}
 
 	thiz.generateMigration(statements)
@@ -105,10 +126,17 @@ func (thiz DiffCommand) generateMigration(statements []string) {
 		panic(err)
 	}
 
-	err = os.WriteFile("db/migration/"+fileName, writer.Bytes(), os.ModePerm)
+	if _, err := os.Stat(MigrationDir); errors.Is(err, os.ErrNotExist) {
+		err := os.Mkdir(MigrationDir, os.ModePerm)
+		if err != nil {
+			panic(err)
+		}
+	}
+
+	err = os.WriteFile(path.Join(MigrationDir, fileName), writer.Bytes(), os.ModePerm)
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Printf("File db/migration/%s successfully generated\n", fileName)
+	fmt.Printf("File %s/%s successfully generated\n", MigrationDir, fileName)
 }

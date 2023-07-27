@@ -1,8 +1,25 @@
 package model
 
+import "strings"
+
+func NewPaginationParams(page int, pageSize int, sort string, order string) *PaginationParams {
+	if order == "" || (order != "asc" && order != "desc") {
+		order = "asc"
+	}
+
+	return &PaginationParams{
+		Page:     page,
+		PageSize: pageSize,
+		Sort:     sort,
+		Order:    strings.ToUpper(order),
+	}
+}
+
 type PaginationParams struct {
 	Page     int
 	PageSize int
+	Sort     string
+	Order    string //desc, asc
 }
 
 func (thiz PaginationParams) Offset() int {

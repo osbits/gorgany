@@ -32,6 +32,7 @@ func (thiz RouteProvider) InitProvider() {
 
 func (thiz RouteProvider) initRoutes() {
 	availableLangsRegex := thiz.buildLangRegex()
+
 	for _, c := range FrameworkRegistrar.GetControllers() {
 		for _, routeConfig := range c.GetRoutes() {
 			handler := routeConfig.Handler
@@ -54,6 +55,10 @@ func (thiz RouteProvider) initRoutes() {
 				if pattern[len(pattern)-1] == '/' && len(pattern) > 1 {
 					pattern = pattern[:len(pattern)-1]
 				}
+
+				thiz.router.Options(pattern, func(w http2.ResponseWriter, r *http2.Request) {
+					http.Dispatch(w, r, nil, middlewares)
+				})
 
 				switch routeConfig.Method {
 				case http.GET:
