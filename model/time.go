@@ -12,7 +12,7 @@ type FormDateTimeLocal struct {
 
 func (c *FormDateTimeLocal) MarshalJSON() ([]byte, error) {
 	if c.Time.IsZero() {
-		return nil, nil
+		return []byte("null"), nil
 	}
 	return []byte(fmt.Sprintf(`"%s"`, c.Time.Format("2006-01-02 15:04:05"))), nil
 }
@@ -32,7 +32,7 @@ type FormDateLocal struct {
 
 func (c *FormDateLocal) MarshalJSON() ([]byte, error) {
 	if c.Time.IsZero() {
-		return nil, nil
+		return []byte("null"), nil
 	}
 	return []byte(fmt.Sprintf(`"%s"`, c.Time.Format("2006-01-02"))), nil
 }
