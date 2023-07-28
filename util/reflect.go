@@ -26,3 +26,17 @@ func ConvertReflectedValue(vf reflect.Value) any {
 		return ""
 	}
 }
+
+func IndirectValue(v reflect.Value) reflect.Value {
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	return v
+}
+
+func IndirectType(v reflect.Type) reflect.Type {
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
+	}
+	return v
+}

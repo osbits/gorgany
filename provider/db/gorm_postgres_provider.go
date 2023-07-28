@@ -3,6 +3,7 @@ package db
 import (
 	"fmt"
 	db2 "gorgany/db"
+	"gorgany/db/gorm/plugins"
 	"gorgany/provider"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -23,6 +24,9 @@ func (thiz GormPostgresProvider) InitProvider() {
 	if err != nil {
 		panic(err)
 	}
+
+	db.Callback().Query().Before("gorm:query").Register("extended_model_processor_add_type_to_where", plugins.ExtendedModelProcessor{}.AddModelTypeToWhere)
+	db.Callback().Create().After("gorm:after_create").Register("after_create", plugins.ExtendedModelProcessor{}.AddModelTypeAfterInsert)
 
 	db2.SetDbInstance("gorm", db2.GormWrapper{Gorm: db})
 }

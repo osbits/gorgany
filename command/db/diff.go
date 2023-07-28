@@ -8,6 +8,7 @@ import (
 	"gorgany/provider"
 	"gorgany/util"
 	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 	"os"
 	"path"
 	"path/filepath"
@@ -71,15 +72,23 @@ func (thiz DiffCommand) Execute() {
 		return
 	}
 
+	namingStrategyService := schema.NamingStrategy{}
 	for _, model := range models {
 		rType := reflect.TypeOf(model)
 		for i := 0; i < rType.NumField(); i++ {
 			rField := rType.Field(i)
 
+			if rField.Anonymous && rField.Type.Kind() == reflect.Struct {
+				tableName := namingStrategyService.TableName(rField.Type.Name())
+				if !isColumnExists(tx, tableName, db.StructModelColumn) {
+					statements = append(statements, fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS model_struct varchar(255)", tableName))
+				}
+			}
+
 			if tx.Migrator().HasConstraint(model, rField.Name) {
 				continue
 			}
-			
+
 			if err := tx.Migrator().CreateConstraint(model, rField.Name); err != nil {
 				fmt.Println(err)
 				return
@@ -88,6 +97,15 @@ func (thiz DiffCommand) Execute() {
 	}
 
 	thiz.generateMigration(statements)
+}
+
+func isColumnExists(db *gorm.DB, tableName string, columnName string) bool {
+	var count int64
+	result := db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", tableName, columnName).Scan(&count)
+	if result.Error != nil {
+		return false
+	}
+	return count > 0
 }
 
 func (thiz DiffCommand) generateMigration(statements []string) {
