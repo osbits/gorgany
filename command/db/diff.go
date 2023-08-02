@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"gorgany/db"
+	"gorgany/db/gorm/plugin"
 	"gorgany/provider"
 	"gorgany/util"
 	"gorm.io/gorm"
@@ -80,7 +81,7 @@ func (thiz DiffCommand) Execute() {
 
 			if rField.Anonymous && rField.Type.Kind() == reflect.Struct {
 				tableName := namingStrategyService.TableName(rField.Type.Name())
-				if !isColumnExists(tx, tableName, db.StructModelColumn) {
+				if !isColumnExists(tx, tableName, plugin.StructModelColumn()) {
 					statements = append(statements, fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS model_struct varchar(255)", tableName))
 				}
 			}

@@ -2,11 +2,13 @@ package db
 
 import (
 	"fmt"
+	"github.com/spf13/viper"
 	db2 "gorgany/db"
-	"gorgany/db/gorm/plugins"
+	"gorgany/db/gorm/plugin"
 	"gorgany/provider"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 type GormPostgresProvider struct {
@@ -25,8 +27,14 @@ func (thiz GormPostgresProvider) InitProvider() {
 		panic(err)
 	}
 
-	db.Callback().Query().Before("gorm:query").Register("extended_model_processor_add_type_to_where", plugins.ExtendedModelProcessor{}.AddModelTypeToWhere)
-	db.Callback().Create().After("gorm:after_create").Register("after_create", plugins.ExtendedModelProcessor{}.AddModelTypeAfterInsert)
+	db.Logger.LogMode(logger.Info)
+
+	db.Callback().Query().Before("gorm:query").Register("extended_model_processor_add_type_to_where", plugin.ExtendedModelProcessor{}.AddModelTypeToWhere)
+	db.Callback().Create().After("gorm:after_create").Register("after_create", plugin.ExtendedModelProcessor{}.AddModelTypeAfterInsert)
+
+	if viper.GetBool("gorm.debug") {
+		db = db.Debug()
+	}
 
 	db2.SetDbInstance("gorm", db2.GormWrapper{Gorm: db})
 }

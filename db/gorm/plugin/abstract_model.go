@@ -2,13 +2,15 @@ package plugin
 
 import (
 	"fmt"
-	db2 "gorgany/db"
+	"github.com/spf13/viper"
 	"gorgany/util"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 	"reflect"
 	"strings"
 )
+
+const StructDefaultColumn = "struct"
 
 type StructNamer interface {
 	StructName() string
@@ -22,8 +24,12 @@ func StructName(model any) string {
 	return rType.Name()
 }
 
-func NewExtendedModelProcessor() *ExtendedModelProcessor {
-	return &ExtendedModelProcessor{namingStrategyService: schema.NamingStrategy{}}
+func StructModelColumn() string {
+	structModelColumn := viper.GetString("gorm.model.embed.structColumn")
+	if structModelColumn == "" {
+		return StructDefaultColumn
+	}
+	return structModelColumn
 }
 
 type ExtendedModelProcessor struct {
@@ -32,6 +38,14 @@ type ExtendedModelProcessor struct {
 
 func (thiz ExtendedModelProcessor) AddModelTypeAfterInsert(db *gorm.DB) {
 	model := db.Statement.Model
+	rValue := util.IndirectValue(db.Statement.ReflectValue)
+	if rValue.Kind() == reflect.Slice {
+		model = reflect.MakeSlice(rValue.Type(), 1, 1).Index(0).Interface()
+	}
+
+	rType := util.IndirectType(reflect.TypeOf(model))
+	model = reflect.New(rType).Elem().Interface()
+
 	abstractModels := thiz.abstractModels(model)
 	if len(abstractModels) == 0 {
 		return
@@ -56,7 +70,7 @@ func (thiz ExtendedModelProcessor) AddModelTypeAfterInsert(db *gorm.DB) {
 		if err != nil {
 			panic(err)
 		}
-		query := fmt.Sprintf("UPDATE %s SET %s = '%s' WHERE %s", tableName, db2.StructModelColumn, StructName(model), strings.Join(conds, ","))
+		query := fmt.Sprintf("UPDATE %s SET %s = '%s' WHERE %s", tableName, StructModelColumn(), StructName(model), strings.Join(conds, ","))
 		_, err = rawDb.Exec(query)
 		if err != nil {
 			panic(err)
@@ -67,11 +81,19 @@ func (thiz ExtendedModelProcessor) AddModelTypeAfterInsert(db *gorm.DB) {
 func (thiz ExtendedModelProcessor) AddModelTypeToWhere(db *gorm.DB) {
 	model := db.Statement.Model
 
+	rValue := util.IndirectValue(db.Statement.ReflectValue)
+	if rValue.Kind() == reflect.Slice {
+		model = reflect.MakeSlice(rValue.Type(), 1, 1).Index(0).Interface()
+	}
+
+	rType := util.IndirectType(reflect.TypeOf(model))
+	model = reflect.New(rType).Elem().Interface()
+
 	if !thiz.hasAbstractModel(model) {
 		return
 	}
 
-	db.Where("? = ?", db2.StructModelColumn, StructName(model))
+	db.Where(fmt.Sprintf("%s = '%s'", StructModelColumn(), StructName(model)))
 }
 
 func (thiz ExtendedModelProcessor) hasAbstractModel(model any) bool {
