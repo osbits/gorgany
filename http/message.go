@@ -242,8 +242,9 @@ func (thiz Message) IsLoggedIn() bool {
 }
 
 func (thiz Message) CurrentUser() (model.Authenticable, error) {
-	ctx := context.WithValue(thiz.request.Context(), "request", thiz.request)
-	authUser, err := auth.GetSessionStorage().CurrentUser(ctx)
+	ctx := context.WithValue(thiz.request.Context(), "message", thiz)
+	authService := auth.ResolveAuthService(ctx)
+	authUser, err := authService.CurrentUser(ctx)
 	return authUser, err
 }
 

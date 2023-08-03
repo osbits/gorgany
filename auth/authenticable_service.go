@@ -1,6 +1,9 @@
-package service
+package auth
 
-import "gorgany/model"
+import (
+	"context"
+	"gorgany/model"
+)
 
 type IUserService interface {
 	Get(id uint64) (model.Authenticable, error)
@@ -16,4 +19,8 @@ func SetAuthEntityService(service IUserService) {
 
 func GetAuthEntityService() IUserService {
 	return userService
+}
+
+type AuthService interface {
+	CurrentUser(ctx context.Context) (model.Authenticable, error)
 }

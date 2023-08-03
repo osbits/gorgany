@@ -1,8 +1,11 @@
-package service
+package auth
 
 import (
+	"context"
+	"fmt"
 	"github.com/golang-jwt/jwt/v5"
 	"gorgany/model"
+	"gorgany/proxy"
 	"os"
 	"time"
 )
@@ -56,4 +59,15 @@ func (thiz JwtService) GetUser(token string) (model.Authenticable, error) {
 	}
 
 	return GetAuthEntityService().GetByUsername(claims["user"].(string))
+}
+
+// ctx - context with gorgany/http.Message instance
+func (thiz JwtService) CurrentUser(ctx context.Context) (model.Authenticable, error) {
+	message := ctx.Value("message").(proxy.HttpMessage)
+	token := message.GetBearerToken()
+	if token == "" {
+		return nil, fmt.Errorf("User not found")
+	}
+
+	return thiz.GetUser(token)
 }

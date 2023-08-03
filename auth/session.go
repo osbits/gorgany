@@ -6,9 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/google/uuid"
-	"gorgany/auth/service"
 	"gorgany/model"
-	"net/http"
+	"gorgany/proxy"
 	"time"
 )
 
@@ -110,9 +109,10 @@ func (thiz *MemorySession) ClearExpiredSessions() {
 	}
 }
 
+// ctx - context with gorgany/http.Message instance
 func (thiz *MemorySession) CurrentUser(ctx context.Context) (model.Authenticable, error) {
-	request := ctx.Value("request").(*http.Request)
-	cookie, err := request.Cookie("sessionToken")
+	message := ctx.Value("message").(proxy.HttpMessage)
+	cookie, err := message.GetCookie("sessionToken")
 	if err != nil {
 		return nil, nil
 	}
@@ -126,7 +126,7 @@ func (thiz *MemorySession) CurrentUser(ctx context.Context) (model.Authenticable
 		return nil, nil
 	}
 
-	return service.GetAuthEntityService().GetByUsername(session.username)
+	return GetAuthEntityService().GetByUsername(session.username)
 }
 
 // DbSession, not implemented yet

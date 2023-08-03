@@ -1,10 +1,10 @@
 package middleware
 
 import (
-	"gorgany/auth/service"
+	"gorgany"
+	"gorgany/auth"
 	error2 "gorgany/error"
 	"gorgany/http"
-	"gorgany"
 )
 
 type JwtMiddleware struct {
@@ -12,7 +12,7 @@ type JwtMiddleware struct {
 }
 
 func (thiz JwtMiddleware) Handle(message http.Message) bool {
-	jwtService := service.NewJwtService()
+	jwtService := auth.NewJwtService()
 
 	token := message.GetBearerToken()
 	if token == "" {
@@ -26,7 +26,7 @@ func (thiz JwtMiddleware) Handle(message http.Message) bool {
 	if thiz.Roles == nil || len(thiz.Roles) == 0 {
 		return true
 	}
-	
+
 	user, err := jwtService.GetUser(token)
 	if err != nil {
 		panic(error2.NewJwtAuthError())

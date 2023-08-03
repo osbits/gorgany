@@ -1,7 +1,7 @@
 package provider
 
 import (
-	"gorgany/auth/service"
+	"gorgany/auth"
 	"gorgany/command"
 	"gorgany/db"
 	"gorgany/http"
@@ -17,7 +17,7 @@ type Registrar struct {
 	dbConfigs           map[db.Type]map[string]any // dbConfigs = { "postgres": {"host": "localhost", "port": "5432"...}, "mongo": {"host": "localhost"}
 	commands            command.ICommands
 	sessionLifetime     int //in seconds
-	userService         service.IUserService
+	userService         auth.IUserService
 	middlewares         []http.IMiddleware
 	customErrorHandlers map[string]http.ErrorHandler
 	loggers             map[string]log2.Logger
@@ -80,11 +80,11 @@ func (thiz *Registrar) GetSessionLifetime() int {
 	return thiz.sessionLifetime
 }
 
-func (thiz *Registrar) SetUserService(service service.IUserService) {
+func (thiz *Registrar) SetUserService(service auth.IUserService) {
 	thiz.userService = service
 }
 
-func (thiz *Registrar) GetUserService() service.IUserService {
+func (thiz *Registrar) GetUserService() auth.IUserService {
 	return thiz.userService
 }
 
