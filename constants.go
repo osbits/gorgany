@@ -44,3 +44,8 @@ const (
 	ApplicationJson   = "application/json"
 	MultipartFormData = "multipart/form-data"
 )
+
+const (
+	GorganyFieldTag = "gorgany"
+	ExtendsValue    = "extends"
+)

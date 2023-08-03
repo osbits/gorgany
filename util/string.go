@@ -2,6 +2,8 @@ package util
 
 import (
 	"golang.org/x/crypto/bcrypt"
+	"regexp"
+	"strings"
 )
 
 func HashWithSalt(rawText string) (string, error) {
@@ -18,4 +20,15 @@ func CompareSaltedHash(hashedPassword, rawPassword string) bool {
 		return false
 	}
 	return true
+}
+
+func FindValueInTagValues(searchValue, values, separator string) (string, bool) {
+	searchValueRegExp := regexp.MustCompile(searchValue)
+	splitValues := strings.Split(values, separator)
+	for _, value := range splitValues {
+		if searchValueRegExp.Match([]byte(value)) {
+			return value, true
+		}
+	}
+	return "", false
 }

@@ -3,6 +3,7 @@ package plugin
 import (
 	"fmt"
 	"github.com/spf13/viper"
+	"gorgany"
 	"gorgany/util"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
@@ -102,8 +103,12 @@ func (thiz ExtendedModelProcessor) hasAbstractModel(model any) bool {
 	hasAbstractModel := false
 	for i := 0; i < rModel.NumField(); i++ {
 		field := rModel.Field(i)
-		if field.Type.Kind() == reflect.Struct && field.Anonymous {
-			hasAbstractModel = true
+		gorganyTag, ok := field.Tag.Lookup(gorgany.GorganyFieldTag)
+		if field.Anonymous && field.Type.Kind() == reflect.Struct && ok {
+			_, found := util.FindValueInTagValues(gorgany.ExtendsValue, gorganyTag, ",")
+			if found {
+				hasAbstractModel = true
+			}
 		}
 	}
 	return hasAbstractModel
@@ -128,8 +133,12 @@ func (thiz ExtendedModelProcessor) abstractModels(model any) []any {
 	for i := 0; i < rType.NumField(); i++ {
 		rField := rType.Field(i)
 
-		if rField.Anonymous && rField.Type.Kind() == reflect.Struct {
-			abstractFieldNames = append(abstractFieldNames, rField.Name)
+		gorganyTag, ok := rField.Tag.Lookup(gorgany.GorganyFieldTag)
+		if rField.Anonymous && rField.Type.Kind() == reflect.Struct && ok {
+			_, found := util.FindValueInTagValues(gorgany.ExtendsValue, gorganyTag, ",")
+			if found {
+				abstractFieldNames = append(abstractFieldNames, rField.Name)
+			}
 		}
 	}
 
