@@ -47,7 +47,7 @@ func (thiz RouteProvider) initRoutes() {
 
 			route := routeConfig.Path
 			if routeConfig.Namespace != "" {
-				route = fmt.Sprintf("/%s%s", routeConfig.Namespace, route)
+				route = fmt.Sprintf("/{namespace:%s}%s", routeConfig.Namespace, route)
 			}
 
 			patterns := []string{route}

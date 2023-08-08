@@ -62,7 +62,6 @@ func (thiz EngineRenderer) DoRender(w io.Writer, templateName string, opts map[s
 }
 
 func (thiz EngineRenderer) CreateLink(url string) string {
-	fmt.Println(url)
 	return util.AddLocaleToURL(thiz.Locale(), url)
 }
 
