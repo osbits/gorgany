@@ -1,6 +1,7 @@
 package util
 
 import (
+	"go/ast"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/tools/go/packages"
 	"os"
@@ -14,8 +15,28 @@ type PkgInfo struct {
 }
 
 type StructInfo struct {
-	Name string
-	Pkg  string
+	Name        string
+	Pkg         string
+	Annotations []Annotation
+}
+
+func (thiz StructInfo) FindAnnotationByName(name string) *Annotation {
+	for _, annotation := range thiz.Annotations {
+		if annotation.Name == name {
+			return &annotation
+		}
+	}
+	return nil
+}
+
+type Annotation struct {
+	Name      string
+	Arguments []Argument
+}
+
+type Argument struct {
+	Name  string
+	Value string
 }
 
 type PkgInfos map[string]*PkgInfo
@@ -60,7 +81,8 @@ func ReadStructsFromFile(filePath string) (pkgPath string, structs []StructInfo,
 	pkgPrefix := strings.Join(splitFilePath[:len(splitFilePath)-2], "/")
 
 	cfg := &packages.Config{
-		Mode: packages.NeedTypes | packages.NeedSyntax | packages.NeedTypesInfo | packages.NeedModule | packages.NeedName,
+		Mode: packages.NeedTypes | packages.NeedSyntax | packages.NeedTypesInfo | packages.NeedModule | packages.NeedName |
+			packages.NeedDeps,
 	}
 
 	pkgs, err := packages.Load(cfg, filePath)
@@ -85,12 +107,42 @@ func ReadStructsFromFile(filePath string) (pkgPath string, structs []StructInfo,
 
 		pkgPath = pkgPrefix + "/" + obj.Pkg().Name()
 
+		annotations := parseAnnotations(pkg, structName)
+
 		structs = append(structs, StructInfo{
-			Name: structName,
-			Pkg:  obj.Pkg().Name(),
+			Name:        structName,
+			Pkg:         obj.Pkg().Name(),
+			Annotations: annotations,
 		})
 	}
+
 	return pkgPath, structs, nil
+}
+
+func parseAnnotations(pkg *packages.Package, structName string) []Annotation {
+	annotations := make([]Annotation, 0)
+	for _, f := range pkg.Syntax {
+		comments := ast.NewCommentMap(pkg.Fset, f, f.Comments)
+		ast.Inspect(f, func(node ast.Node) bool {
+			if typeSpec, ok := node.(*ast.TypeSpec); ok {
+				if _, ok := typeSpec.Type.(*ast.StructType); ok {
+					_ = pkg.Fset.Position(typeSpec.Pos() - 1)
+					for _, commentGroup := range comments.Comments() {
+						for _, comment := range commentGroup.List {
+							if typeSpec.Name.Name == structName {
+								trimAnnotationString := strings.TrimLeft(comment.Text[2:], " ")
+								if trimAnnotationString[0] == '@' {
+									annotations = append(annotations, Annotation{Name: trimAnnotationString}) //todo need to parse and set arguments
+								}
+							}
+						}
+					}
+				}
+			}
+			return true
+		})
+	}
+	return annotations
 }
 
 func ModuleName() string {

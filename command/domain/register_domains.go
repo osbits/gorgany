@@ -34,6 +34,10 @@ func (thiz RegisterDomainsCommand) Execute() {
 	imports := make([]string, 0)
 	for pkgPath, pkgInfo := range pkgInfos {
 		for _, model := range pkgInfo.Structs {
+			if model.FindAnnotationByName("@Embedded") != nil {
+				continue
+			}
+
 			key := moduleName + "/" + pkgPath + "." + model.Name
 			_, ok := registeredModels[key]
 			if !ok {

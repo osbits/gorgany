@@ -50,6 +50,10 @@ func (thiz DiffCommand) Execute() {
 
 	for pkgPath, info := range pkgInfos {
 		for _, st := range info.Structs {
+			if st.FindAnnotationByName("@Embedded") != nil {
+				continue
+			}
+
 			key := moduleName + "/" + pkgPath + "." + st.Name
 			_, ok := modelsMap[key]
 			if !ok {
@@ -57,7 +61,7 @@ func (thiz DiffCommand) Execute() {
 				fmt.Println("Please complete one of the following steps:")
 				fmt.Println("- Register it manually, just add it to models registrar(registrar/models.go)")
 				fmt.Println("- Run `go run cmd/cli.go domains:register`")
-				return
+				//return
 			}
 		}
 	}
