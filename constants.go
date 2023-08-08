@@ -49,3 +49,14 @@ const (
 	GorganyFieldTag = "gorgany"
 	ExtendsValue    = "extends"
 )
+
+type UrlNamespace string
+
+var (
+	CpNamespace  UrlNamespace = "cp"
+	ApiNamespace UrlNamespace = "api"
+)
+
+func (thiz UrlNamespace) String() string {
+	return string(thiz)
+}

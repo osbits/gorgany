@@ -22,4 +22,5 @@ type RouteConfig struct {
 	Method      Method
 	Handler     HandlerFunc
 	Middlewares []IMiddleware
+	Namespace   string
 }

@@ -45,10 +45,15 @@ func (thiz RouteProvider) initRoutes() {
 
 			middlewares := routeConfig.Middlewares
 
-			patterns := []string{routeConfig.Path}
+			route := routeConfig.Path
+			if routeConfig.Namespace != "" {
+				route = fmt.Sprintf("/%s%s", routeConfig.Namespace, route)
+			}
+
+			patterns := []string{route}
 
 			if viper.GetBool("i18n.enabled") {
-				patterns = append(patterns, fmt.Sprintf("/{lang:^(%s)?$}%s", availableLangsRegex, routeConfig.Path))
+				patterns = append(patterns, fmt.Sprintf("/{lang:^(%s)?$}%s", availableLangsRegex, route))
 			}
 
 			for _, pattern := range patterns {

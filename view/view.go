@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
+	"gorgany"
 	"gorgany/i18n"
 	"gorgany/util"
 	"io"
@@ -61,7 +62,12 @@ func (thiz EngineRenderer) DoRender(w io.Writer, templateName string, opts map[s
 }
 
 func (thiz EngineRenderer) CreateLink(url string) string {
+	fmt.Println(url)
 	return util.AddLocaleToURL(thiz.Locale(), url)
+}
+
+func (thiz EngineRenderer) CreateLinkWithNamespace(url string, namespace string) string {
+	return util.AddLocaleToURL(thiz.Locale(), fmt.Sprintf("/%s%s", namespace, url))
 }
 
 func (thiz EngineRenderer) __(code string, opts ...any) string {
@@ -118,12 +124,13 @@ func (thiz EngineRenderer) CurrentUrl() string {
 
 func (thiz EngineRenderer) registerFunctions(opts map[string]any) map[string]any {
 	opts["fn"] = map[string]any{
-		"InArray":            util.InArray,
-		"Pluck":              util.Pluck,
-		"CreateLink":         thiz.CreateLink,
-		"__":                 thiz.__,
-		"ChangeLanguageLink": thiz.ChangeLanguageLink,
-		"CurrentUrl":         thiz.CurrentUrl,
+		"InArray":                 util.InArray,
+		"Pluck":                   util.Pluck,
+		"CreateLink":              thiz.CreateLink,
+		"__":                      thiz.__,
+		"ChangeLanguageLink":      thiz.ChangeLanguageLink,
+		"CurrentUrl":              thiz.CurrentUrl,
+		"CreateLinkWithNamespace": thiz.CreateLinkWithNamespace,
 	}
 
 	return opts
@@ -139,6 +146,6 @@ func (thiz EngineRenderer) registerDefaultOptions(opts map[string]any) map[strin
 	opts["CurrentLocale"] = thiz.Locale()
 	opts["AvailableLocales"] = thiz.AvailableLocalesOnFront()
 	opts["AllLocales"] = i18n.AllLocales()
-
+	opts["Namespaces"] = map[string]string{"cp": gorgany.CpNamespace.String(), "api": gorgany.ApiNamespace.String()}
 	return opts
 }
