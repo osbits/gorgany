@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
-	"gorgany"
 	"gorgany/i18n"
+	"gorgany/proxy"
 	"gorgany/util"
 	"io"
 	"net/http"
@@ -130,6 +130,7 @@ func (thiz EngineRenderer) registerFunctions(opts map[string]any) map[string]any
 		"ChangeLanguageLink":      thiz.ChangeLanguageLink,
 		"CurrentUrl":              thiz.CurrentUrl,
 		"CreateLinkWithNamespace": thiz.CreateLinkWithNamespace,
+		"UrlByName":               proxy.GetRouter().UrlByNameSequence,
 	}
 
 	return opts
@@ -145,6 +146,6 @@ func (thiz EngineRenderer) registerDefaultOptions(opts map[string]any) map[strin
 	opts["CurrentLocale"] = thiz.Locale()
 	opts["AvailableLocales"] = thiz.AvailableLocalesOnFront()
 	opts["AllLocales"] = i18n.AllLocales()
-	opts["Namespaces"] = map[string]string{"cp": gorgany.CpNamespace.String(), "api": gorgany.ApiNamespace.String()}
+
 	return opts
 }

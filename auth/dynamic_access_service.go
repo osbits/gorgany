@@ -5,6 +5,7 @@ import (
 	"gorgany"
 	"gorgany/db"
 	"gorgany/model"
+	"gorgany/proxy"
 	"gorgany/util"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
@@ -19,7 +20,7 @@ type AccessFilterCondition struct {
 	Value string
 }
 
-func (thiz DynamicAccessService) ResolveFilterAccessCondition(domain any, user model.Authenticable, actionType gorgany.DynamicAccessActionType) (*AccessFilterCondition, bool) {
+func (thiz DynamicAccessService) ResolveFilterAccessCondition(domain any, user proxy.Authenticable, actionType gorgany.DynamicAccessActionType) (*AccessFilterCondition, bool) {
 	reflectedCurrentUserValue := reflect.ValueOf(user.(model.DomainExtension).GetDomain())
 	reflectedDomainType := reflect.TypeOf(domain)
 
@@ -60,7 +61,7 @@ func (thiz DynamicAccessService) ResolveFilterAccessCondition(domain any, user m
 	return nil, false
 }
 
-func (thiz DynamicAccessService) IsAbleToAction(record model.DomainExtension, user model.Authenticable, action gorgany.DynamicAccessActionType) bool {
+func (thiz DynamicAccessService) IsAbleToAction(record model.DomainExtension, user proxy.Authenticable, action gorgany.DynamicAccessActionType) bool {
 	reflectedCurrentUserValue := reflect.ValueOf(user.(model.DomainExtension).GetDomain())
 	reflectedDomainType := reflect.TypeOf(record.GetDomain()).Elem()
 
@@ -88,7 +89,7 @@ func (thiz DynamicAccessService) IsAbleToAction(record model.DomainExtension, us
 	return false
 }
 
-func (thiz DynamicAccessService) ResolveAccessForRecord(record model.DomainExtension, user model.Authenticable) bool {
+func (thiz DynamicAccessService) ResolveAccessForRecord(record model.DomainExtension, user proxy.Authenticable) bool {
 	reflectedCurrentUserValue := reflect.ValueOf(user.(model.DomainExtension).GetDomain())
 	reflectedDomainType := reflect.TypeOf(record.GetDomain()).Elem()
 
@@ -117,7 +118,7 @@ func (thiz DynamicAccessService) ResolveAccessForRecord(record model.DomainExten
 	return false
 }
 
-func (thiz DynamicAccessService) ResolveActionsForRecord(record model.DomainExtension, user model.Authenticable) []gorgany.DynamicAccessActionType {
+func (thiz DynamicAccessService) ResolveActionsForRecord(record model.DomainExtension, user proxy.Authenticable) []gorgany.DynamicAccessActionType {
 	reflectedCurrentUserValue := reflect.ValueOf(user.(model.DomainExtension).GetDomain())
 	reflectedDomainType := reflect.TypeOf(record.GetDomain()).Elem()
 

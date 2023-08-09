@@ -16,8 +16,6 @@ const (
 	Create                         = "CREATE"
 )
 
-type UserRole string
-
 type HttpNamespace string
 
 const (
@@ -49,14 +47,3 @@ const (
 	GorganyFieldTag = "gorgany"
 	ExtendsValue    = "extends"
 )
-
-type UrlNamespace string
-
-var (
-	CpNamespace  UrlNamespace = "cp"
-	ApiNamespace UrlNamespace = "api"
-)
-
-func (thiz UrlNamespace) String() string {
-	return string(thiz)
-}

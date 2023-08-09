@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"github.com/golang-jwt/jwt/v5"
-	"gorgany/model"
 	"gorgany/proxy"
 	"os"
 	"time"
@@ -17,7 +16,7 @@ func NewJwtService() *JwtService {
 type JwtService struct {
 }
 
-func (thiz JwtService) GenerateJwt(user model.Authenticable) (string, error) {
+func (thiz JwtService) GenerateJwt(user proxy.Authenticable) (string, error) {
 	token := jwt.New(jwt.SigningMethodHS256)
 	claims := token.Claims.(jwt.MapClaims)
 	claims["exp"] = time.Now().Add(10 * time.Minute).Unix()
@@ -52,7 +51,7 @@ func (thiz JwtService) ParseJwt(token string) (jwt.MapClaims, error) {
 	return t.Claims.(jwt.MapClaims), err
 }
 
-func (thiz JwtService) GetUser(token string) (model.Authenticable, error) {
+func (thiz JwtService) GetUser(token string) (proxy.Authenticable, error) {
 	claims, err := thiz.ParseJwt(token)
 	if err != nil {
 		return nil, err
@@ -62,7 +61,7 @@ func (thiz JwtService) GetUser(token string) (model.Authenticable, error) {
 }
 
 // ctx - context with gorgany/http.Message instance
-func (thiz JwtService) CurrentUser(ctx context.Context) (model.Authenticable, error) {
+func (thiz JwtService) CurrentUser(ctx context.Context) (proxy.Authenticable, error) {
 	message := ctx.Value("message").(proxy.HttpMessage)
 	token := message.GetBearerToken()
 	if token == "" {

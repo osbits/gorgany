@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
+	"gorgany/proxy"
 	"net/http"
 	"os"
 	"path"
@@ -29,7 +29,7 @@ type App struct {
 	httpServer *http.Server
 }
 
-func (s *App) Run(router *chi.Mux, port string) error {
+func (s *App) Run(router proxy.Router, port string) error {
 	if viper.GetBool("app.gorgany.validate") {
 		err := s.validate()
 		if err != nil {
@@ -39,7 +39,7 @@ func (s *App) Run(router *chi.Mux, port string) error {
 
 	s.httpServer = &http.Server{
 		Addr:           ":" + port,
-		Handler:        router,
+		Handler:        router.Engine(),
 		MaxHeaderBytes: 1 << 20, // 1 MB
 		ReadTimeout:    10 * time.Second,
 		WriteTimeout:   10 * time.Second,

@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"gorgany/model"
 	"mime/multipart"
 	"net/http"
 )
@@ -25,16 +24,16 @@ type HttpMessage interface {
 	OneTimeParams() map[string][]string
 	GetOneTimeParam(key string) string
 	ClearOneTimeParams()
-	Login(user model.Authenticable)
+	Login(user Authenticable)
 	Logout()
 	IsLoggedIn() bool
-	CurrentUser() (model.Authenticable, error)
+	CurrentUser() (Authenticable, error)
 	GetBearerToken() string
 	GetQueryParam(key string) any
 	GetBodyParam(key string) any
 	GetMultipartFormValues() *multipart.Form
 	Locale() string
-	GetFile(key string) (*model.File, error)
-	GetFiles(key string) ([]*model.File, error)
+	GetFile(key string) (IFile, error)
+	GetFiles(key string) ([]IFile, error)
 	IsApiNamespace() bool
 }

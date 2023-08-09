@@ -2,13 +2,13 @@ package auth
 
 import (
 	"context"
-	"gorgany/model"
+	"gorgany/proxy"
 )
 
 type IUserService interface {
-	Get(id uint64) (model.Authenticable, error)
-	GetByUsername(username string) (model.Authenticable, error)
-	Save(authEntity model.Authenticable) error
+	Get(id uint64) (proxy.Authenticable, error)
+	GetByUsername(username string) (proxy.Authenticable, error)
+	Save(authEntity proxy.Authenticable) error
 }
 
 var userService IUserService
@@ -22,5 +22,5 @@ func GetAuthEntityService() IUserService {
 }
 
 type AuthService interface {
-	CurrentUser(ctx context.Context) (model.Authenticable, error)
+	CurrentUser(ctx context.Context) (proxy.Authenticable, error)
 }

@@ -1,14 +1,14 @@
 package middleware
 
 import (
-	"gorgany"
 	"gorgany/auth"
 	error2 "gorgany/error"
 	"gorgany/http"
+	"gorgany/proxy"
 )
 
 type JwtMiddleware struct {
-	Roles []gorgany.UserRole
+	Roles []proxy.UserRole
 }
 
 func (thiz JwtMiddleware) Handle(message http.Message) bool {

@@ -1,9 +1,9 @@
-package model
-
-import "gorgany"
+package proxy
 
 type Authenticable interface {
 	GetUsername() string
 	GetPassword() string
-	GetRole() gorgany.UserRole
+	GetRole() UserRole
 }
+
+type UserRole string

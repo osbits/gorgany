@@ -1,12 +1,12 @@
 package middleware
 
 import (
-	"gorgany"
 	"gorgany/http"
+	"gorgany/proxy"
 )
 
 type AuthMiddleware struct {
-	Roles []gorgany.UserRole
+	Roles []proxy.UserRole
 }
 
 func (thiz *AuthMiddleware) Handle(message http.Message) bool {

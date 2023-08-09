@@ -5,13 +5,14 @@ import (
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
 	"gorgany/http"
+	"gorgany/proxy"
 	http2 "net/http"
 	"reflect"
 	"strings"
 )
 
 type RouteProvider struct {
-	router *chi.Mux
+	router proxy.Router
 }
 
 func NewRouteProvider() *RouteProvider {
@@ -19,7 +20,8 @@ func NewRouteProvider() *RouteProvider {
 }
 
 func (thiz RouteProvider) InitProvider() {
-	thiz.router = http.GetRouter()
+	proxy.SetRouter(http.NewGorganyRouter())
+	thiz.router = proxy.GetRouter()
 
 	if len(FrameworkRegistrar.GetControllers()) == 0 {
 		panic("You did`nt create any controllers.")
@@ -32,7 +34,7 @@ func (thiz RouteProvider) InitProvider() {
 
 func (thiz RouteProvider) initRoutes() {
 	availableLangsRegex := thiz.buildLangRegex()
-
+	routerEngine := thiz.router.Engine().(chi.Router)
 	for _, c := range FrameworkRegistrar.GetControllers() {
 		for _, routeConfig := range c.GetRoutes() {
 			handler := routeConfig.Handler
@@ -45,6 +47,7 @@ func (thiz RouteProvider) initRoutes() {
 
 			middlewares := routeConfig.Middlewares
 
+			thiz.router.RegisterRoute(routeConfig)
 			route := routeConfig.Path
 			if routeConfig.Namespace != "" {
 				route = fmt.Sprintf("/{namespace:%s}%s", routeConfig.Namespace, route)
@@ -61,28 +64,28 @@ func (thiz RouteProvider) initRoutes() {
 					pattern = pattern[:len(pattern)-1]
 				}
 
-				thiz.router.Options(pattern, func(w http2.ResponseWriter, r *http2.Request) {
+				routerEngine.Options(pattern, func(w http2.ResponseWriter, r *http2.Request) {
 					http.Dispatch(w, r, nil, middlewares)
 				})
 
 				switch routeConfig.Method {
 				case http.GET:
-					thiz.router.Get(pattern, func(w http2.ResponseWriter, r *http2.Request) {
+					routerEngine.Get(pattern, func(w http2.ResponseWriter, r *http2.Request) {
 						http.Dispatch(w, r, handler, middlewares)
 					})
 					break
 				case http.PUT:
-					thiz.router.Put(pattern, func(w http2.ResponseWriter, r *http2.Request) {
+					routerEngine.Put(pattern, func(w http2.ResponseWriter, r *http2.Request) {
 						http.Dispatch(w, r, handler, middlewares)
 					})
 					break
 				case http.DELETE:
-					thiz.router.Delete(pattern, func(w http2.ResponseWriter, r *http2.Request) {
+					routerEngine.Delete(pattern, func(w http2.ResponseWriter, r *http2.Request) {
 						http.Dispatch(w, r, handler, middlewares)
 					})
 					break
 				case http.POST:
-					thiz.router.Post(pattern, func(w http2.ResponseWriter, r *http2.Request) {
+					routerEngine.Post(pattern, func(w http2.ResponseWriter, r *http2.Request) {
 						http.Dispatch(w, r, handler, middlewares)
 					})
 					break
