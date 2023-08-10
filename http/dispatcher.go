@@ -41,10 +41,12 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc, middl
 		middlewares = util.Prepend[IMiddleware](middlewares, middleware)
 	}
 
+	fmt.Println("Middlewares added")
 	if !preProcess(middlewares, message) {
-		message.Response("nil", 400)
+		message.Response("", 400)
 		return
 	}
+	fmt.Println("After middleware")
 
 	if handler == nil {
 		return
@@ -56,12 +58,15 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc, middl
 		message:          message,
 	}
 
+	fmt.Println("Before resolve")
 	args, err := resolver.resolve()
 	if err != nil {
+		fmt.Println("error: ", err)
 		Catch(err, &message)
 		return
 	}
 
+	fmt.Println("Before response")
 	reflectedHandler.Call(args)
 }
 
