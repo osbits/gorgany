@@ -10,3 +10,8 @@ type IFile interface {
 	IsNil() bool
 	Delete() error
 }
+
+type ILocalizedString interface {
+	Text(lang string) string
+	Map() map[string]string
+}

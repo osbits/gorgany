@@ -1,10 +1,5 @@
 package command
 
-var Commands map[string]ICommand
+import "gorgany/proxy"
 
-type ICommand interface {
-	Execute()
-	GetName() string
-}
-
-type ICommands []ICommand
+var Commands map[string]proxy.ICommand

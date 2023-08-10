@@ -6,6 +6,7 @@ import (
 	"gorgany"
 	"gorgany/decoder/multipart"
 	error2 "gorgany/error"
+	"gorgany/proxy"
 	"gorgany/util"
 	gorganyValidator "gorgany/validator"
 	url2 "net/url"
@@ -27,7 +28,7 @@ func (thiz inputResolver) resolve() ([]reflect.Value, error) {
 		in := thiz.reflectedHandler.Type().In(i)
 		argTypeName := in.String()
 
-		if argTypeName == "http.Message" {
+		if in.Implements(reflect.TypeOf((*proxy.HttpMessage)(nil)).Elem()) {
 			args = append(args, reflect.ValueOf(thiz.message))
 			continue
 		}

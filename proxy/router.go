@@ -2,14 +2,18 @@ package proxy
 
 import "net/http"
 
-var router Router
-
-func GetRouter() Router {
-	return router
+type IController interface {
+	GetRoutes() []IRouteConfig
 }
 
-func SetRouter(r Router) {
-	router = r
+type Controllers []IController
+
+func (thiz Controllers) AddController(controller IController) {
+	thiz = append(thiz, controller)
+}
+
+type IMiddleware interface {
+	Handle(message HttpMessage) bool
 }
 
 type Router interface {

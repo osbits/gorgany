@@ -4,12 +4,11 @@ import (
 	"fmt"
 	"gorgany"
 	error2 "gorgany/error"
+	"gorgany/proxy"
 	"reflect"
 )
 
-type ErrorHandler func(error, *Message)
-
-var errorHandlerMap = map[string]ErrorHandler{
+var errorHandlerMap = map[string]proxy.ErrorHandler{
 	"ValidationErrors":     processValidationErrors,
 	"InputBodyParseError":  processInputParsingError,
 	"InputParamParseError": processBodyParsingError,
@@ -17,17 +16,18 @@ var errorHandlerMap = map[string]ErrorHandler{
 	"JwtAuthError":         processJwtAuthError,
 }
 
-func SetErrorHandler(errType string, handlerFunc ErrorHandler) {
+func SetErrorHandler(errType string, handlerFunc proxy.ErrorHandler) {
 	errorHandlerMap[errType] = handlerFunc
 }
 
-func Catch(err error, message *Message) {
+func Catch(err error, message proxy.HttpMessage) {
 	reflectedErr := reflect.TypeOf(err)
 	if reflectedErr.Kind() == reflect.Ptr {
 		reflectedErr = reflectedErr.Elem()
 	}
 
-	errorHandler, ok := errorHandlerMap[reflectedErr.Name()]
+	errName := reflectedErr.Name()
+	errorHandler, ok := errorHandlerMap[errName]
 	if ok {
 		errorHandler(err, message)
 		return
@@ -41,7 +41,7 @@ func Catch(err error, message *Message) {
 	}
 }
 
-func processDefaultError(err error, message *Message) {
+func processDefaultError(err error, message proxy.HttpMessage) {
 	error2.PrintError(err)
 	if gorgany.GetRunMode() == gorgany.Dev {
 		message.Response(fmt.Sprintf("Oops... 500 error.\n %v \n%s", err, error2.GetStacktrace()), 500)
@@ -50,24 +50,25 @@ func processDefaultError(err error, message *Message) {
 	}
 }
 
-func processValidationErrors(error error, message *Message) {
+func processValidationErrors(error error, message proxy.HttpMessage) {
 	concreteError := error.(error2.ValidationErrors)
 	req := message.GetRequest()
 	message.RedirectWithParams(req.Referer(), 301, map[string]any{"validation": concreteError.Errors})
 	return
 }
 
-func processInputParsingError(error error, message *Message) {
-	message.Response("", 404)
-	return
-}
-
-func processBodyParsingError(error error, message *Message) {
+func processInputParsingError(error error, message proxy.HttpMessage) {
 	error2.PrintError(error)
 	message.Response("", 400)
 	return
 }
 
-func processJwtAuthError(err error, message *Message) {
+func processBodyParsingError(error error, message proxy.HttpMessage) {
+	error2.PrintError(error)
+	message.Response("", 400)
+	return
+}
+
+func processJwtAuthError(err error, message proxy.HttpMessage) {
 	message.ResponseJSON("", 401)
 }

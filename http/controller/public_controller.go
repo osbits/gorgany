@@ -1,6 +1,9 @@
-package http
+package controller
 
 import (
+	"gorgany/http"
+	"gorgany/http/router"
+	"gorgany/proxy"
 	"mime"
 	"os"
 	path2 "path"
@@ -14,7 +17,7 @@ func NewPublicController() *PublicController {
 type PublicController struct {
 }
 
-func (thiz PublicController) load(message Message) {
+func (thiz PublicController) load(message http.Message) {
 	r := message.GetRequest()
 	url := r.URL
 	path := url.Path
@@ -33,11 +36,11 @@ func (thiz PublicController) load(message Message) {
 	message.ResponseBytes(file, 200)
 }
 
-func (thiz PublicController) GetRoutes() []*RouteConfig {
-	return []*RouteConfig{
-		{
+func (thiz PublicController) GetRoutes() []proxy.IRouteConfig {
+	return []proxy.IRouteConfig{
+		&router.RouteConfig{
 			Path:    "/public/*",
-			Method:  GET,
+			Method:  proxy.GET,
 			Handler: thiz.load,
 		},
 	}

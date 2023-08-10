@@ -2,6 +2,7 @@ package provider
 
 import (
 	"gorgany/command"
+	"gorgany/proxy"
 )
 
 type CommandProvider struct{}
@@ -11,7 +12,7 @@ func NewCommandProvider() *CommandProvider {
 }
 
 func (thiz *CommandProvider) InitProvider() {
-	command.Commands = make(map[string]command.ICommand)
+	command.Commands = make(map[string]proxy.ICommand)
 
 	versionCommand := command.VersionCommand{}
 	command.Commands[versionCommand.GetName()] = versionCommand

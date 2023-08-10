@@ -2,24 +2,19 @@ package http
 
 import (
 	"fmt"
+	"gorgany/proxy"
 	"gorgany/util"
 	"net/http"
 	"reflect"
 )
 
-type IMiddleware interface {
-	Handle(message Message) bool
-}
+var defaultMiddlewares []proxy.IMiddleware
 
-var defaultMiddlewares []IMiddleware
-
-func SetDefaultMiddlewares(middlewares []IMiddleware) {
+func SetDefaultMiddlewares(middlewares []proxy.IMiddleware) {
 	defaultMiddlewares = middlewares
 }
 
-type HandlerFunc any
-
-func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc, middlewares []IMiddleware) {
+func Dispatch(w http.ResponseWriter, r *http.Request, handler proxy.HandlerFunc, middlewares []proxy.IMiddleware) {
 	message := Message{
 		writer:  w,
 		request: r,
@@ -36,7 +31,7 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc, middl
 	}()
 
 	for _, middleware := range defaultMiddlewares {
-		middlewares = util.Prepend[IMiddleware](middlewares, middleware)
+		middlewares = util.Prepend[proxy.IMiddleware](middlewares, middleware)
 	}
 
 	if !preProcess(middlewares, message) {
@@ -62,7 +57,7 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc, middl
 	reflectedHandler.Call(args)
 }
 
-func preProcess(middlewares []IMiddleware, message Message) bool {
+func preProcess(middlewares []proxy.IMiddleware, message Message) bool {
 	if len(middlewares) == 0 {
 		return true
 	}

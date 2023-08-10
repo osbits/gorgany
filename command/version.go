@@ -10,5 +10,5 @@ func (thiz VersionCommand) GetName() string {
 }
 
 func (thiz VersionCommand) Execute() {
-	fmt.Println("Gograeco version 1.0")
+	fmt.Println("Gorgany framework. Version 1.0")
 }

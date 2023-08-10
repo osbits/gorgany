@@ -1,26 +1,13 @@
 package auth
 
-import (
-	"context"
-	"gorgany/proxy"
-)
+import "gorgany/proxy"
 
-type IUserService interface {
-	Get(id uint64) (proxy.Authenticable, error)
-	GetByUsername(username string) (proxy.Authenticable, error)
-	Save(authEntity proxy.Authenticable) error
-}
+var userService proxy.IUserService
 
-var userService IUserService
-
-func SetAuthEntityService(service IUserService) {
+func SetAuthEntityService(service proxy.IUserService) {
 	userService = service
 }
 
-func GetAuthEntityService() IUserService {
+func GetAuthEntityService() proxy.IUserService {
 	return userService
-}
-
-type AuthService interface {
-	CurrentUser(ctx context.Context) (proxy.Authenticable, error)
 }

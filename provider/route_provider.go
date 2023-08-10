@@ -5,6 +5,7 @@ import (
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
 	"gorgany/http"
+	"gorgany/http/router"
 	"gorgany/proxy"
 	http2 "net/http"
 	"reflect"
@@ -20,14 +21,14 @@ func NewRouteProvider() *RouteProvider {
 }
 
 func (thiz RouteProvider) InitProvider() {
-	proxy.SetRouter(http.NewGorganyRouter())
-	thiz.router = proxy.GetRouter()
+	router.SetRouter(router.NewGorganyRouter())
+	thiz.router = router.GetRouter()
 
 	if len(FrameworkRegistrar.GetControllers()) == 0 {
 		panic("You did`nt create any controllers.")
 	}
 
-	http.SetDefaultMiddlewares(FrameworkRegistrar.middlewares)
+	http.SetDefaultMiddlewares(FrameworkRegistrar.GetMiddlewares())
 
 	thiz.initRoutes()
 }
@@ -36,7 +37,8 @@ func (thiz RouteProvider) initRoutes() {
 	availableLangsRegex := thiz.buildLangRegex()
 	routerEngine := thiz.router.Engine().(chi.Router)
 	for _, c := range FrameworkRegistrar.GetControllers() {
-		for _, routeConfig := range c.GetRoutes() {
+		for _, rc := range c.GetRoutes() {
+			routeConfig := rc.(*router.RouteConfig)
 			handler := routeConfig.Handler
 
 			reflectedHandler := reflect.TypeOf(handler)
@@ -69,22 +71,22 @@ func (thiz RouteProvider) initRoutes() {
 				})
 
 				switch routeConfig.Method {
-				case http.GET:
+				case proxy.GET:
 					routerEngine.Get(pattern, func(w http2.ResponseWriter, r *http2.Request) {
 						http.Dispatch(w, r, handler, middlewares)
 					})
 					break
-				case http.PUT:
+				case proxy.PUT:
 					routerEngine.Put(pattern, func(w http2.ResponseWriter, r *http2.Request) {
 						http.Dispatch(w, r, handler, middlewares)
 					})
 					break
-				case http.DELETE:
+				case proxy.DELETE:
 					routerEngine.Delete(pattern, func(w http2.ResponseWriter, r *http2.Request) {
 						http.Dispatch(w, r, handler, middlewares)
 					})
 					break
-				case http.POST:
+				case proxy.POST:
 					routerEngine.Post(pattern, func(w http2.ResponseWriter, r *http2.Request) {
 						http.Dispatch(w, r, handler, middlewares)
 					})

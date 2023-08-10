@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
+	"gorgany/http/router"
 	"gorgany/i18n"
-	"gorgany/proxy"
 	"gorgany/util"
 	"io"
 	"net/http"
@@ -130,7 +130,7 @@ func (thiz EngineRenderer) registerFunctions(opts map[string]any) map[string]any
 		"ChangeLanguageLink":      thiz.ChangeLanguageLink,
 		"CurrentUrl":              thiz.CurrentUrl,
 		"CreateLinkWithNamespace": thiz.CreateLinkWithNamespace,
-		"UrlByName":               proxy.GetRouter().UrlByNameSequence,
+		"UrlByName":               router.GetRouter().UrlByNameSequence,
 	}
 
 	return opts

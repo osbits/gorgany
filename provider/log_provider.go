@@ -10,7 +10,7 @@ func NewLogProvider() *LogProvider {
 
 func (thiz *LogProvider) InitProvider() {
 	log.SetLogger("", log.DefaultLogger{})
-	for key, logger := range FrameworkRegistrar.loggers {
+	for key, logger := range FrameworkRegistrar.GetLoggers() {
 		log.SetLogger(key, logger)
 	}
 }

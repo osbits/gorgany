@@ -9,7 +9,7 @@ func NewErrorProvider() *ErrorProvider {
 type ErrorProvider struct{}
 
 func (thiz ErrorProvider) InitProvider() {
-	for errType, handler := range FrameworkRegistrar.customErrorHandlers {
+	for errType, handler := range FrameworkRegistrar.GetErrorHandlers() {
 		http.SetErrorHandler(errType, handler)
 	}
 }
