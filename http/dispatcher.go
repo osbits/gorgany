@@ -42,6 +42,7 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc, middl
 	}
 
 	if !preProcess(middlewares, message) {
+		message.Response("nil", 400)
 		return
 	}
 
@@ -72,6 +73,7 @@ func preProcess(middlewares []IMiddleware, message Message) bool {
 	preProcessed := true
 	for _, middleware := range middlewares {
 		res := middleware.Handle(message)
+		fmt.Printf("Middleware: %s, result: %v", reflect.TypeOf(middleware).Name(), res)
 		if res == false {
 			preProcessed = false
 			break
