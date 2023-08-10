@@ -35,18 +35,14 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc, middl
 		}
 	}()
 
-	fmt.Println("Debug: ", message.GetBodyContent(), r.URL.String())
-
 	for _, middleware := range defaultMiddlewares {
 		middlewares = util.Prepend[IMiddleware](middlewares, middleware)
 	}
 
-	fmt.Println("Middlewares added")
 	if !preProcess(middlewares, message) {
 		message.Response("", 400)
 		return
 	}
-	fmt.Println("After middleware")
 
 	if handler == nil {
 		return
@@ -58,15 +54,12 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc, middl
 		message:          message,
 	}
 
-	fmt.Println("Before resolve")
 	args, err := resolver.resolve()
 	if err != nil {
-		fmt.Println("error: ", err)
 		Catch(err, &message)
 		return
 	}
 
-	fmt.Println("Before response")
 	reflectedHandler.Call(args)
 }
 
@@ -78,7 +71,6 @@ func preProcess(middlewares []IMiddleware, message Message) bool {
 	preProcessed := true
 	for _, middleware := range middlewares {
 		res := middleware.Handle(message)
-		fmt.Printf("Middleware: %s, result: %v\n", reflect.TypeOf(middleware).Name(), res)
 		if res == false {
 			preProcessed = false
 			break
