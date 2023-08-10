@@ -78,7 +78,7 @@ func preProcess(middlewares []IMiddleware, message Message) bool {
 	preProcessed := true
 	for _, middleware := range middlewares {
 		res := middleware.Handle(message)
-		fmt.Printf("Middleware: %s, result: %v", reflect.TypeOf(middleware).Name(), res)
+		fmt.Printf("Middleware: %s, result: %v\n", reflect.TypeOf(middleware).Name(), res)
 		if res == false {
 			preProcessed = false
 			break
