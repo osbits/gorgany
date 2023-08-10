@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"gorgany/auth"
 	error2 "gorgany/error"
 	"gorgany/http"
@@ -28,6 +29,8 @@ func (thiz JwtMiddleware) Handle(message http.Message) bool {
 	}
 
 	user, err := jwtService.GetUser(token)
+	fmt.Println(thiz.Roles)
+	fmt.Println(user.GetUsername(), user.GetRole())
 	if err != nil {
 		panic(error2.NewJwtAuthError())
 	}
