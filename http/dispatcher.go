@@ -35,6 +35,8 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler HandlerFunc, middl
 		}
 	}()
 
+	fmt.Println("Debug: ", message.GetBodyContent(), r.URL.String())
+
 	for _, middleware := range defaultMiddlewares {
 		middlewares = util.Prepend[IMiddleware](middlewares, middleware)
 	}
