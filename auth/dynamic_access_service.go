@@ -7,7 +7,6 @@ import (
 	"gorgany/model"
 	"gorgany/proxy"
 	"gorgany/util"
-	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 	"reflect"
 )
@@ -26,10 +25,8 @@ func (thiz DynamicAccessService) ResolveFilterAccessCondition(domain any, user p
 
 	domainName := reflectedDomainType.Name()
 
-	gormInstance := db.GetWrapper("gorm").GetInstance().(*gorm.DB)
-
 	dynamicAccesses := make([]*model.DynamicAccess, 0)
-	gormInstance.Find(&dynamicAccesses, "domain_name = ?", domainName)
+	db.Builder(proxy.GormPostgresQL).FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
 
 	var fieldNamer schema.Namer = schema.NamingStrategy{}
 	for _, dynamicAccess := range dynamicAccesses {
@@ -67,10 +64,8 @@ func (thiz DynamicAccessService) IsAbleToAction(record model.DomainExtension, us
 
 	domainName := reflectedDomainType.Name()
 
-	gormInstance := db.GetWrapper("gorm").GetInstance().(*gorm.DB)
-
 	dynamicAccesses := make([]*model.DynamicAccess, 0)
-	gormInstance.Find(&dynamicAccesses, "domain_name = ?", domainName)
+	db.Builder(proxy.GormPostgresQL).FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
 
 	for _, dynamicAccess := range dynamicAccesses {
 		reflectedUserProperty := reflectedCurrentUserValue.Elem().FieldByName(dynamicAccess.UserProperty)
@@ -95,10 +90,8 @@ func (thiz DynamicAccessService) ResolveAccessForRecord(record model.DomainExten
 
 	domainName := reflectedDomainType.Name()
 
-	gormInstance := db.GetWrapper("gorm").GetInstance().(*gorm.DB)
-
 	dynamicAccesses := make([]*model.DynamicAccess, 0)
-	gormInstance.Find(&dynamicAccesses, "domain_name = ?", domainName)
+	db.Builder(proxy.GormPostgresQL).FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
 
 	for _, dynamicAccess := range dynamicAccesses {
 		reflectedUserProperty := reflectedCurrentUserValue.Elem().FieldByName(dynamicAccess.UserProperty)
@@ -124,10 +117,8 @@ func (thiz DynamicAccessService) ResolveActionsForRecord(record model.DomainExte
 
 	domainName := reflectedDomainType.Name()
 
-	gormInstance := db.GetWrapper("gorm").GetInstance().(*gorm.DB)
-
 	dynamicAccesses := make([]*model.DynamicAccess, 0)
-	gormInstance.Find(&dynamicAccesses, "domain_name = ?", domainName)
+	db.Builder(proxy.GormPostgresQL).FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
 
 	accessLevels := make([]gorgany.DynamicAccessActionType, 0)
 	for _, dynamicAccess := range dynamicAccesses {

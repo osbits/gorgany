@@ -1,9 +1,5 @@
 package proxy
 
-import (
-	"gorgany/db"
-)
-
 type IProviders []IProvider
 
 func (thiz IProviders) AddProvider(provider IProvider) {
@@ -21,10 +17,12 @@ type IRegistrar interface {
 	GetControllers() Controllers
 	RegisterProvider(provider IProvider)
 	GetProviders() IProviders
-	RegisterDbConfig(dbType db.Type, config map[string]any)
-	GetDbConfig(dbType db.Type) map[string]any
+	RegisterDbConnection(dbType DbType, connection IConnection)
+	GetDbConnections() map[DbType]IConnection
+	GetDbConnection(kind DbType) IConnection
 	RegisterCommand(command ICommand)
-	GetCommands() ICommands
+	GetCommands() map[string]ICommand
+	GetCommand(name string) ICommand
 	SetSessionLifetime(lifetime int)
 	GetSessionLifetime() int
 	SetUserService(service IUserService)
@@ -37,4 +35,12 @@ type IRegistrar interface {
 	GetLoggers() map[string]Logger
 	RegisterDomain(key string, domain interface{})
 	GetDomains() map[string]interface{}
+	RegisterMigration(migration IMigration)
+	GetMigrations() []IMigration
+	RegisterSeeder(seeder ISeeder)
+	GetSeeders() []ISeeder
+	SetSessionStorage(sessionStorage ISessionStorage)
+	GetSessionStorage() ISessionStorage
+	SetI18nManager(manager Ii18nManager)
+	GetI18nManager() Ii18nManager
 }

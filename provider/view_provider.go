@@ -1,4 +1,4 @@
-package view
+package provider
 
 import (
 	"gorgany/view"
@@ -11,6 +11,6 @@ func NewViewProvider() *Provider {
 type Provider struct {
 }
 
-func (thiz Provider) InitProvider() {
+func (thiz *Provider) InitProvider() {
 	view.SetEngine(view.NewNativeEngine("./resource/view", "html"))
 }

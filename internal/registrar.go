@@ -1,33 +1,50 @@
-package provider
+package internal
 
 import (
-	"gorgany/db"
 	"gorgany/proxy"
-	"log"
 )
 
-var FrameworkRegistrar proxy.IRegistrar
+var frameworkRegistrar proxy.IRegistrar
+
+func GetFrameworkRegistrar() proxy.IRegistrar {
+	return frameworkRegistrar
+}
+
+func init() {
+	frameworkRegistrar = &Registrar{
+		controllers:         make(proxy.Controllers, 0),
+		providers:           make(proxy.IProviders, 0),
+		dbConnections:       make(map[proxy.DbType]proxy.IConnection),
+		commands:            make(map[string]proxy.ICommand),
+		middlewares:         make([]proxy.IMiddleware, 0),
+		customErrorHandlers: make(map[string]proxy.ErrorHandler),
+		loggers:             make(map[string]proxy.Logger),
+		domains:             make(map[string]interface{}),
+		migrations:          make([]proxy.IMigration, 0),
+		seeders:             make([]proxy.ISeeder, 0),
+	}
+}
+
+func SetRegistrar(registrar proxy.IRegistrar) {
+	frameworkRegistrar = registrar
+}
 
 type Registrar struct {
 	homeUrl             string
 	controllers         proxy.Controllers
 	providers           proxy.IProviders
-	dbConfigs           map[db.Type]map[string]any // dbConfigs = { "postgres": {"host": "localhost", "port": "5432"...}, "mongo": {"host": "localhost"}
-	commands            proxy.ICommands
+	dbConnections       map[proxy.DbType]proxy.IConnection
+	commands            map[string]proxy.ICommand
 	sessionLifetime     int //in seconds
 	userService         proxy.IUserService
 	middlewares         []proxy.IMiddleware
 	customErrorHandlers map[string]proxy.ErrorHandler
 	loggers             map[string]proxy.Logger
 	domains             map[string]interface{}
-}
-
-func InitRegistrar() {
-	FrameworkRegistrar = &Registrar{
-		controllers: make(proxy.Controllers, 0),
-		providers:   make(proxy.IProviders, 0),
-		dbConfigs:   make(map[db.Type]map[string]any, 0),
-	}
+	migrations          []proxy.IMigration
+	seeders             []proxy.ISeeder
+	sessionStorage      proxy.ISessionStorage
+	i18nManager         proxy.Ii18nManager
 }
 
 func (thiz *Registrar) SetHomeUrl(url string) {
@@ -58,25 +75,20 @@ func (thiz *Registrar) GetProviders() proxy.IProviders {
 	return thiz.providers
 }
 
-func (thiz *Registrar) RegisterDbConfig(dbType db.Type, config map[string]any) {
-	thiz.dbConfigs[dbType] = make(map[string]any, 0)
-	thiz.dbConfigs[dbType] = config
-}
-
-func (thiz *Registrar) GetDbConfig(dbType db.Type) map[string]any {
-	config, ok := thiz.dbConfigs[dbType]
-	if !ok {
-		log.Panicf("Config for %v does not exist", dbType)
-	}
-	return config
-}
-
 func (thiz *Registrar) RegisterCommand(command proxy.ICommand) {
-	thiz.commands = append(thiz.commands, command)
+	if thiz.commands == nil {
+		thiz.commands = make(map[string]proxy.ICommand)
+	}
+
+	thiz.commands[command.GetName()] = command
 }
 
-func (thiz *Registrar) GetCommands() proxy.ICommands {
+func (thiz *Registrar) GetCommands() map[string]proxy.ICommand {
 	return thiz.commands
+}
+
+func (thiz *Registrar) GetCommand(name string) proxy.ICommand {
+	return thiz.commands[name]
 }
 
 func (thiz *Registrar) SetSessionLifetime(lifetime int) {
@@ -140,4 +152,48 @@ func (thiz *Registrar) RegisterDomain(key string, domain interface{}) {
 
 func (thiz *Registrar) GetDomains() map[string]interface{} {
 	return thiz.domains
+}
+
+func (thiz *Registrar) RegisterMigration(migration proxy.IMigration) {
+	thiz.migrations = append(thiz.migrations, migration)
+}
+
+func (thiz *Registrar) GetMigrations() []proxy.IMigration {
+	return thiz.migrations
+}
+
+func (thiz *Registrar) RegisterSeeder(seeder proxy.ISeeder) {
+	thiz.seeders = append(thiz.seeders, seeder)
+}
+
+func (thiz *Registrar) GetSeeders() []proxy.ISeeder {
+	return thiz.seeders
+}
+
+func (thiz *Registrar) SetSessionStorage(sessionStorage proxy.ISessionStorage) {
+	thiz.sessionStorage = sessionStorage
+}
+
+func (thiz *Registrar) GetSessionStorage() proxy.ISessionStorage {
+	return thiz.sessionStorage
+}
+
+func (thiz *Registrar) SetI18nManager(manager proxy.Ii18nManager) {
+	thiz.i18nManager = manager
+}
+
+func (thiz *Registrar) GetI18nManager() proxy.Ii18nManager {
+	return thiz.i18nManager
+}
+
+func (thiz *Registrar) RegisterDbConnection(kind proxy.DbType, connection proxy.IConnection) {
+	thiz.dbConnections[kind] = connection
+}
+
+func (thiz *Registrar) GetDbConnections() map[proxy.DbType]proxy.IConnection {
+	return thiz.dbConnections
+}
+
+func (thiz *Registrar) GetDbConnection(kind proxy.DbType) proxy.IConnection {
+	return thiz.dbConnections[kind]
 }

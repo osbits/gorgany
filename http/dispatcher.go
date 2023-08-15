@@ -2,17 +2,12 @@ package http
 
 import (
 	"fmt"
+	"gorgany/internal"
 	"gorgany/proxy"
 	"gorgany/util"
 	"net/http"
 	"reflect"
 )
-
-var defaultMiddlewares []proxy.IMiddleware
-
-func SetDefaultMiddlewares(middlewares []proxy.IMiddleware) {
-	defaultMiddlewares = middlewares
-}
 
 func Dispatch(w http.ResponseWriter, r *http.Request, handler proxy.HandlerFunc, middlewares []proxy.IMiddleware) {
 	message := Message{
@@ -30,7 +25,7 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler proxy.HandlerFunc,
 		}
 	}()
 
-	for _, middleware := range defaultMiddlewares {
+	for _, middleware := range internal.GetFrameworkRegistrar().GetMiddlewares() {
 		middlewares = util.Prepend[proxy.IMiddleware](middlewares, middleware)
 	}
 

@@ -3,26 +3,14 @@ package db
 import (
 	"fmt"
 	"gorgany/db"
+	"gorgany/internal"
+	"gorgany/proxy"
 	"gorm.io/gorm"
 	"os"
 	"time"
 )
 
-type MigrationClosure func(db *gorm.DB) error
-
-type Migration interface {
-	Up() MigrationClosure
-	Down() MigrationClosure
-	Name() string
-}
-
 type MigrateCommand struct {
-}
-
-var migrations = make([]Migration, 0)
-
-func AddMigration(migration Migration) {
-	migrations = append(migrations, migration)
 }
 
 func (thiz MigrateCommand) GetName() string {
@@ -54,7 +42,7 @@ func (thiz MigrateCommand) Execute() {
 }
 
 func (thiz MigrateCommand) up() {
-	gormInstance := db.GetWrapper("gorm").GetInstance().(*gorm.DB)
+	gormInstance := db.Builder(proxy.GormPostgresQL).GetConnection().Driver().(*gorm.DB)
 
 	err := gormInstance.AutoMigrate(&db.Migration{})
 	if err != nil {
@@ -62,7 +50,7 @@ func (thiz MigrateCommand) up() {
 	}
 
 	isError := false
-	for _, migration := range migrations {
+	for _, migration := range internal.GetFrameworkRegistrar().GetMigrations() {
 		var migrationDomain db.Migration
 		gormInstance.First(&migrationDomain, "name = ?", migration.Name())
 		if thiz.isMigrationExists(migrationDomain) {

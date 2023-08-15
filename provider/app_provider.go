@@ -1,13 +1,22 @@
 package provider
 
-type AppProvider struct{}
+import (
+	"gorgany/internal"
+	"gorgany/proxy"
+)
+
+type AppProvider struct {
+	AppRegistrar proxy.IRegistrar
+}
 
 func NewAppProvider() *AppProvider {
 	return &AppProvider{}
 }
 
 func (thiz *AppProvider) InitProvider() {
-	for _, provider := range FrameworkRegistrar.GetProviders() {
-		provider.InitProvider()
-	}
+	thiz.AppRegistrar = internal.GetFrameworkRegistrar()
+}
+
+func (thiz *AppProvider) RegisterProvider(provider proxy.IProvider) {
+	provider.InitProvider()
 }

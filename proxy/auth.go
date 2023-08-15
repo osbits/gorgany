@@ -1,6 +1,17 @@
 package proxy
 
-import "context"
+import (
+	"context"
+	"time"
+)
+
+type ISessionStorage interface {
+	NewSession(user Authenticable) (string, time.Time, error)
+	IsLoggedIn(sessionToken string) bool
+	Logout(sessionToken string)
+	CurrentUser(ctx context.Context) (Authenticable, error)
+	ClearExpiredSessions()
+}
 
 type Authenticable interface {
 	GetUsername() string

@@ -1,13 +1,10 @@
 package auth
 
-import "gorgany/proxy"
-
-var userService proxy.IUserService
-
-func SetAuthEntityService(service proxy.IUserService) {
-	userService = service
-}
+import (
+	"gorgany/internal"
+	"gorgany/proxy"
+)
 
 func GetAuthEntityService() proxy.IUserService {
-	return userService
+	return internal.GetFrameworkRegistrar().GetUserService()
 }

@@ -3,7 +3,7 @@ package domain
 import (
 	"bytes"
 	"fmt"
-	"gorgany/provider"
+	"gorgany/internal"
 	"gorgany/util"
 	"os"
 	"path/filepath"
@@ -28,7 +28,7 @@ func (thiz RegisterDomainsCommand) Execute() {
 
 	moduleName := util.ModuleName()
 
-	registeredModels := provider.FrameworkRegistrar.GetDomains()
+	registeredModels := internal.GetFrameworkRegistrar().GetDomains()
 
 	registers := make([]string, 0)
 	imports := make([]string, 0)

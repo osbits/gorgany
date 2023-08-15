@@ -11,6 +11,5 @@ func ResolveAuthService(ctx context.Context) proxy.AuthService {
 	if message.IsApiNamespace() {
 		return NewJwtService()
 	}
-
 	return GetSessionStorage()
 }

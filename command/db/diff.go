@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"gorgany/db"
 	"gorgany/db/gorm/plugin"
-	"gorgany/provider"
+	"gorgany/internal"
+	"gorgany/proxy"
 	"gorgany/util"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
@@ -30,18 +31,20 @@ func (thiz DiffCommand) GetName() string {
 }
 
 func (thiz DiffCommand) Execute() {
-	gormInstance := db.GetWrapper("gorm").GetInstance().(*gorm.DB)
+	conn := db.Builder(proxy.GormPostgresQL)
 
-	tx := gormInstance.Begin()
-	defer tx.Rollback()
+	conn = conn.StartTransaction()
+	defer conn.RollbackTransaction()
+
+	gormDb := conn.GetConnection().Driver().(*gorm.DB)
 
 	var statements []string
-	tx.Callback().Raw().Register("record_migration", func(tx *gorm.DB) {
+	gormDb.Callback().Raw().Register("record_migration", func(tx *gorm.DB) {
 		statements = append(statements, tx.Statement.SQL.String())
 	})
 
 	moduleName := util.ModuleName()
-	modelsMap := provider.FrameworkRegistrar.GetDomains()
+	modelsMap := internal.GetFrameworkRegistrar().GetDomains()
 
 	pkgInfos, err := util.ScanDir("./pkg/domain")
 	if err != nil {
@@ -56,12 +59,13 @@ func (thiz DiffCommand) Execute() {
 
 			key := moduleName + "/" + pkgPath + "." + st.Name
 			_, ok := modelsMap[key]
+			fmt.Println(key)
 			if !ok {
 				fmt.Println("New domain detected, please register it.")
 				fmt.Println("Please complete one of the following steps:")
 				fmt.Println("- Register it manually, just add it to models registrar(registrar/models.go)")
 				fmt.Println("- Run `go run cmd/cli.go domains:register`")
-				//return
+				return
 			}
 		}
 	}
@@ -72,7 +76,7 @@ func (thiz DiffCommand) Execute() {
 		models = append(models, model)
 	}
 
-	if err := tx.Migrator().AutoMigrate(models...); err != nil {
+	if err := gormDb.AutoMigrate(models...); err != nil {
 		fmt.Println(err)
 		return
 	}
@@ -85,16 +89,16 @@ func (thiz DiffCommand) Execute() {
 
 			if rField.Anonymous && rField.Type.Kind() == reflect.Struct {
 				tableName := namingStrategyService.TableName(rField.Type.Name())
-				if !isColumnExists(tx, tableName, plugin.StructModelColumn()) {
+				if !isColumnExists(tableName, plugin.StructModelColumn()) {
 					statements = append(statements, fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS model_struct varchar(255)", tableName))
 				}
 			}
 
-			if tx.Migrator().HasConstraint(model, rField.Name) {
+			if gormDb.Migrator().HasConstraint(model, rField.Name) {
 				continue
 			}
 
-			if err := tx.Migrator().CreateConstraint(model, rField.Name); err != nil {
+			if err := gormDb.Migrator().CreateConstraint(model, rField.Name); err != nil {
 				fmt.Println(err)
 				return
 			}
@@ -104,10 +108,10 @@ func (thiz DiffCommand) Execute() {
 	thiz.generateMigration(statements)
 }
 
-func isColumnExists(db *gorm.DB, tableName string, columnName string) bool {
+func isColumnExists(tableName string, columnName string) bool {
 	var count int64
-	result := db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", tableName, columnName).Scan(&count)
-	if result.Error != nil {
+	err := db.Builder(proxy.GormPostgresQL).Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", &count, tableName, columnName)
+	if err != nil {
 		return false
 	}
 	return count > 0

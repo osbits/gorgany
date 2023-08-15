@@ -5,7 +5,7 @@ import (
 	"gorgany/auth"
 	"gorgany/http"
 	"gorgany/http/router"
-	"gorgany/provider"
+	"gorgany/internal"
 	"gorgany/proxy"
 	"gorgany/util"
 	"net/url"
@@ -19,7 +19,7 @@ type LoginController struct{}
 
 func (thiz LoginController) ShowLogin(message http.Message) {
 	if message.IsLoggedIn() {
-		message.Redirect(provider.FrameworkRegistrar.GetHomeUrl(), 301)
+		message.Redirect(internal.GetFrameworkRegistrar().GetHomeUrl(), 301)
 	}
 
 	message.Render("auth/login", nil)
@@ -27,7 +27,7 @@ func (thiz LoginController) ShowLogin(message http.Message) {
 
 func (thiz LoginController) Login(message http.Message) {
 	if message.IsLoggedIn() {
-		message.Redirect(provider.FrameworkRegistrar.GetHomeUrl(), 301)
+		message.Redirect(internal.GetFrameworkRegistrar().GetHomeUrl(), 301)
 	}
 
 	body := message.GetBodyContent()
@@ -47,7 +47,7 @@ func (thiz LoginController) Login(message http.Message) {
 
 	message.Login(user)
 
-	message.Redirect(provider.FrameworkRegistrar.GetHomeUrl(), 301)
+	message.Redirect(internal.GetFrameworkRegistrar().GetHomeUrl(), 301)
 }
 
 func (thiz LoginController) Logout(message http.Message) {
