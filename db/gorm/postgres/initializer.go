@@ -32,6 +32,6 @@ func NewGormPostgresConnection(config map[string]any) proxy.IConnection {
 }
 
 func getDataSource(config map[string]any) string {
-	return fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		config["host"].(string), config["port"].(int), config["username"].(string), config["password"].(string), config["db"].(string), config["ssl"].(string))
+	return fmt.Sprintf("host=%s port=%v user=%s password=%s dbname=%s sslmode=%s",
+		config["host"], config["port"], config["username"], config["password"], config["db"], config["ssl"])
 }
