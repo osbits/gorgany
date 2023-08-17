@@ -56,3 +56,27 @@ type IQueryBuilder interface {
 type GormAssociation interface {
 	Association(association string) *gorm.Association
 }
+
+type IOrm[T any] interface {
+	Select(fields ...string) IOrm[T]
+	Join(table string, on string) IOrm[T]
+	WhereEqual(field string, value interface{}) IOrm[T]
+	Where(field string, operator string, value interface{}) IOrm[T]
+	WhereClosure(closure func(builder IQueryBuilder) IQueryBuilder) IOrm[T]
+	WhereIn(field string, values ...interface{}) IOrm[T]
+	WhereAnd(closure func(builder IQueryBuilder) IQueryBuilder) IOrm[T]
+	WhereOr(closure func(builder IQueryBuilder) IQueryBuilder) IOrm[T]
+	OrderBy(field string, direction string) IOrm[T]
+	Relation(relation string) IOrm[T]
+	Limit(limit int) IOrm[T]
+	Offset(offset int) IOrm[T]
+	Get() (*T, error)
+	Count() (int64, error)
+	List() ([]*T, error)
+	Save() error
+	Delete() error
+}
+
+type DbTyper interface {
+	GetDbType() DbType
+}

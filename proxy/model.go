@@ -1,5 +1,9 @@
 package proxy
 
+type IDomain[T any] interface {
+	Orm() IOrm[T]
+}
+
 type IFile interface {
 	FullPath() string
 	PublicPath() string

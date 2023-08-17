@@ -228,11 +228,6 @@ func (thiz *Builder) Insert(model any) error {
 }
 
 func (thiz *Builder) Save(model any) error {
-	rvScan := reflect.ValueOf(model)
-	if rvScan.Kind() != reflect.Ptr {
-		return fmt.Errorf("Dest must be pointer")
-	}
-
 	res := thiz.GetDriver().Save(model)
 	thiz.clearQueryParams()
 	return res.Error
@@ -286,7 +281,7 @@ func (thiz *Builder) RollbackTransaction() proxy.IQueryBuilder {
 	return thiz
 }
 
-func (thiz Builder) Raw(sql string, scan any, values ...any) error {
+func (thiz *Builder) Raw(sql string, scan any, values ...any) error {
 	res := thiz.GetDriver().Raw(sql, values)
 
 	rvScan := reflect.ValueOf(scan)
@@ -302,7 +297,7 @@ func (thiz Builder) Raw(sql string, scan any, values ...any) error {
 	return res.Error
 }
 
-func (thiz Builder) Association(association string) *gorm.Association {
+func (thiz *Builder) Association(association string) *gorm.Association {
 	if thiz.copyGorm == nil {
 		panic("You must specify model. Call postgres.Builder.FromModel(model any)")
 	}
