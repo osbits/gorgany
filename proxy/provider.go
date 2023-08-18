@@ -6,6 +6,11 @@ type IProvider interface {
 	InitProvider()
 }
 
+type IAppProvider interface {
+	IProvider
+	RegisterProvider(provider IProvider)
+}
+
 type IRegistrar interface {
 	SetHomeUrl(url string)
 	GetHomeUrl() string

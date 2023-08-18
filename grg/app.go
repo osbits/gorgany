@@ -142,7 +142,7 @@ type LockFiles struct {
 
 // Server application
 
-func NewServerApp(appProvider proxy.IProvider) *ServerApp {
+func NewServerApp(appProvider proxy.IAppProvider) *ServerApp {
 	app := &ServerApp{}
 	app.appProvider = appProvider
 	app.execType = gorgany.Server
@@ -192,7 +192,7 @@ func (s *ServerApp) Shutdown(ctx context.Context) error {
 
 //Console application
 
-func NewConsoleApp(appProvider proxy.IProvider) *ConsoleApp {
+func NewConsoleApp(appProvider proxy.IAppProvider) *ConsoleApp {
 	app := &ConsoleApp{}
 	app.appProvider = appProvider
 	app.execType = gorgany.Cli
