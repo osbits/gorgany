@@ -1,7 +1,7 @@
 package proxy
 
 type IDomain[T any] interface {
-	Orm() IOrm[T]
+	Query() IOrm[T]
 }
 
 type IFile interface {
