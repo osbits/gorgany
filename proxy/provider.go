@@ -2,10 +2,6 @@ package proxy
 
 type IProviders []IProvider
 
-func (thiz IProviders) AddProvider(provider IProvider) {
-	thiz = append(thiz, provider)
-}
-
 type IProvider interface {
 	InitProvider()
 }
@@ -33,6 +29,7 @@ type IRegistrar interface {
 	GetErrorHandlers() map[string]ErrorHandler
 	RegisterLogger(key string, logger Logger)
 	GetLoggers() map[string]Logger
+	GetLogger(key string) Logger
 	RegisterDomain(key string, domain interface{})
 	GetDomains() map[string]interface{}
 	RegisterMigration(migration IMigration)
@@ -43,4 +40,6 @@ type IRegistrar interface {
 	GetSessionStorage() ISessionStorage
 	SetI18nManager(manager Ii18nManager)
 	GetI18nManager() Ii18nManager
+	RegisterViewEngine(engine IViewEngine)
+	GetViewEngine() IViewEngine
 }

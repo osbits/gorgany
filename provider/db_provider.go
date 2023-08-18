@@ -27,15 +27,16 @@ func (thiz *DbProvider) InitProvider() {
 		}
 		conn := thiz.resolveDb(dbType, configMap)
 		if conn != nil {
-			thiz.RegisterDbBuilder(dbType, conn)
+			thiz.RegisterDbConnection(dbType, conn)
 		} else {
-			log.Log("").Infof("Builder for %s did not initialize\n", dbType)
+			log.Log("").Infof("Connection for %s did not initialize\n", dbType)
 		}
 	}
 }
 
-func (thiz *DbProvider) RegisterDbBuilder(dbType proxy.DbType, connection proxy.IConnection) {
+func (thiz *DbProvider) RegisterDbConnection(dbType proxy.DbType, connection proxy.IConnection) {
 	internal.GetFrameworkRegistrar().RegisterDbConnection(dbType, connection)
+	log.Log("").Infof("Connection for %s initialized", dbType)
 }
 
 func (thiz *DbProvider) resolveDb(kind proxy.DbType, config map[string]any) proxy.IConnection {

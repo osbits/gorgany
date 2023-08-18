@@ -45,6 +45,7 @@ type Registrar struct {
 	seeders             []proxy.ISeeder
 	sessionStorage      proxy.ISessionStorage
 	i18nManager         proxy.Ii18nManager
+	viewEngine          proxy.IViewEngine
 }
 
 func (thiz *Registrar) SetHomeUrl(url string) {
@@ -143,6 +144,10 @@ func (thiz *Registrar) GetLoggers() map[string]proxy.Logger {
 	return thiz.loggers
 }
 
+func (thiz *Registrar) GetLogger(key string) proxy.Logger {
+	return thiz.loggers[key]
+}
+
 func (thiz *Registrar) RegisterDomain(key string, domain interface{}) {
 	if thiz.domains == nil {
 		thiz.domains = make(map[string]interface{})
@@ -196,4 +201,12 @@ func (thiz *Registrar) GetDbConnections() map[proxy.DbType]proxy.IConnection {
 
 func (thiz *Registrar) GetDbConnection(kind proxy.DbType) proxy.IConnection {
 	return thiz.dbConnections[kind]
+}
+
+func (thiz *Registrar) RegisterViewEngine(engine proxy.IViewEngine) {
+	thiz.viewEngine = engine
+}
+
+func (thiz *Registrar) GetViewEngine() proxy.IViewEngine {
+	return thiz.viewEngine
 }

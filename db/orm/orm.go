@@ -110,7 +110,7 @@ func (thiz *GorganyOrm[T]) Save() error {
 
 func (thiz *GorganyOrm[T]) Delete() error {
 	thiz.setBuilder()
-	return thiz.builder.DeleteModel(thiz)
+	return thiz.builder.DeleteModel(thiz.Model)
 }
 
 func (thiz *GorganyOrm[T]) Association(association string) *gorm.Association {
