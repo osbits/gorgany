@@ -1,6 +1,9 @@
 package command
 
-import "fmt"
+import (
+	"fmt"
+	"gorgany"
+)
 
 type VersionCommand struct {
 }
@@ -10,5 +13,5 @@ func (thiz VersionCommand) GetName() string {
 }
 
 func (thiz VersionCommand) Execute() {
-	fmt.Println("Gorgany framework. Version 1.0")
+	fmt.Printf("Gorgany framework. Version %s\n", gorgany.FrameworkVersion)
 }

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"gorgany"
 	error2 "gorgany/error"
+	"gorgany/grg"
 	"gorgany/proxy"
 	"reflect"
 )
@@ -43,7 +44,7 @@ func Catch(err error, message proxy.HttpMessage) {
 
 func processDefaultError(err error, message proxy.HttpMessage) {
 	error2.PrintError(err)
-	if gorgany.GetRunMode() == gorgany.Dev {
+	if grg.GetRunMode() == gorgany.Dev {
 		message.Response(fmt.Sprintf("Oops... 500 error.\n %v \n%s", err, error2.GetStacktrace()), 500)
 	} else {
 		message.Response("Oops... Internal error.", 500)

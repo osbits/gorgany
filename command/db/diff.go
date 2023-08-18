@@ -59,7 +59,6 @@ func (thiz DiffCommand) Execute() {
 
 			key := moduleName + "/" + pkgPath + "." + st.Name
 			_, ok := modelsMap[key]
-			fmt.Println(key)
 			if !ok {
 				fmt.Println("New domain detected, please register it.")
 				fmt.Println("Please complete one of the following steps:")
