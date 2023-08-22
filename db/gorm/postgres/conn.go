@@ -4,11 +4,15 @@ import (
 	"fmt"
 	"github.com/spf13/viper"
 	"gorgany/proxy"
+	"gorgany/util"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 	"reflect"
 	"strings"
+	"sync"
 )
+
+const RecursiveRelationMaxDeep = 2
 
 type GormPostgresConnection struct {
 	gormInstance *gorm.DB
@@ -22,8 +26,17 @@ func (thiz *GormPostgresConnection) Builder() proxy.IQueryBuilder {
 	return NewBuilder(thiz)
 }
 
+type Config struct {
+	PreloadingMaxDeep int
+}
+
+func (thiz Config) SetPreloadingMaxDeep(maxDeep int) {
+	thiz.PreloadingMaxDeep = maxDeep
+}
+
 type Builder struct {
 	gormInstance    proxy.IConnection
+	config          Config
 	selectStatement []string
 	table           string
 	join            []string
@@ -37,6 +50,14 @@ type Builder struct {
 func NewBuilder(gormInstance proxy.IConnection) *Builder {
 	return &Builder{
 		gormInstance: gormInstance,
+		config:       Config{PreloadingMaxDeep: RecursiveRelationMaxDeep},
+	}
+}
+
+func NewBuilderWithConfig(gormInstance proxy.IConnection, config Config) *Builder {
+	return &Builder{
+		gormInstance: gormInstance,
+		config:       config,
 	}
 }
 
@@ -188,9 +209,20 @@ func (thiz *Builder) BuildOffset() string {
 }
 
 func (thiz *Builder) Get(dest any) error {
-	rvScan := reflect.ValueOf(dest)
-	if rvScan.Kind() != reflect.Ptr {
+	rvDest := reflect.ValueOf(dest)
+	if rvDest.Kind() != reflect.Ptr {
 		return fmt.Errorf("Dest must be pointer")
+	}
+
+	sc, err := schema.Parse(dest, &sync.Map{}, schema.NamingStrategy{})
+	if err != nil {
+		return err
+	}
+
+	thiz.FromModel(rvDest.Elem().Interface())
+	keys := thiz.walkNestedRelations(sc.Relationships.Relations, "", 0)
+	for _, key := range keys {
+		thiz.Relation(key)
 	}
 
 	res := thiz.GetDriver().Raw(thiz.ToQuery()).First(dest)
@@ -206,9 +238,26 @@ func (thiz *Builder) Count(dest *int64) error {
 }
 
 func (thiz *Builder) List(dest any) error {
-	rvScan := reflect.ValueOf(dest)
-	if rvScan.Kind() != reflect.Ptr {
+	rvDest := reflect.ValueOf(dest)
+	if rvDest.Kind() != reflect.Ptr {
 		return fmt.Errorf("Dest must be pointer")
+	}
+	rvDestSlice := rvDest.Elem()
+	if rvDestSlice.Kind() != reflect.Slice {
+		return fmt.Errorf("Dest must be slice")
+	}
+
+	model := util.GetElementOfSlice(rvDestSlice.Interface())
+	thiz.FromModel(model)
+
+	sc, err := schema.Parse(model, &sync.Map{}, schema.NamingStrategy{})
+	if err != nil {
+		return err
+	}
+
+	keys := thiz.walkNestedRelations(sc.Relationships.Relations, "", 0)
+	for _, key := range keys {
+		thiz.Relation(key)
 	}
 
 	res := thiz.GetDriver().Raw(thiz.ToQuery()).Find(dest)
@@ -330,4 +379,34 @@ func (thiz *Builder) values(values ...interface{}) string {
 		result += thiz.value(value) + ","
 	}
 	return result[:len(result)-1]
+}
+
+func (thiz *Builder) walkNestedRelations(relations map[string]*schema.Relationship, parentRelationPath string, depth int) []string {
+	keys := make([]string, 0)
+
+	for name, nestedRelation := range relations {
+		gormTag := nestedRelation.Field.Tag.Get("grgorm")
+		splitGormTag := strings.Split(gormTag, ",")
+		preload := false
+		for _, value := range splitGormTag {
+			if strings.Contains(value, "preload") {
+				preload = true
+			}
+		}
+		if !preload {
+			continue
+		}
+
+		relationPath := name
+		if parentRelationPath != "" {
+			relationPath = parentRelationPath + "." + name
+		}
+		keys = append(keys, relationPath)
+
+		if depth < thiz.config.PreloadingMaxDeep {
+			keys = append(keys, thiz.walkNestedRelations(nestedRelation.FieldSchema.Relationships.Relations, relationPath, depth+1)...)
+		}
+	}
+
+	return keys
 }

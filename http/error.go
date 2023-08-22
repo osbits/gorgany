@@ -17,10 +17,6 @@ var errorHandlerMap = map[string]proxy.ErrorHandler{
 	"JwtAuthError":         processJwtAuthError,
 }
 
-func SetErrorHandler(errType string, handlerFunc proxy.ErrorHandler) {
-	errorHandlerMap[errType] = handlerFunc
-}
-
 func Catch(err error, message proxy.HttpMessage) {
 	reflectedErr := reflect.TypeOf(err)
 	if reflectedErr.Kind() == reflect.Ptr {
