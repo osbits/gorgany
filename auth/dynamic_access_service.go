@@ -86,7 +86,7 @@ func (thiz DynamicAccessService) IsAbleToAction(record model.DomainExtension, us
 
 func (thiz DynamicAccessService) ResolveAccessForRecord(record model.DomainExtension, user proxy.Authenticable) bool {
 	reflectedCurrentUserValue := reflect.ValueOf(user.(model.DomainExtension).GetDomain())
-	reflectedDomainType := reflect.TypeOf(record.GetDomain()).Elem()
+	reflectedDomainType := util.IndirectType(reflect.TypeOf(record))
 
 	domainName := reflectedDomainType.Name()
 
@@ -113,7 +113,7 @@ func (thiz DynamicAccessService) ResolveAccessForRecord(record model.DomainExten
 
 func (thiz DynamicAccessService) ResolveActionsForRecord(record model.DomainExtension, user proxy.Authenticable) []gorgany.DynamicAccessActionType {
 	reflectedCurrentUserValue := reflect.ValueOf(user.(model.DomainExtension).GetDomain())
-	reflectedDomainType := reflect.TypeOf(record.GetDomain()).Elem()
+	reflectedDomainType := util.IndirectType(reflect.TypeOf(record))
 
 	domainName := reflectedDomainType.Name()
 
@@ -158,7 +158,7 @@ func (thiz DynamicAccessService) resolveAccessLevel(dynamicAccess *model.Dynamic
 
 func (thiz DynamicAccessService) isAccessAllowed(record model.DomainExtension, field string, value string) bool {
 	reflectedRecordValue := reflect.ValueOf(record.GetDomain())
-	reflectedField := reflectedRecordValue.Elem().FieldByName(field)
+	reflectedField := util.IndirectValue(reflectedRecordValue).FieldByName(field)
 	val := fmt.Sprintf("%v", reflectedField.Interface())
 	if val == value {
 		return true

@@ -41,7 +41,6 @@ func (thiz Resolver) ResolveCommand(commandName string) proxy.ICommand {
 	}
 
 	rtCommand := rvCommand.Type()
-
 	commandFlags := flag.NewFlagSet(commandName, flag.ExitOnError)
 
 	flags := thiz.parseDefinedFlags(rtCommand)

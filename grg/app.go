@@ -14,7 +14,6 @@ import (
 	"gorgany/http/router"
 	"gorgany/log"
 	"gorgany/proxy"
-	log2 "log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -49,7 +48,6 @@ func (s *app) Run() {
 	if err := config.Parse("config/config"); err != nil {
 		s.log("").Panicf("Failed load config file: %s", err.Error())
 	}
-
 	if viper.GetBool("app.gorgany.validate") {
 		err := s.validate()
 		if err != nil {
@@ -117,12 +115,12 @@ func (s *app) parseLock() (*Lock, error) {
 }
 
 func (s *app) log(key string) proxy.Logger {
-	if s.execType == gorgany.Cli {
-		defaultLogger := &log.DefaultLogger{}
-		castedLogger := defaultLogger.Engine().(*log2.Logger)
-		castedLogger.SetOutput(&EmptyWriter{})
-		return defaultLogger
-	}
+	//if s.execType == gorgany.Cli {
+	//	defaultLogger := &log.DefaultLogger{}
+	//	castedLogger := defaultLogger.Engine().(*log2.Logger)
+	//	castedLogger.SetOutput(&EmptyWriter{})
+	//	return defaultLogger
+	//}
 
 	return log.Log(key)
 }

@@ -77,7 +77,12 @@ func (thiz *Builder) FromModel(model any) proxy.IQueryBuilder {
 
 	namingStrategy := schema.NamingStrategy{}
 	rtModel := reflect.TypeOf(model)
-	thiz.From(namingStrategy.TableName(rtModel.Name()))
+
+	if tabler, ok := model.(schema.Tabler); ok {
+		thiz.From(tabler.TableName())
+	} else {
+		thiz.From(namingStrategy.TableName(rtModel.Name()))
+	}
 
 	return thiz
 }

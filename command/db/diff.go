@@ -31,15 +31,12 @@ func (thiz DiffCommand) GetName() string {
 }
 
 func (thiz DiffCommand) Execute() {
-	conn := db.Builder(proxy.GormPostgresQL)
-
-	conn = conn.StartTransaction()
-	defer conn.RollbackTransaction()
-
-	gormDb := conn.GetConnection().Driver().(*gorm.DB)
+	gormDb := db.Builder(proxy.GormPostgresQL).GetConnection().Driver().(*gorm.DB)
+	tx := gormDb.Begin()
+	defer tx.Rollback()
 
 	var statements []string
-	gormDb.Callback().Raw().Register("record_migration", func(tx *gorm.DB) {
+	tx.Callback().Raw().Register("record_migration", func(tx *gorm.DB) {
 		statements = append(statements, tx.Statement.SQL.String())
 	})
 
@@ -53,7 +50,7 @@ func (thiz DiffCommand) Execute() {
 
 	for pkgPath, info := range pkgInfos {
 		for _, st := range info.Structs {
-			if st.FindAnnotationByName("@Embedded") != nil {
+			if st.FindAnnotationByName("@Embedded") != nil || st.FindAnnotationByName("@Abstract") != nil {
 				continue
 			}
 
@@ -64,7 +61,7 @@ func (thiz DiffCommand) Execute() {
 				fmt.Println("Please complete one of the following steps:")
 				fmt.Println("- Register it manually, just add it to models registrar(registrar/models.go)")
 				fmt.Println("- Run `go run cmd/cli.go domains:register`")
-				return
+				//return
 			}
 		}
 	}
@@ -75,7 +72,7 @@ func (thiz DiffCommand) Execute() {
 		models = append(models, model)
 	}
 
-	if err := gormDb.AutoMigrate(models...); err != nil {
+	if err := tx.AutoMigrate(models...); err != nil {
 		fmt.Println(err)
 		return
 	}
@@ -93,11 +90,11 @@ func (thiz DiffCommand) Execute() {
 				}
 			}
 
-			if gormDb.Migrator().HasConstraint(model, rField.Name) {
+			if tx.Migrator().HasConstraint(model, rField.Name) {
 				continue
 			}
 
-			if err := gormDb.Migrator().CreateConstraint(model, rField.Name); err != nil {
+			if err := tx.Migrator().CreateConstraint(model, rField.Name); err != nil {
 				fmt.Println(err)
 				return
 			}
