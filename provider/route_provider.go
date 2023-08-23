@@ -23,8 +23,9 @@ func NewRouteProvider() *RouteProvider {
 }
 
 func (thiz *RouteProvider) InitProvider() {
-	router.SetRouter(router.NewGorganyRouter())
-	thiz.router = router.GetRouter()
+	r := router.NewGorganyRouter()
+	internal.GetFrameworkRegistrar().RegisterRouter(r)
+	thiz.router = r
 }
 
 func (thiz *RouteProvider) RegisterController(controller proxy.IController) {

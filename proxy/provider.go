@@ -47,4 +47,6 @@ type IRegistrar interface {
 	GetI18nManager() Ii18nManager
 	RegisterViewEngine(engine IViewEngine)
 	GetViewEngine() IViewEngine
+	RegisterRouter(router Router)
+	GetRouter() Router
 }

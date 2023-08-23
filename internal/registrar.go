@@ -46,6 +46,7 @@ type Registrar struct {
 	sessionStorage      proxy.ISessionStorage
 	i18nManager         proxy.Ii18nManager
 	viewEngine          proxy.IViewEngine
+	router              proxy.Router
 }
 
 func (thiz *Registrar) SetHomeUrl(url string) {
@@ -209,4 +210,12 @@ func (thiz *Registrar) RegisterViewEngine(engine proxy.IViewEngine) {
 
 func (thiz *Registrar) GetViewEngine() proxy.IViewEngine {
 	return thiz.viewEngine
+}
+
+func (thiz *Registrar) RegisterRouter(router proxy.Router) {
+	thiz.router = router
+}
+
+func (thiz *Registrar) GetRouter() proxy.Router {
+	return thiz.router
 }
