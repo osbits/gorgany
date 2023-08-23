@@ -60,7 +60,7 @@ func (thiz DynamicAccessService) ResolveFilterAccessCondition(domain any, user p
 
 func (thiz DynamicAccessService) IsAbleToAction(record model.DomainExtension, user proxy.Authenticable, action gorgany.DynamicAccessActionType) bool {
 	reflectedCurrentUserValue := reflect.ValueOf(user.(model.DomainExtension).GetDomain())
-	reflectedDomainType := reflect.TypeOf(record.GetDomain()).Elem()
+	reflectedDomainType := reflect.TypeOf(record).Elem()
 
 	domainName := reflectedDomainType.Name()
 
