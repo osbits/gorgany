@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	http2 "gorgany/http"
+	"gorgany/proxy"
 	"log"
 	"net/http"
 	"os"
@@ -197,7 +197,7 @@ func AllowAll() *Cors {
 
 // Handler apply the CORS specification on the request, and add relevant CORS headers
 // as necessary.
-func (c *Cors) Handle(message http2.Message) bool {
+func (c *Cors) Handle(message proxy.HttpMessage) bool {
 	if message.GetRequest().Method == http.MethodOptions && message.GetHeader().Get("Access-Control-Request-Method") != "" {
 		c.logf("Handler: Preflight request")
 		isPreflightHandled := c.handlePreflight(message.GetWriter(), message.GetRequest())

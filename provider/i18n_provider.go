@@ -3,6 +3,8 @@ package provider
 import (
 	"github.com/spf13/viper"
 	"gorgany/i18n"
+	"gorgany/internal"
+	"gorgany/proxy"
 )
 
 type I18nProvider struct{}
@@ -16,7 +18,7 @@ func (thiz *I18nProvider) InitProvider() {
 	defaultLang := viper.GetString("i18n.lang.default")
 	availableLangs = append(availableLangs, defaultLang)
 
-	i18nConfigs := make(map[string]*viper.Viper)
+	i18nConfigs := make(map[string]proxy.Ii18nConfig)
 	for _, lang := range availableLangs {
 		v := viper.New()
 		v.AddConfigPath("resource/i18n")
@@ -32,5 +34,9 @@ func (thiz *I18nProvider) InitProvider() {
 		Configs: i18nConfigs,
 	}
 
-	i18n.SetManager(manager)
+	thiz.SetManager(manager)
+}
+
+func (thiz I18nProvider) SetManager(manager proxy.Ii18nManager) {
+	internal.GetFrameworkRegistrar().SetI18nManager(manager)
 }

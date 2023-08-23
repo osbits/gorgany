@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
+	"gorgany/http/router"
 	"gorgany/i18n"
+	"gorgany/internal"
 	"gorgany/proxy"
 	"gorgany/util"
 	"io"
@@ -13,16 +15,6 @@ import (
 	"regexp"
 	"strings"
 )
-
-var engine Engine
-
-func SetEngine(e Engine) {
-	engine = e
-}
-
-func GetEngine() Engine {
-	return engine
-}
 
 // RequestWrapper
 func NewRequestWrapper(request *http.Request) *requestWrapper {
@@ -33,20 +25,15 @@ type requestWrapper struct {
 	request *http.Request
 }
 
-// Engine
-type Engine interface {
-	Render(w io.Writer, templateName string, opts map[string]any) error
-}
-
 func NewEngineRenderer(requestWrapper *requestWrapper) *EngineRenderer {
 	return &EngineRenderer{
-		Engine:         engine,
+		Engine:         internal.GetFrameworkRegistrar().GetViewEngine(),
 		requestWrapper: requestWrapper,
 	}
 }
 
 type EngineRenderer struct {
-	Engine         Engine
+	Engine         proxy.IViewEngine
 	requestWrapper *requestWrapper
 }
 
@@ -130,7 +117,7 @@ func (thiz EngineRenderer) registerFunctions(opts map[string]any) map[string]any
 		"ChangeLanguageLink":      thiz.ChangeLanguageLink,
 		"CurrentUrl":              thiz.CurrentUrl,
 		"CreateLinkWithNamespace": thiz.CreateLinkWithNamespace,
-		"UrlByName":               proxy.GetRouter().UrlByNameSequence,
+		"UrlByName":               router.GetRouter().UrlByNameSequence,
 	}
 
 	return opts

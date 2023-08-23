@@ -1,5 +1,9 @@
 package proxy
 
+type IDomain[T any] interface {
+	Query() IOrm[T]
+}
+
 type IFile interface {
 	FullPath() string
 	PublicPath() string
@@ -9,4 +13,9 @@ type IFile interface {
 	IsExists() bool
 	IsNil() bool
 	Delete() error
+}
+
+type ILocalizedString interface {
+	Text(lang string) string
+	Map() map[string]string
 }

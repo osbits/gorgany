@@ -2,6 +2,7 @@ package view
 
 import (
 	"fmt"
+	"gorgany/proxy"
 	template2 "html/template"
 	"io"
 	"os"
@@ -9,7 +10,7 @@ import (
 	"regexp"
 )
 
-func NewNativeEngine(viewDir, ext string) Engine {
+func NewNativeEngine(viewDir, ext string) proxy.IViewEngine {
 	return &NativeEngine{
 		viewDir: viewDir,
 		ext:     ext,

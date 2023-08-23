@@ -1,4 +1,4 @@
-package http
+package router
 
 import (
 	"fmt"
@@ -38,7 +38,7 @@ func (thiz GorganyRouter) RegisterRoute(route proxy.IRouteConfig) {
 }
 
 func (thiz GorganyRouter) UrlByName(name string, params map[string]any) string {
-	route := proxy.GetRouter().RouteByName(name)
+	route := GetRouter().RouteByName(name)
 	if route == nil {
 		return ""
 	}
@@ -47,7 +47,7 @@ func (thiz GorganyRouter) UrlByName(name string, params map[string]any) string {
 }
 
 func (thiz GorganyRouter) UrlByNameSequence(name string, params ...any) string {
-	route := proxy.GetRouter().RouteByName(name)
+	route := GetRouter().RouteByName(name)
 	if route == nil {
 		return ""
 	}
@@ -101,9 +101,9 @@ func (thiz GorganyRouter) replaceRouteSegmentsSequence(routePattern string, para
 
 type RouteConfig struct {
 	Path        string
-	Method      Method
-	Handler     HandlerFunc
-	Middlewares []IMiddleware
+	Method      proxy.Method
+	Handler     proxy.HandlerFunc
+	Middlewares []proxy.IMiddleware
 	Namespace   string
 	Name        string
 }

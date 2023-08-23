@@ -3,12 +3,13 @@ package view
 import (
 	"fmt"
 	"github.com/eknkc/amber"
+	"gorgany/proxy"
 	template2 "html/template"
 	"io"
 	"path"
 )
 
-func NewAmberEngine(dir string, extension string) Engine {
+func NewAmberEngine(dir string, extension string) proxy.IViewEngine {
 	return &AmberEngine{viewDir: dir, ext: extension}
 }
 

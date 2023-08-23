@@ -6,38 +6,21 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/google/uuid"
+	"gorgany/internal"
 	"gorgany/proxy"
 	"time"
 )
 
-// session storage is a place where we keep all sessions
-var sessionStorage ISessionStorage
-var sessionLifetime int
-
-func GetSessionStorage() ISessionStorage {
-	return sessionStorage
+func GetSessionStorage() proxy.ISessionStorage {
+	return internal.GetFrameworkRegistrar().GetSessionStorage()
 }
 
-func SetSessionStorage(storage ISessionStorage, sessionLife int) {
-	sessionLifetime = sessionLife
-	sessionStorage = storage
-	initSessionClear()
-}
-
-func initSessionClear() {
+func InitSessionClear() {
 	go func() {
-		for range time.Tick(time.Duration(sessionLifetime) * time.Second) {
+		for range time.Tick(time.Duration(internal.GetFrameworkRegistrar().GetSessionLifetime()) * time.Second) {
 			GetSessionStorage().ClearExpiredSessions()
 		}
 	}()
-}
-
-type ISessionStorage interface {
-	NewSession(user proxy.Authenticable) (string, time.Time, error)
-	IsLoggedIn(sessionToken string) bool
-	Logout(sessionToken string)
-	CurrentUser(ctx context.Context) (proxy.Authenticable, error)
-	ClearExpiredSessions()
 }
 
 // concrete session
@@ -52,11 +35,12 @@ func (thiz Session) isExpired() bool {
 
 // MemorySession saves sessions in memory
 type MemorySession struct {
-	sessions map[string]*Session
+	sessions        map[string]*Session
+	sessionLifetime int
 }
 
 func NewMemorySession() *MemorySession {
-	return &MemorySession{sessions: make(map[string]*Session)}
+	return &MemorySession{sessions: make(map[string]*Session), sessionLifetime: internal.GetFrameworkRegistrar().GetSessionLifetime()}
 }
 
 // NewSession returns generated session token
@@ -75,7 +59,7 @@ func (thiz *MemorySession) NewSession(user proxy.Authenticable) (string, time.Ti
 
 	session := &Session{
 		username: user.GetUsername(),
-		expiry:   now.Add(time.Second * time.Duration(sessionLifetime)),
+		expiry:   now.Add(time.Second * time.Duration(thiz.sessionLifetime)),
 	}
 	thiz.sessions[hashedToken] = session
 

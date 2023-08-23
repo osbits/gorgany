@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"gorgany/db"
 	"gorgany/db/gorm/plugin"
-	"gorgany/provider"
+	"gorgany/internal"
+	"gorgany/proxy"
 	"gorgany/util"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
@@ -30,9 +31,8 @@ func (thiz DiffCommand) GetName() string {
 }
 
 func (thiz DiffCommand) Execute() {
-	gormInstance := db.GetWrapper("gorm").GetInstance().(*gorm.DB)
-
-	tx := gormInstance.Begin()
+	gormDb := db.Builder(proxy.GormPostgresQL).GetConnection().Driver().(*gorm.DB)
+	tx := gormDb.Begin()
 	defer tx.Rollback()
 
 	var statements []string
@@ -41,7 +41,7 @@ func (thiz DiffCommand) Execute() {
 	})
 
 	moduleName := util.ModuleName()
-	modelsMap := provider.FrameworkRegistrar.GetDomains()
+	modelsMap := internal.GetFrameworkRegistrar().GetDomains()
 
 	pkgInfos, err := util.ScanDir("./pkg/domain")
 	if err != nil {
@@ -50,7 +50,7 @@ func (thiz DiffCommand) Execute() {
 
 	for pkgPath, info := range pkgInfos {
 		for _, st := range info.Structs {
-			if st.FindAnnotationByName("@Embedded") != nil {
+			if st.FindAnnotationByName("@Embedded") != nil || st.FindAnnotationByName("@Abstract") != nil {
 				continue
 			}
 
@@ -72,7 +72,7 @@ func (thiz DiffCommand) Execute() {
 		models = append(models, model)
 	}
 
-	if err := tx.Migrator().AutoMigrate(models...); err != nil {
+	if err := tx.AutoMigrate(models...); err != nil {
 		fmt.Println(err)
 		return
 	}
@@ -85,7 +85,7 @@ func (thiz DiffCommand) Execute() {
 
 			if rField.Anonymous && rField.Type.Kind() == reflect.Struct {
 				tableName := namingStrategyService.TableName(rField.Type.Name())
-				if !isColumnExists(tx, tableName, plugin.StructModelColumn()) {
+				if !isColumnExists(tableName, plugin.StructModelColumn()) {
 					statements = append(statements, fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS model_struct varchar(255)", tableName))
 				}
 			}
@@ -104,10 +104,10 @@ func (thiz DiffCommand) Execute() {
 	thiz.generateMigration(statements)
 }
 
-func isColumnExists(db *gorm.DB, tableName string, columnName string) bool {
+func isColumnExists(tableName string, columnName string) bool {
 	var count int64
-	result := db.Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", tableName, columnName).Scan(&count)
-	if result.Error != nil {
+	err := db.Builder(proxy.GormPostgresQL).Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", &count, tableName, columnName)
+	if err != nil {
 		return false
 	}
 	return count > 0
