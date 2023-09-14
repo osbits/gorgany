@@ -232,6 +232,10 @@ func (thiz *Builder) Get(dest any) error {
 
 	res := thiz.GetDriver().Raw(thiz.ToQuery()).First(dest)
 	thiz.clearQueryParams()
+
+	if res.Error != nil && res.Error.Error() == "record not found" {
+		return nil
+	}
 	return res.Error
 }
 
@@ -267,6 +271,10 @@ func (thiz *Builder) List(dest any) error {
 
 	res := thiz.GetDriver().Raw(thiz.ToQuery()).Find(dest)
 	thiz.clearQueryParams()
+
+	if res.Error != nil && res.Error.Error() == "record not found" {
+		return nil
+	}
 	return res.Error
 }
 
