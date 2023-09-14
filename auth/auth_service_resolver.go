@@ -6,11 +6,10 @@ import (
 )
 
 // ctx - context with gorgany/http.Message instance
-func ResolveAuthService(ctx context.Context) AuthService {
+func ResolveAuthService(ctx context.Context) proxy.AuthService {
 	message := ctx.Value("message").(proxy.HttpMessage)
 	if message.IsApiNamespace() {
 		return NewJwtService()
 	}
-
 	return GetSessionStorage()
 }

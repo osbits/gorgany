@@ -2,6 +2,10 @@ package provider
 
 import (
 	"gorgany/command"
+	"gorgany/command/db"
+	"gorgany/command/domain"
+	"gorgany/internal"
+	"gorgany/proxy"
 )
 
 type CommandProvider struct{}
@@ -11,12 +15,13 @@ func NewCommandProvider() *CommandProvider {
 }
 
 func (thiz *CommandProvider) InitProvider() {
-	command.Commands = make(map[string]command.ICommand)
+	thiz.RegisterCommand(command.VersionCommand{})
+	thiz.RegisterCommand(db.DiffCommand{})
+	thiz.RegisterCommand(db.MigrateCommand{})
+	thiz.RegisterCommand(db.SeedCommand{})
+	thiz.RegisterCommand(domain.RegisterDomainsCommand{})
+}
 
-	versionCommand := command.VersionCommand{}
-	command.Commands[versionCommand.GetName()] = versionCommand
-
-	for _, c := range FrameworkRegistrar.GetCommands() {
-		command.Commands[c.GetName()] = c
-	}
+func (thiz *CommandProvider) RegisterCommand(cmd proxy.ICommand) {
+	internal.GetFrameworkRegistrar().RegisterCommand(cmd)
 }

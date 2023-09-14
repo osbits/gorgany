@@ -16,8 +16,8 @@ func GetStacktrace() string {
 }
 
 func PrintError(err any) {
-	log.Log("").Error(err)
-	log.Log("").Error(GetStacktrace())
+	log.Log("").Warn(err)
+	log.Log("").Warn(GetStacktrace())
 }
 
 // Validation

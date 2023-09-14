@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"gorgany/db/orm"
+	"gorgany/proxy"
 )
 
 type LocalizedString struct {
@@ -14,6 +16,10 @@ type LocalizedString struct {
 
 func (thiz LocalizedString) TableName() string {
 	return "localized_string"
+}
+
+func (thiz *LocalizedString) Query() proxy.IOrm[LocalizedString] {
+	return &orm.GorganyOrm[LocalizedString]{Model: thiz}
 }
 
 func (thiz LocalizedString) Text(lang string) string {

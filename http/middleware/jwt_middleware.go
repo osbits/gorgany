@@ -3,7 +3,6 @@ package middleware
 import (
 	"gorgany/auth"
 	error2 "gorgany/error"
-	"gorgany/http"
 	"gorgany/proxy"
 	"gorgany/service/dto"
 )
@@ -12,7 +11,7 @@ type JwtMiddleware struct {
 	Roles []proxy.UserRole
 }
 
-func (thiz JwtMiddleware) Handle(message http.Message) bool {
+func (thiz JwtMiddleware) Handle(message proxy.HttpMessage) bool {
 	jwtService := auth.NewJwtService()
 
 	token := message.GetBearerToken()

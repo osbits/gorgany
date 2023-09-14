@@ -1,21 +1,18 @@
 package i18n
 
-import "github.com/spf13/viper"
+import (
+	"gorgany/internal"
+	"gorgany/proxy"
+)
 
-var manager *Manager
-
-func SetManager(m *Manager) {
-	manager = m
-}
-
-func GetManager() *Manager {
-	return manager
+func GetManager() proxy.Ii18nManager {
+	return internal.GetFrameworkRegistrar().GetI18nManager()
 }
 
 type Manager struct {
-	Configs map[string]*viper.Viper
+	Configs map[string]proxy.Ii18nConfig
 }
 
-func (thiz Manager) GetConfig(locale string) *viper.Viper {
+func (thiz Manager) GetConfig(locale string) proxy.Ii18nConfig {
 	return thiz.Configs[locale]
 }

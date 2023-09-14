@@ -3,20 +3,11 @@ package db
 import (
 	"fmt"
 	"gorgany/db"
+	"gorgany/internal"
+	"gorgany/proxy"
 	"gorm.io/gorm"
 	"time"
 )
-
-var seeders = make([]Seeder, 0)
-
-func AddSeeder(seeder Seeder) {
-	seeders = append(seeders, seeder)
-}
-
-type Seeder interface {
-	CollectInsertModels() []any
-	Name() string
-}
 
 type SeedCommand struct {
 }
@@ -26,7 +17,7 @@ func (thiz SeedCommand) GetName() string {
 }
 
 func (thiz SeedCommand) Execute() {
-	gormInstance := db.GetWrapper("gorm").GetInstance().(*gorm.DB)
+	gormInstance := db.Builder(proxy.GormPostgresQL).GetConnection().Driver().(*gorm.DB)
 
 	err := gormInstance.AutoMigrate(&db.Seeder{})
 	if err != nil {
@@ -35,7 +26,7 @@ func (thiz SeedCommand) Execute() {
 
 	total := 0
 	tx := gormInstance.Begin()
-	for _, seeder := range seeders {
+	for _, seeder := range internal.GetFrameworkRegistrar().GetSeeders() {
 		var seederDomain db.Seeder
 		gormInstance.First(&seederDomain, "name = ?", seeder.Name())
 
