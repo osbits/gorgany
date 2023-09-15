@@ -5,16 +5,26 @@ import (
 	"gorgany"
 	error2 "gorgany/error"
 	"gorgany/grg"
+	"gorgany/internal"
 	"gorgany/proxy"
 	"reflect"
 )
 
-var errorHandlerMap = map[string]proxy.ErrorHandler{
+var defaultErrorHandlerMap = map[string]proxy.ErrorHandler{
 	"ValidationErrors":     processValidationErrors,
 	"InputBodyParseError":  processInputParsingError,
 	"InputParamParseError": processBodyParsingError,
 	"Default":              processDefaultError,
 	"JwtAuthError":         processJwtAuthError,
+}
+
+func getErrorHandler(key string) proxy.ErrorHandler {
+	customHandlers := internal.GetFrameworkRegistrar().GetErrorHandlers()
+	if handler, ok := customHandlers[key]; ok {
+		return handler
+	}
+
+	return defaultErrorHandlerMap[key]
 }
 
 func Catch(err error, message proxy.HttpMessage) {
@@ -24,18 +34,13 @@ func Catch(err error, message proxy.HttpMessage) {
 	}
 
 	errName := reflectedErr.Name()
-	errorHandler, ok := errorHandlerMap[errName]
-	if ok {
-		errorHandler(err, message)
+	errorHandler := getErrorHandler(errName)
+	if errorHandler == nil {
+		processDefaultError(err, message)
 		return
 	}
 
-	defaultHandler, ok := errorHandlerMap["Default"]
-	if !ok {
-		processDefaultError(err, message)
-	} else {
-		defaultHandler(err, message)
-	}
+	errorHandler(err, message)
 }
 
 func processDefaultError(err error, message proxy.HttpMessage) {
