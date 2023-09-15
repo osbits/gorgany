@@ -20,11 +20,21 @@ var defaultErrorHandlerMap = map[string]proxy.ErrorHandler{
 
 func getErrorHandler(key string) proxy.ErrorHandler {
 	customHandlers := internal.GetFrameworkRegistrar().GetErrorHandlers()
-	if handler, ok := customHandlers[key]; ok {
-		return handler
+
+	if errorHandler, ok := customHandlers[key]; ok {
+		return errorHandler
 	}
 
-	return defaultErrorHandlerMap[key]
+	if defaultHandler, ok := defaultErrorHandlerMap[key]; ok {
+		return defaultHandler
+	}
+
+	defaultHandler, ok := customHandlers["Default"]
+	if !ok {
+		return processDefaultError
+	} else {
+		return defaultHandler
+	}
 }
 
 func Catch(err error, message proxy.HttpMessage) {
