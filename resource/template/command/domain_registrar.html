@@ -1,14 +1,15 @@
-package registar
+package provider
 
 import (
-    "gorgany/provider"
-    {{- range .Imports }}
+{{- range .Imports }}
     "{{.}}"
-    {{- end }}
+{{- end }}
 )
 
-func RegisterDomains() {
-    {{- range .Registers }}
-    {{ . }}
-    {{- end }}
+func generatedDomains() map[string]any {
+    return map[string]any{
+        {{- range .Registers }}
+        {{ . }}
+        {{- end }}
+    }
 }

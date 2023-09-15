@@ -33,8 +33,9 @@ func (thiz RegisterDomainsCommand) Execute() {
 	registers := make([]string, 0)
 	imports := make([]string, 0)
 	for pkgPath, pkgInfo := range pkgInfos {
+		modelsInPkg := 0
 		for _, model := range pkgInfo.Structs {
-			if model.FindAnnotationByName("@Embedded") != nil {
+			if model.FindAnnotationByName("@Embedded") != nil || model.FindAnnotationByName("@Abstract") != nil {
 				continue
 			}
 
@@ -43,9 +44,12 @@ func (thiz RegisterDomainsCommand) Execute() {
 			if !ok {
 				needToRegenerate = true
 			}
-			registers = append(registers, fmt.Sprintf("provider.FrameworkRegistrar.RegisterDomain(\"%s\",%s{})", key, model.Pkg+"."+model.Name))
+			registers = append(registers, fmt.Sprintf("\"%s\": %s{},", key, model.Pkg+"."+model.Name))
+			modelsInPkg++
 		}
-		imports = append(imports, moduleName+"/"+pkgPath)
+		if modelsInPkg > 0 {
+			imports = append(imports, moduleName+"/"+pkgPath)
+		}
 	}
 
 	if needToRegenerate {
@@ -76,7 +80,7 @@ func (thiz RegisterDomainsCommand) generateRegistrar(imports []string, registers
 		panic(err)
 	}
 
-	err = os.WriteFile("registrar/domains.go", writer.Bytes(), os.ModePerm)
+	err = os.WriteFile("pkg/provider/domains.go", writer.Bytes(), os.ModePerm)
 	if err != nil {
 		panic(err)
 	}

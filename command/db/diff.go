@@ -61,7 +61,7 @@ func (thiz DiffCommand) Execute() {
 				fmt.Println("Please complete one of the following steps:")
 				fmt.Println("- Register it manually, just add it to models registrar(registrar/models.go)")
 				fmt.Println("- Run `go run cmd/cli.go domains:register`")
-				//return
+				return
 			}
 		}
 	}
