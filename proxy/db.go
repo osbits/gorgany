@@ -38,6 +38,7 @@ type IQueryBuilder interface {
 	BuildOffset() string
 	DeleteQuery() string
 	ToQuery() string
+	ToProcessedQuery() string
 	Get(dest any) error
 	Count(dest *int64) error
 	List(dest any) error
@@ -51,6 +52,7 @@ type IQueryBuilder interface {
 	Relation(relation string) IQueryBuilder
 	Raw(sql string, scan any, values ...any) error
 	GetConnection() IConnection
+	GetArgs() []any
 }
 
 type GormAssociation interface {
@@ -75,6 +77,7 @@ type IOrm[T any] interface {
 	List() ([]*T, error)
 	Save() error
 	Delete() error
+	ToQuery() string
 }
 
 type DbTyper interface {

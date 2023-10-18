@@ -42,6 +42,7 @@ type Builder struct {
 	join            []string
 	where           []string
 	order           []string
+	args            []any
 	limit           *int
 	offset          *int
 	copyGorm        *gorm.DB
@@ -93,12 +94,14 @@ func (thiz *Builder) Join(table string, on string) proxy.IQueryBuilder {
 }
 
 func (thiz *Builder) WhereEqual(field string, value interface{}) proxy.IQueryBuilder {
-	thiz.where = append(thiz.where, field+" = "+thiz.value(value))
+	thiz.where = append(thiz.where, field+" = ?")
+	thiz.args = append(thiz.args, value)
 	return thiz
 }
 
 func (thiz *Builder) Where(field string, operator string, value interface{}) proxy.IQueryBuilder {
-	thiz.where = append(thiz.where, field+" "+operator+" "+thiz.value(value))
+	thiz.where = append(thiz.where, field+" "+operator+" ?")
+	thiz.args = append(thiz.args, value)
 	return thiz
 }
 
@@ -109,7 +112,12 @@ func (thiz *Builder) WhereClosure(closure func(builder proxy.IQueryBuilder) prox
 }
 
 func (thiz *Builder) WhereIn(field string, values ...interface{}) proxy.IQueryBuilder {
-	thiz.where = append(thiz.where, field+" IN ("+thiz.values(values...)+")")
+	placeholders := make([]string, len(values))
+	for i := 0; i < len(values); i++ {
+		placeholders[i] = "?"
+	}
+	thiz.where = append(thiz.where, field+" IN ("+strings.Join(placeholders, ",")+")")
+	thiz.args = append(thiz.args, values...)
 	return thiz
 }
 
@@ -119,6 +127,7 @@ func (thiz *Builder) WhereAnd(closure func(builder proxy.IQueryBuilder) proxy.IQ
 	if builtWhere != "" {
 		thiz.where = append(thiz.where, "("+builder.BuildWhereAnd()+")")
 	}
+	thiz.args = append(thiz.args, builder.GetArgs()...)
 	return thiz
 }
 
@@ -128,6 +137,7 @@ func (thiz *Builder) WhereOr(closure func(builder proxy.IQueryBuilder) proxy.IQu
 	if builtWhere != "" {
 		thiz.where = append(thiz.where, "("+builder.BuildWhereOr()+")")
 	}
+	thiz.args = append(thiz.args, builder.GetArgs()...)
 	return thiz
 }
 
@@ -158,6 +168,12 @@ func (thiz *Builder) ToQuery() string {
 		fmt.Printf("SELECT %s FROM %s %s %s %s %s %s\n", thiz.BuildSelect(), thiz.table, thiz.BuildJoin(), thiz.BuildWhere(), thiz.BuildOrder(), thiz.BuildLimit(), thiz.BuildOffset())
 	}
 	return fmt.Sprintf("SELECT %s FROM %s %s %s %s %s %s", thiz.BuildSelect(), thiz.table, thiz.BuildJoin(), thiz.BuildWhere(), thiz.BuildOrder(), thiz.BuildLimit(), thiz.BuildOffset())
+}
+
+func (thiz *Builder) ToProcessedQuery() string {
+	return thiz.GetDriver().ToSQL(func(g *gorm.DB) *gorm.DB {
+		return g.Raw(thiz.ToQuery(), thiz.args...)
+	})
 }
 
 func (thiz *Builder) BuildSelect() string {
@@ -230,7 +246,7 @@ func (thiz *Builder) Get(dest any) error {
 		thiz.Relation(key)
 	}
 
-	res := thiz.GetDriver().Raw(thiz.ToQuery()).First(dest)
+	res := thiz.GetDriver().Raw(thiz.ToQuery(), thiz.args...).First(dest)
 	thiz.clearQueryParams()
 
 	if res.Error != nil && res.Error.Error() == "record not found" {
@@ -241,7 +257,7 @@ func (thiz *Builder) Get(dest any) error {
 
 func (thiz *Builder) Count(dest *int64) error {
 	thiz.Select("count(*)")
-	res := thiz.GetDriver().Raw(thiz.ToQuery()).Scan(dest)
+	res := thiz.GetDriver().Raw(thiz.ToQuery(), thiz.args...).Scan(dest)
 	thiz.clearQueryParams()
 	return res.Error
 }
@@ -269,7 +285,7 @@ func (thiz *Builder) List(dest any) error {
 		thiz.Relation(key)
 	}
 
-	res := thiz.GetDriver().Raw(thiz.ToQuery()).Find(dest)
+	res := thiz.GetDriver().Raw(thiz.ToQuery(), thiz.args...).Find(dest)
 	thiz.clearQueryParams()
 
 	if res.Error != nil && res.Error.Error() == "record not found" {
@@ -296,7 +312,7 @@ func (thiz *Builder) Save(model any) error {
 }
 
 func (thiz *Builder) Delete() error {
-	res := thiz.GetDriver().Raw(thiz.DeleteQuery())
+	res := thiz.GetDriver().Raw(thiz.DeleteQuery(), thiz.args...)
 	thiz.clearQueryParams()
 	return res.Error
 }
@@ -377,12 +393,18 @@ func (thiz *Builder) clearQueryParams() {
 	thiz.copyGorm = nil
 }
 
+func (thiz *Builder) GetArgs() []any {
+	return thiz.args
+}
+
 func (thiz *Builder) value(value interface{}) string {
 	switch value.(type) {
-	case string:
-		return "'" + value.(string) + "'"
-	default:
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool:
 		return fmt.Sprintf("%v", value)
+	default:
+		val := fmt.Sprintf("%v", value)
+		val = strings.ReplaceAll(val, "'", "''")
+		return fmt.Sprintf("'%s'", val)
 	}
 }
 

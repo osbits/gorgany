@@ -127,6 +127,10 @@ func (thiz *GorganyOrm[T]) Relation(relation string) proxy.IOrm[T] {
 	return thiz
 }
 
+func (thiz *GorganyOrm[T]) ToQuery() string {
+	return thiz.builder.ToProcessedQuery()
+}
+
 func (thiz *GorganyOrm[T]) setBuilder() {
 	if thiz.builder != nil {
 		return
