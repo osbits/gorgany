@@ -2,7 +2,6 @@ package log
 
 import (
 	"log"
-	"os"
 )
 
 type DefaultLogger struct {
@@ -31,13 +30,11 @@ func (thiz DefaultLogger) Warnf(format string, v ...any) {
 func (thiz DefaultLogger) Error(v ...any) {
 	log.SetPrefix("ERROR ")
 	log.Print(v...)
-	os.Exit(1)
 }
 
 func (thiz DefaultLogger) Errorf(format string, v ...any) {
 	log.SetPrefix("ERROR ")
 	log.Printf(format, v...)
-	os.Exit(1)
 }
 
 func (thiz DefaultLogger) Panic(v ...any) {

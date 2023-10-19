@@ -52,6 +52,7 @@ func (s *app) Run() {
 		err := s.validate()
 		if err != nil {
 			s.log("").Error(err)
+			os.Exit(1)
 		}
 	}
 
