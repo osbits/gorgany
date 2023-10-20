@@ -8,7 +8,6 @@ type IDomainMeta interface {
 	SetLoaded(loaded bool)
 	SetTable(table string)
 	SetDriver(driver DbType)
-	SetDb(db string)
 }
 
 type IFile interface {

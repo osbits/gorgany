@@ -482,7 +482,6 @@ func (thiz *Builder) AddMetaToModel(dest any, statement *gorm.Statement) {
 	if ok {
 		domainMetaInstance.SetLoaded(true)
 		domainMetaInstance.SetTable(statement.Table)
-		domainMetaInstance.SetDb(statement.Schema.Name)
 		domainMetaInstance.SetDriver(core.GormPostgreSQL)
 	}
 }
