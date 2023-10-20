@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"gorgany/app/core"
 	"gorgany/auth"
-	"gorgany/http"
 	"gorgany/http/middleware"
 	"gorgany/http/router"
 	"gorgany/service/dto"
@@ -22,7 +21,7 @@ type LoginPayload struct {
 	Password string
 }
 
-func (thiz LoginController) Login(message http.Message) {
+func (thiz LoginController) Login(message core.HttpMessage) {
 	body := message.GetBody()
 
 	loginPayload := &LoginPayload{}

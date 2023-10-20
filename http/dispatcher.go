@@ -41,7 +41,7 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, 
 	reflectedHandler := reflect.ValueOf(handler)
 	resolver := inputResolver{
 		reflectedHandler: reflectedHandler,
-		message:          message,
+		message:          &message,
 	}
 
 	args, err := resolver.resolve()

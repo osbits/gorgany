@@ -17,7 +17,7 @@ import (
 
 type inputResolver struct {
 	reflectedHandler reflect.Value
-	message          Message
+	message          *Message
 }
 
 func (thiz inputResolver) resolve() ([]reflect.Value, error) {
@@ -83,7 +83,7 @@ type bodyParser interface {
 	parse(arg interface{}) error
 }
 
-func resolveBodyParser(contentType string, message Message) bodyParser {
+func resolveBodyParser(contentType string, message *Message) bodyParser {
 	if contentType == gorgany.ApplicationJson {
 		return jsonParser{message: message}
 	} else if strings.Contains(contentType, gorgany.MultipartFormData) {
@@ -95,7 +95,7 @@ func resolveBodyParser(contentType string, message Message) bodyParser {
 
 // json parser
 type jsonParser struct {
-	message Message
+	message *Message
 }
 
 func (thiz jsonParser) parse(arg interface{}) error {
@@ -108,7 +108,7 @@ func (thiz jsonParser) parse(arg interface{}) error {
 
 // multipart parser
 type multipartParser struct {
-	message Message
+	message *Message
 }
 
 func (thiz multipartParser) parse(arg interface{}) error {
@@ -127,7 +127,7 @@ func (thiz multipartParser) parse(arg interface{}) error {
 
 // form parser
 type formParser struct {
-	message Message
+	message *Message
 }
 
 func (thiz formParser) parse(arg interface{}) error {

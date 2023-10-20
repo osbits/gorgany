@@ -2,7 +2,6 @@ package controller
 
 import (
 	"gorgany/app/core"
-	"gorgany/http"
 	"gorgany/http/router"
 	"mime"
 	"os"
@@ -17,7 +16,7 @@ func NewPublicController() *PublicController {
 type PublicController struct {
 }
 
-func (thiz PublicController) load(message http.Message) {
+func (thiz PublicController) load(message core.HttpMessage) {
 	r := message.GetRequest()
 	url := r.URL
 	path := url.Path
