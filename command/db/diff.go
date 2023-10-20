@@ -7,6 +7,7 @@ import (
 	"gorgany/app/core"
 	"gorgany/db"
 	"gorgany/db/gorm/plugin"
+	"gorgany/db/orm"
 	"gorgany/internal"
 	"gorgany/util"
 	"gorm.io/gorm"
@@ -31,7 +32,7 @@ func (thiz DiffCommand) GetName() string {
 }
 
 func (thiz DiffCommand) Execute() {
-	gormDb := db.Builder(core.GormPostgresQL).GetConnection().Driver().(*gorm.DB)
+	gormDb := db.Builder(core.GormPostgreSQL).GetConnection().Driver().(*gorm.DB)
 	tx := gormDb.Begin()
 	defer tx.Rollback()
 
@@ -83,7 +84,7 @@ func (thiz DiffCommand) Execute() {
 		for i := 0; i < rType.NumField(); i++ {
 			rField := rType.Field(i)
 
-			if rField.Anonymous && rField.Type.Kind() == reflect.Struct {
+			if rField.Anonymous && rField.Type.Kind() == reflect.Struct && orm.IsParamInTagExists(rField.Tag, core.GorganyORMExtends) {
 				tableName := namingStrategyService.TableName(rField.Type.Name())
 				if !isColumnExists(tableName, plugin.StructModelColumn()) {
 					statements = append(statements, fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS model_struct varchar(255)", tableName))
@@ -106,7 +107,7 @@ func (thiz DiffCommand) Execute() {
 
 func isColumnExists(tableName string, columnName string) bool {
 	var count int64
-	err := db.Builder(core.GormPostgresQL).Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", &count, tableName, columnName)
+	err := db.Builder(core.GormPostgreSQL).Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", &count, tableName, columnName)
 	if err != nil {
 		return false
 	}

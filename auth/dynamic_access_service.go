@@ -26,10 +26,10 @@ func (thiz DynamicAccessService) ResolveFilterAccessCondition(domain any, user c
 	domainName := reflectedDomainType.Name()
 
 	dynamicAccesses := make([]*model.DynamicAccess, 0)
-	db.Builder(core.GormPostgresQL).FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
+	db.Builder(core.GormPostgreSQL).FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
 
 	if len(dynamicAccesses) > 0 {
-		reflectedCurrentUserValue = reflect.ValueOf(user.(core.DomainExtension).GetDomain())
+		reflectedCurrentUserValue = reflect.ValueOf(user)
 	}
 
 	var fieldNamer schema.Namer = schema.NamingStrategy{}
@@ -62,17 +62,17 @@ func (thiz DynamicAccessService) ResolveFilterAccessCondition(domain any, user c
 	return nil, false
 }
 
-func (thiz DynamicAccessService) IsAbleToAction(record core.DomainExtension, user core.Authenticable, action gorgany.DynamicAccessActionType) bool {
+func (thiz DynamicAccessService) IsAbleToAction(record any, user core.Authenticable, action gorgany.DynamicAccessActionType) bool {
 	var reflectedCurrentUserValue reflect.Value
 	reflectedDomainType := reflect.TypeOf(record).Elem()
 
 	domainName := reflectedDomainType.Name()
 
 	dynamicAccesses := make([]*model.DynamicAccess, 0)
-	db.Builder(core.GormPostgresQL).FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
+	db.Builder(core.GormPostgreSQL).FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
 
 	if len(dynamicAccesses) > 0 {
-		reflectedCurrentUserValue = reflect.ValueOf(user.(core.DomainExtension).GetDomain())
+		reflectedCurrentUserValue = reflect.ValueOf(user)
 	}
 
 	for _, dynamicAccess := range dynamicAccesses {
@@ -92,14 +92,14 @@ func (thiz DynamicAccessService) IsAbleToAction(record core.DomainExtension, use
 	return false
 }
 
-func (thiz DynamicAccessService) ResolveAccessForRecord(record core.DomainExtension, user core.Authenticable) bool {
-	reflectedCurrentUserValue := reflect.ValueOf(user.(core.DomainExtension).GetDomain())
+func (thiz DynamicAccessService) ResolveAccessForRecord(record any, user core.Authenticable) bool {
+	reflectedCurrentUserValue := reflect.ValueOf(user)
 	reflectedDomainType := util.IndirectType(reflect.TypeOf(record))
 
 	domainName := reflectedDomainType.Name()
 
 	dynamicAccesses := make([]*model.DynamicAccess, 0)
-	db.Builder(core.GormPostgresQL).FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
+	db.Builder(core.GormPostgreSQL).FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
 
 	for _, dynamicAccess := range dynamicAccesses {
 		reflectedUserProperty := reflectedCurrentUserValue.Elem().FieldByName(dynamicAccess.UserProperty)
@@ -119,16 +119,16 @@ func (thiz DynamicAccessService) ResolveAccessForRecord(record core.DomainExtens
 	return false
 }
 
-func (thiz DynamicAccessService) ResolveActionsForRecord(record core.DomainExtension, user core.Authenticable) []gorgany.DynamicAccessActionType {
+func (thiz DynamicAccessService) ResolveActionsForRecord(record any, user core.Authenticable) []gorgany.DynamicAccessActionType {
 	var reflectedCurrentUserValue reflect.Value
 	reflectedDomainType := util.IndirectType(reflect.TypeOf(record))
 
 	domainName := reflectedDomainType.Name()
 
 	dynamicAccesses := make([]*model.DynamicAccess, 0)
-	db.Builder(core.GormPostgresQL).FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
+	db.Builder(core.GormPostgreSQL).FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
 	if len(dynamicAccesses) > 0 {
-		reflectedCurrentUserValue = reflect.ValueOf(user.(core.DomainExtension).GetDomain())
+		reflectedCurrentUserValue = reflect.ValueOf(user)
 	}
 
 	accessLevels := make([]gorgany.DynamicAccessActionType, 0)
@@ -167,8 +167,8 @@ func (thiz DynamicAccessService) resolveAccessLevel(dynamicAccess *model.Dynamic
 	return []gorgany.DynamicAccessActionType{gorgany.Show}
 }
 
-func (thiz DynamicAccessService) isAccessAllowed(record core.DomainExtension, field string, value string) bool {
-	reflectedRecordValue := reflect.ValueOf(record.GetDomain())
+func (thiz DynamicAccessService) isAccessAllowed(record any, field string, value string) bool {
+	reflectedRecordValue := reflect.ValueOf(record)
 	reflectedField := util.IndirectValue(reflectedRecordValue).FieldByName(field)
 	val := fmt.Sprintf("%v", reflectedField.Interface())
 	if val == value {

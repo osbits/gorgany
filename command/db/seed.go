@@ -17,7 +17,7 @@ func (thiz SeedCommand) GetName() string {
 }
 
 func (thiz SeedCommand) Execute() {
-	gormInstance := db.Builder(core.GormPostgresQL).GetConnection().Driver().(*gorm.DB)
+	gormInstance := db.Builder(core.GormPostgreSQL).GetConnection().Driver().(*gorm.DB)
 
 	err := gormInstance.AutoMigrate(&db.Seeder{})
 	if err != nil {

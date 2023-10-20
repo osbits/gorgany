@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/spf13/viper"
 	"gorgany/app/core"
+	"gorgany/db/orm"
 	"gorgany/util"
 	"gorgany/validator"
 	"gorm.io/gorm"
@@ -248,12 +249,7 @@ func (thiz *Builder) Get(dest any) error {
 	}
 
 	res := thiz.GetDriver().Raw(thiz.ToQuery(), thiz.args...).First(dest)
-
-	domainMetaInstance, ok := dest.(core.IDomainMeta)
-	if ok {
-		domainMetaInstance.SetLoaded(true)
-		domainMetaInstance.SetTable(res.Statement.Table)
-	}
+	thiz.AddMetaToModel(dest, res.Statement)
 
 	thiz.clearQueryParams()
 
@@ -297,12 +293,7 @@ func (thiz *Builder) List(dest any) error {
 	thiz.clearQueryParams()
 
 	for _, d := range util.GetSliceFromAny(dest) {
-		domainMetaInstance, ok := d.(core.IDomainMeta)
-		if !ok {
-			continue
-		}
-		domainMetaInstance.SetLoaded(true)
-		domainMetaInstance.SetTable(res.Statement.Table)
+		thiz.AddMetaToModel(d, res.Statement)
 	}
 
 	if res.Error != nil && res.Error.Error() == "record not found" {
@@ -318,11 +309,7 @@ func (thiz *Builder) Insert(model any) error {
 	}
 
 	res := thiz.GetDriver().Create(model)
-	domainMetaInstance, ok := model.(core.IDomainMeta)
-	if ok {
-		domainMetaInstance.SetLoaded(true)
-		domainMetaInstance.SetTable(res.Statement.Table)
-	}
+	thiz.AddMetaToModel(model, res.Statement)
 
 	thiz.clearQueryParams()
 	return res.Error
@@ -335,11 +322,7 @@ func (thiz *Builder) Save(model any) error {
 	}
 
 	res := thiz.GetDriver().Save(model)
-	domainMetaInstance, ok := model.(core.IDomainMeta)
-	if ok {
-		domainMetaInstance.SetLoaded(true)
-		domainMetaInstance.SetTable(res.Statement.Table)
-	}
+	thiz.AddMetaToModel(model, res.Statement)
 
 	thiz.clearQueryParams()
 	return res.Error
@@ -464,6 +447,7 @@ func (thiz *Builder) LoadRelations(relations ...string) error {
 		if err != nil {
 			return err
 		}
+		thiz.AddMetaToModel(v, thiz.copyGorm.Statement)
 
 		if len(splitRelation) > 1 {
 			thiz.clearQueryParams()
@@ -493,6 +477,16 @@ func (thiz *Builder) GetArgs() []any {
 	return thiz.args
 }
 
+func (thiz *Builder) AddMetaToModel(dest any, statement *gorm.Statement) {
+	domainMetaInstance, ok := dest.(core.IDomainMeta)
+	if ok {
+		domainMetaInstance.SetLoaded(true)
+		domainMetaInstance.SetTable(statement.Table)
+		domainMetaInstance.SetDb(statement.Schema.Name)
+		domainMetaInstance.SetDriver(core.GormPostgreSQL)
+	}
+}
+
 func (thiz *Builder) value(value interface{}) string {
 	switch value.(type) {
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool:
@@ -516,14 +510,7 @@ func (thiz *Builder) walkNestedRelations(relations map[string]*schema.Relationsh
 	keys := make([]string, 0)
 
 	for name, nestedRelation := range relations {
-		gormTag := nestedRelation.Field.Tag.Get("grgorm")
-		splitGormTag := strings.Split(gormTag, ",")
-		preload := false
-		for _, value := range splitGormTag {
-			if strings.Contains(value, "preload") {
-				preload = true
-			}
-		}
+		preload := orm.IsParamInTagExists(nestedRelation.Field.Tag, core.GorganyORMPreload)
 		if !preload {
 			continue
 		}

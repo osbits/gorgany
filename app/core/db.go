@@ -5,7 +5,7 @@ import "gorm.io/gorm"
 type DbType string
 
 const (
-	GormPostgresQL DbType = "postgres_gorm"
+	GormPostgreSQL DbType = "postgres_gorm"
 	MongoDb        DbType = "mongo"
 )
 
@@ -58,6 +58,7 @@ type IQueryBuilder interface {
 	AppendRelation(relation string, values ...any) error
 	LoadRelations(relation ...string) error
 	GetArgs() []any
+	AddMetaToModel(dest any, statement *gorm.Statement)
 }
 
 type GormAssociation interface {

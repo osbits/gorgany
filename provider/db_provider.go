@@ -41,7 +41,7 @@ func (thiz *DbProvider) RegisterDbConnection(dbType core.DbType, connection core
 
 func (thiz *DbProvider) resolveDb(kind core.DbType, config map[string]any) core.IConnection {
 	switch kind {
-	case core.GormPostgresQL:
+	case core.GormPostgreSQL:
 		return postgres2.NewGormPostgresConnection(config)
 	case core.MongoDb:
 		//todo implement me

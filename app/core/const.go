@@ -1,5 +1,7 @@
 package core
 
+// HTTP
+
 type Method string
 
 const (
@@ -8,3 +10,9 @@ const (
 	PUT           = "PUT"
 	DELETE        = "DELETE"
 )
+
+// Gorgany ORM
+
+const GorganyORMTag = "grgorm"
+const GorganyORMPreload = "preload"
+const GorganyORMExtends = "extends"

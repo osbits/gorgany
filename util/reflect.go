@@ -52,11 +52,16 @@ func GetElementOfSlice(slice any) any {
 }
 
 func GetSliceFromAny(slice any) []any {
-	rtSlice := reflect.TypeOf(slice)
-	if rtSlice.Kind() != reflect.Slice {
-		panic("")
+	rvSlice := IndirectValue(reflect.ValueOf(slice))
+	if rvSlice.Kind() != reflect.Slice {
+		panic("Value must be slice")
 	}
-	return reflect.MakeSlice(rtSlice, 1, 1).Index(0).Interface().([]any)
+	dest := make([]any, rvSlice.Len())
+	for i := 0; i < rvSlice.Len(); i++ {
+		dest[i] = rvSlice.Index(i).Interface()
+	}
+
+	return dest
 }
 
 func InitializeStruct(t reflect.Type, v reflect.Value) {
