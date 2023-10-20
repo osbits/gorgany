@@ -1,11 +1,11 @@
 package provider
 
 import (
+	"gorgany/app/core"
 	"gorgany/command"
 	"gorgany/command/db"
 	"gorgany/command/domain"
 	"gorgany/internal"
-	"gorgany/proxy"
 )
 
 type CommandProvider struct{}
@@ -22,6 +22,6 @@ func (thiz *CommandProvider) InitProvider() {
 	thiz.RegisterCommand(domain.RegisterDomainsCommand{})
 }
 
-func (thiz *CommandProvider) RegisterCommand(cmd proxy.ICommand) {
+func (thiz *CommandProvider) RegisterCommand(cmd core.ICommand) {
 	internal.GetFrameworkRegistrar().RegisterCommand(cmd)
 }

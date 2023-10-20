@@ -1,4 +1,4 @@
-package proxy
+package core
 
 type ErrorHandler func(error, HttpMessage)
 

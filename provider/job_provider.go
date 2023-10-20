@@ -2,27 +2,27 @@ package provider
 
 import (
 	"github.com/jasonlvhit/gocron"
+	"gorgany/app/core"
 	"gorgany/log"
-	"gorgany/proxy"
 	"reflect"
 )
 
 func NewJobProvider() *JobProvider {
-	return &JobProvider{jobs: make(chan proxy.IJob)}
+	return &JobProvider{jobs: make(chan core.IJob)}
 }
 
 type JobProvider struct {
-	jobs chan proxy.IJob
+	jobs chan core.IJob
 }
 
 func (thiz *JobProvider) InitProvider() {
 	if thiz.jobs == nil {
-		thiz.jobs = make(chan proxy.IJob)
+		thiz.jobs = make(chan core.IJob)
 	}
 	thiz.startScheduler()
 }
 
-func (this *JobProvider) RegisterJob(job proxy.IJob) {
+func (this *JobProvider) RegisterJob(job core.IJob) {
 	this.jobs <- job
 }
 

@@ -4,18 +4,18 @@ import (
 	"fmt"
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
+	"gorgany/app/core"
 	"gorgany/http"
 	"gorgany/http/router"
 	"gorgany/internal"
-	"gorgany/proxy"
 	http2 "net/http"
 	"reflect"
 	"strings"
 )
 
 type RouteProvider struct {
-	router      proxy.Router
-	controllers proxy.Controllers
+	router      core.Router
+	controllers core.Controllers
 }
 
 func NewRouteProvider() *RouteProvider {
@@ -28,7 +28,7 @@ func (thiz *RouteProvider) InitProvider() {
 	thiz.router = r
 }
 
-func (thiz *RouteProvider) RegisterController(controller proxy.IController) {
+func (thiz *RouteProvider) RegisterController(controller core.IController) {
 	availableLangsRegex := thiz.buildLangRegex()
 	routerEngine := thiz.router.Engine().(chi.Router)
 
@@ -66,22 +66,22 @@ func (thiz *RouteProvider) RegisterController(controller proxy.IController) {
 			})
 
 			switch routeConfig.Method {
-			case proxy.GET:
+			case core.GET:
 				routerEngine.Get(pattern, func(w http2.ResponseWriter, r *http2.Request) {
 					http.Dispatch(w, r, handler, middlewares)
 				})
 				break
-			case proxy.PUT:
+			case core.PUT:
 				routerEngine.Put(pattern, func(w http2.ResponseWriter, r *http2.Request) {
 					http.Dispatch(w, r, handler, middlewares)
 				})
 				break
-			case proxy.DELETE:
+			case core.DELETE:
 				routerEngine.Delete(pattern, func(w http2.ResponseWriter, r *http2.Request) {
 					http.Dispatch(w, r, handler, middlewares)
 				})
 				break
-			case proxy.POST:
+			case core.POST:
 				routerEngine.Post(pattern, func(w http2.ResponseWriter, r *http2.Request) {
 					http.Dispatch(w, r, handler, middlewares)
 				})
@@ -99,7 +99,7 @@ func (thiz *RouteProvider) SetHomeUrl(url string) {
 	internal.GetFrameworkRegistrar().SetHomeUrl(url)
 }
 
-func (thiz *RouteProvider) RegisterMiddleware(middleware proxy.IMiddleware) {
+func (thiz *RouteProvider) RegisterMiddleware(middleware core.IMiddleware) {
 	internal.GetFrameworkRegistrar().RegisterMiddleware(middleware)
 }
 

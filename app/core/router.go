@@ -1,4 +1,4 @@
-package proxy
+package core
 
 import "net/http"
 

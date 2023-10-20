@@ -1,7 +1,16 @@
-package proxy
+package core
 
 type IDomain[T any] interface {
 	Query() IOrm[T]
+}
+
+type DomainExtension interface {
+	GetDomain() any
+}
+
+type IDomainMeta interface {
+	SetLoaded(loaded bool)
+	SetTable(table string)
 }
 
 type IFile interface {

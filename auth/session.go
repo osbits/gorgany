@@ -6,12 +6,12 @@ import (
 	"encoding/hex"
 	"fmt"
 	"github.com/google/uuid"
+	"gorgany/app/core"
 	"gorgany/internal"
-	"gorgany/proxy"
 	"time"
 )
 
-func GetSessionStorage() proxy.ISessionStorage {
+func GetSessionStorage() core.ISessionStorage {
 	return internal.GetFrameworkRegistrar().GetSessionStorage()
 }
 
@@ -44,7 +44,7 @@ func NewMemorySession() *MemorySession {
 }
 
 // NewSession returns generated session token
-func (thiz *MemorySession) NewSession(user proxy.Authenticable) (string, time.Time, error) {
+func (thiz *MemorySession) NewSession(user core.Authenticable) (string, time.Time, error) {
 	uid := uuid.NewString()
 	now := time.Now()
 
@@ -93,8 +93,8 @@ func (thiz *MemorySession) ClearExpiredSessions() {
 }
 
 // ctx - context with gorgany/http.Message instance
-func (thiz *MemorySession) CurrentUser(ctx context.Context) (proxy.Authenticable, error) {
-	message := ctx.Value("message").(proxy.HttpMessage)
+func (thiz *MemorySession) CurrentUser(ctx context.Context) (core.Authenticable, error) {
+	message := ctx.Value("message").(core.HttpMessage)
 	cookie, err := message.GetCookie("sessionToken")
 	if err != nil {
 		return nil, nil

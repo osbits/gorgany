@@ -1,4 +1,4 @@
-package grg
+package app
 
 import (
 	"context"
@@ -9,11 +9,11 @@ import (
 	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 	"gorgany"
+	"gorgany/app/core"
 	"gorgany/command"
 	"gorgany/config"
 	"gorgany/http/router"
 	"gorgany/log"
-	"gorgany/proxy"
 	"net/http"
 	"os"
 	"os/signal"
@@ -23,7 +23,7 @@ import (
 	"time"
 )
 
-var Application proxy.IApplication
+var Application core.IApplication
 
 func GetRunMode() gorgany.RunMode {
 	mode := os.Getenv("MODE")
@@ -35,7 +35,7 @@ func GetRunMode() gorgany.RunMode {
 
 type app struct {
 	timezone    *time.Location
-	appProvider proxy.IProvider
+	appProvider core.IProvider
 	execType    gorgany.ExecType
 }
 
@@ -115,7 +115,7 @@ func (s *app) parseLock() (*Lock, error) {
 	return lock, nil
 }
 
-func (s *app) log(key string) proxy.Logger {
+func (s *app) log(key string) core.Logger {
 	//if s.execType == gorgany.Cli {
 	//	defaultLogger := &log.DefaultLogger{}
 	//	castedLogger := defaultLogger.Engine().(*log2.Logger)
@@ -141,7 +141,7 @@ type LockFiles struct {
 
 // Server application
 
-func NewServerApp(appProvider proxy.IAppProvider) *ServerApp {
+func NewServerApp(appProvider core.IAppProvider) *ServerApp {
 	app := &ServerApp{}
 	app.appProvider = appProvider
 	app.execType = gorgany.Server
@@ -191,7 +191,7 @@ func (s *ServerApp) Shutdown(ctx context.Context) error {
 
 //Console application
 
-func NewConsoleApp(appProvider proxy.IAppProvider) *ConsoleApp {
+func NewConsoleApp(appProvider core.IAppProvider) *ConsoleApp {
 	app := &ConsoleApp{}
 	app.appProvider = appProvider
 	app.execType = gorgany.Cli

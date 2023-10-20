@@ -4,10 +4,10 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"gorgany/app/core"
 	"gorgany/db"
 	"gorgany/db/gorm/plugin"
 	"gorgany/internal"
-	"gorgany/proxy"
 	"gorgany/util"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
@@ -31,7 +31,7 @@ func (thiz DiffCommand) GetName() string {
 }
 
 func (thiz DiffCommand) Execute() {
-	gormDb := db.Builder(proxy.GormPostgresQL).GetConnection().Driver().(*gorm.DB)
+	gormDb := db.Builder(core.GormPostgresQL).GetConnection().Driver().(*gorm.DB)
 	tx := gormDb.Begin()
 	defer tx.Rollback()
 
@@ -106,7 +106,7 @@ func (thiz DiffCommand) Execute() {
 
 func isColumnExists(tableName string, columnName string) bool {
 	var count int64
-	err := db.Builder(proxy.GormPostgresQL).Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", &count, tableName, columnName)
+	err := db.Builder(core.GormPostgresQL).Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", &count, tableName, columnName)
 	if err != nil {
 		return false
 	}

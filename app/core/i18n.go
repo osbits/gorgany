@@ -1,4 +1,4 @@
-package proxy
+package core
 
 type Ii18nManager interface {
 	GetConfig(locale string) Ii18nConfig

@@ -3,8 +3,9 @@ package postgres
 import (
 	"fmt"
 	"github.com/spf13/viper"
-	"gorgany/proxy"
+	"gorgany/app/core"
 	"gorgany/util"
+	"gorgany/validator"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 	"reflect"
@@ -22,7 +23,7 @@ func (thiz *GormPostgresConnection) Driver() any {
 	return thiz.gormInstance
 }
 
-func (thiz *GormPostgresConnection) Builder() proxy.IQueryBuilder {
+func (thiz *GormPostgresConnection) Builder() core.IQueryBuilder {
 	return NewBuilder(thiz)
 }
 
@@ -35,7 +36,7 @@ func (thiz Config) SetPreloadingMaxDeep(maxDeep int) {
 }
 
 type Builder struct {
-	gormInstance    proxy.IConnection
+	gormInstance    core.IConnection
 	config          Config
 	selectStatement []string
 	table           string
@@ -48,31 +49,31 @@ type Builder struct {
 	copyGorm        *gorm.DB
 }
 
-func NewBuilder(gormInstance proxy.IConnection) *Builder {
+func NewBuilder(gormInstance core.IConnection) *Builder {
 	return &Builder{
 		gormInstance: gormInstance,
 		config:       Config{PreloadingMaxDeep: RecursiveRelationMaxDeep},
 	}
 }
 
-func NewBuilderWithConfig(gormInstance proxy.IConnection, config Config) *Builder {
+func NewBuilderWithConfig(gormInstance core.IConnection, config Config) *Builder {
 	return &Builder{
 		gormInstance: gormInstance,
 		config:       config,
 	}
 }
 
-func (thiz *Builder) Select(fields ...string) proxy.IQueryBuilder {
+func (thiz *Builder) Select(fields ...string) core.IQueryBuilder {
 	thiz.selectStatement = append(thiz.selectStatement, fields...)
 	return thiz
 }
 
-func (thiz *Builder) From(table string) proxy.IQueryBuilder {
+func (thiz *Builder) From(table string) core.IQueryBuilder {
 	thiz.table = table
 	return thiz
 }
 
-func (thiz *Builder) FromModel(model any) proxy.IQueryBuilder {
+func (thiz *Builder) FromModel(model any) core.IQueryBuilder {
 	thiz.copyGorm = &(*thiz.GetDriver())
 	thiz.copyGorm = thiz.copyGorm.Model(model)
 
@@ -88,30 +89,30 @@ func (thiz *Builder) FromModel(model any) proxy.IQueryBuilder {
 	return thiz
 }
 
-func (thiz *Builder) Join(table string, on string) proxy.IQueryBuilder {
+func (thiz *Builder) Join(table string, on string) core.IQueryBuilder {
 	thiz.join = append(thiz.join, fmt.Sprintf("JOIN %s ON %s", table, on))
 	return thiz
 }
 
-func (thiz *Builder) WhereEqual(field string, value interface{}) proxy.IQueryBuilder {
+func (thiz *Builder) WhereEqual(field string, value interface{}) core.IQueryBuilder {
 	thiz.where = append(thiz.where, field+" = ?")
 	thiz.args = append(thiz.args, value)
 	return thiz
 }
 
-func (thiz *Builder) Where(field string, operator string, value interface{}) proxy.IQueryBuilder {
+func (thiz *Builder) Where(field string, operator string, value interface{}) core.IQueryBuilder {
 	thiz.where = append(thiz.where, field+" "+operator+" ?")
 	thiz.args = append(thiz.args, value)
 	return thiz
 }
 
-func (thiz *Builder) WhereClosure(closure func(builder proxy.IQueryBuilder) proxy.IQueryBuilder) proxy.IQueryBuilder {
+func (thiz *Builder) WhereClosure(closure func(builder core.IQueryBuilder) core.IQueryBuilder) core.IQueryBuilder {
 	builder := closure(NewBuilder(thiz.GetConnection()))
 	thiz.where = append(thiz.where, builder.BuildWhereAnd())
 	return thiz
 }
 
-func (thiz *Builder) WhereIn(field string, values ...interface{}) proxy.IQueryBuilder {
+func (thiz *Builder) WhereIn(field string, values ...interface{}) core.IQueryBuilder {
 	placeholders := make([]string, len(values))
 	for i := 0; i < len(values); i++ {
 		placeholders[i] = "?"
@@ -121,7 +122,7 @@ func (thiz *Builder) WhereIn(field string, values ...interface{}) proxy.IQueryBu
 	return thiz
 }
 
-func (thiz *Builder) WhereAnd(closure func(builder proxy.IQueryBuilder) proxy.IQueryBuilder) proxy.IQueryBuilder {
+func (thiz *Builder) WhereAnd(closure func(builder core.IQueryBuilder) core.IQueryBuilder) core.IQueryBuilder {
 	builder := closure(NewBuilder(thiz.GetConnection()))
 	builtWhere := builder.BuildWhere()
 	if builtWhere != "" {
@@ -131,7 +132,7 @@ func (thiz *Builder) WhereAnd(closure func(builder proxy.IQueryBuilder) proxy.IQ
 	return thiz
 }
 
-func (thiz *Builder) WhereOr(closure func(builder proxy.IQueryBuilder) proxy.IQueryBuilder) proxy.IQueryBuilder {
+func (thiz *Builder) WhereOr(closure func(builder core.IQueryBuilder) core.IQueryBuilder) core.IQueryBuilder {
 	builder := closure(NewBuilder(thiz.GetConnection()))
 	builtWhere := builder.BuildWhereOr()
 	if builtWhere != "" {
@@ -141,17 +142,17 @@ func (thiz *Builder) WhereOr(closure func(builder proxy.IQueryBuilder) proxy.IQu
 	return thiz
 }
 
-func (thiz *Builder) OrderBy(field string, direction string) proxy.IQueryBuilder {
+func (thiz *Builder) OrderBy(field string, direction string) core.IQueryBuilder {
 	thiz.order = append(thiz.order, field+" "+direction)
 	return thiz
 }
 
-func (thiz *Builder) Limit(limit int) proxy.IQueryBuilder {
+func (thiz *Builder) Limit(limit int) core.IQueryBuilder {
 	thiz.limit = &limit
 	return thiz
 }
 
-func (thiz *Builder) Offset(offset int) proxy.IQueryBuilder {
+func (thiz *Builder) Offset(offset int) core.IQueryBuilder {
 	thiz.offset = &offset
 	return thiz
 }
@@ -247,6 +248,13 @@ func (thiz *Builder) Get(dest any) error {
 	}
 
 	res := thiz.GetDriver().Raw(thiz.ToQuery(), thiz.args...).First(dest)
+
+	domainMetaInstance, ok := dest.(core.IDomainMeta)
+	if ok {
+		domainMetaInstance.SetLoaded(true)
+		domainMetaInstance.SetTable(res.Statement.Table)
+	}
+
 	thiz.clearQueryParams()
 
 	if res.Error != nil && res.Error.Error() == "record not found" {
@@ -288,6 +296,15 @@ func (thiz *Builder) List(dest any) error {
 	res := thiz.GetDriver().Raw(thiz.ToQuery(), thiz.args...).Find(dest)
 	thiz.clearQueryParams()
 
+	for _, d := range util.GetSliceFromAny(dest) {
+		domainMetaInstance, ok := d.(core.IDomainMeta)
+		if !ok {
+			continue
+		}
+		domainMetaInstance.SetLoaded(true)
+		domainMetaInstance.SetTable(res.Statement.Table)
+	}
+
 	if res.Error != nil && res.Error.Error() == "record not found" {
 		return nil
 	}
@@ -301,12 +318,29 @@ func (thiz *Builder) Insert(model any) error {
 	}
 
 	res := thiz.GetDriver().Create(model)
+	domainMetaInstance, ok := model.(core.IDomainMeta)
+	if ok {
+		domainMetaInstance.SetLoaded(true)
+		domainMetaInstance.SetTable(res.Statement.Table)
+	}
+
 	thiz.clearQueryParams()
 	return res.Error
 }
 
 func (thiz *Builder) Save(model any) error {
+	err := validator.ValidateStruct(model)
+	if err != nil {
+		return err
+	}
+
 	res := thiz.GetDriver().Save(model)
+	domainMetaInstance, ok := model.(core.IDomainMeta)
+	if ok {
+		domainMetaInstance.SetLoaded(true)
+		domainMetaInstance.SetTable(res.Statement.Table)
+	}
+
 	thiz.clearQueryParams()
 	return res.Error
 }
@@ -323,7 +357,7 @@ func (thiz *Builder) DeleteModel(model any) error {
 	return res.Error
 }
 
-func (thiz *Builder) Relation(relation string) proxy.IQueryBuilder {
+func (thiz *Builder) Relation(relation string) core.IQueryBuilder {
 	if thiz.copyGorm == nil {
 		panic("You must specify model. Call postgres.Builder.FromModel(model any)")
 	}
@@ -331,7 +365,7 @@ func (thiz *Builder) Relation(relation string) proxy.IQueryBuilder {
 	return thiz
 }
 
-func (thiz *Builder) GetConnection() proxy.IConnection {
+func (thiz *Builder) GetConnection() core.IConnection {
 	return thiz.gormInstance
 }
 
@@ -342,18 +376,18 @@ func (thiz *Builder) GetDriver() *gorm.DB {
 	return thiz.copyGorm
 }
 
-func (thiz *Builder) StartTransaction() proxy.IQueryBuilder {
+func (thiz *Builder) StartTransaction() core.IQueryBuilder {
 	thiz.GetDriver().Begin()
 	return thiz
 }
 
-func (thiz *Builder) EndTransaction() proxy.IQueryBuilder {
+func (thiz *Builder) EndTransaction() core.IQueryBuilder {
 	thiz.GetDriver().Commit()
 	thiz.clearQueryParams()
 	return thiz
 }
 
-func (thiz *Builder) RollbackTransaction() proxy.IQueryBuilder {
+func (thiz *Builder) RollbackTransaction() core.IQueryBuilder {
 	thiz.GetDriver().Rollback()
 	thiz.clearQueryParams()
 	return thiz
@@ -380,6 +414,68 @@ func (thiz *Builder) Association(association string) *gorm.Association {
 		panic("You must specify model. Call postgres.Builder.FromModel(model any)")
 	}
 	return thiz.copyGorm.Association(association)
+}
+
+func (thiz *Builder) ReplaceRelation(relation string) error {
+	if thiz.copyGorm == nil {
+		return fmt.Errorf("You must specify model. Call postgres.Builder.FromModel(model any)")
+	}
+	return thiz.copyGorm.Association(relation).Replace()
+}
+
+func (thiz *Builder) DeleteRelation(relation string) error {
+	if thiz.copyGorm == nil {
+		return fmt.Errorf("You must specify model. Call postgres.Builder.FromModel(model any)")
+	}
+	return thiz.copyGorm.Association(relation).Delete()
+}
+
+func (thiz *Builder) ClearRelation(relation string) error {
+	if thiz.copyGorm == nil {
+		return fmt.Errorf("You must specify model. Call postgres.Builder.FromModel(model any)")
+	}
+	return thiz.copyGorm.Association(relation).Clear()
+}
+
+func (thiz *Builder) AppendRelation(relation string, values ...any) error {
+	if thiz.copyGorm == nil {
+		return fmt.Errorf("You must specify model. Call postgres.Builder.FromModel(model any)")
+	}
+	return thiz.copyGorm.Association(relation).Append(values)
+}
+
+func (thiz *Builder) LoadRelations(relations ...string) error {
+	if thiz.copyGorm == nil {
+		return fmt.Errorf("You must specify model. Call postgres.Builder.FromModel(model any)")
+	}
+
+	for _, relation := range relations {
+		splitRelation := strings.Split(relation, ".")
+
+		r := splitRelation[0]
+		rv := reflect.ValueOf(thiz.copyGorm.Statement.Model)
+		rvField := rv.Elem().FieldByName(r)
+
+		fieldType := util.IndirectType(rvField.Type())
+		fieldValue := reflect.New(fieldType)
+		v := fieldValue.Interface()
+
+		err := thiz.copyGorm.Association(r).Find(&v)
+		if err != nil {
+			return err
+		}
+
+		if len(splitRelation) > 1 {
+			thiz.clearQueryParams()
+			err := thiz.FromModel(v).LoadRelations(strings.Join(splitRelation[1:], "."))
+			if err != nil {
+				return err
+			}
+		}
+
+		rvField.Set(reflect.ValueOf(v))
+	}
+	return nil
 }
 
 func (thiz *Builder) clearQueryParams() {

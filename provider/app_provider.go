@@ -1,14 +1,14 @@
 package provider
 
 import (
+	"gorgany/app/core"
 	"gorgany/internal"
 	"gorgany/log"
-	"gorgany/proxy"
 	"reflect"
 )
 
 type AppProvider struct {
-	AppRegistrar proxy.IRegistrar
+	AppRegistrar core.IRegistrar
 }
 
 func NewAppProvider() *AppProvider {
@@ -19,7 +19,7 @@ func (thiz *AppProvider) InitProvider() {
 	thiz.AppRegistrar = internal.GetFrameworkRegistrar()
 }
 
-func (thiz *AppProvider) RegisterProvider(provider proxy.IProvider) {
+func (thiz *AppProvider) RegisterProvider(provider core.IProvider) {
 	rtProvider := reflect.TypeOf(provider)
 	if rtProvider.Kind() == reflect.Ptr {
 		rtProvider = rtProvider.Elem()

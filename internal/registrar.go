@@ -1,52 +1,52 @@
 package internal
 
 import (
-	"gorgany/proxy"
+	"gorgany/app/core"
 )
 
-var frameworkRegistrar proxy.IRegistrar
+var frameworkRegistrar core.IRegistrar
 
-func GetFrameworkRegistrar() proxy.IRegistrar {
+func GetFrameworkRegistrar() core.IRegistrar {
 	return frameworkRegistrar
 }
 
 func init() {
 	frameworkRegistrar = &Registrar{
-		controllers:         make(proxy.Controllers, 0),
-		providers:           make(proxy.IProviders, 0),
-		dbConnections:       make(map[proxy.DbType]proxy.IConnection),
-		commands:            make(map[string]proxy.ICommand),
-		middlewares:         make([]proxy.IMiddleware, 0),
-		customErrorHandlers: make(map[string]proxy.ErrorHandler),
-		loggers:             make(map[string]proxy.Logger),
+		controllers:         make(core.Controllers, 0),
+		providers:           make(core.IProviders, 0),
+		dbConnections:       make(map[core.DbType]core.IConnection),
+		commands:            make(map[string]core.ICommand),
+		middlewares:         make([]core.IMiddleware, 0),
+		customErrorHandlers: make(map[string]core.ErrorHandler),
+		loggers:             make(map[string]core.Logger),
 		domains:             make(map[string]interface{}),
-		migrations:          make([]proxy.IMigration, 0),
-		seeders:             make([]proxy.ISeeder, 0),
+		migrations:          make([]core.IMigration, 0),
+		seeders:             make([]core.ISeeder, 0),
 	}
 }
 
-func SetRegistrar(registrar proxy.IRegistrar) {
+func SetRegistrar(registrar core.IRegistrar) {
 	frameworkRegistrar = registrar
 }
 
 type Registrar struct {
 	homeUrl             string
-	controllers         proxy.Controllers
-	providers           proxy.IProviders
-	dbConnections       map[proxy.DbType]proxy.IConnection
-	commands            map[string]proxy.ICommand
+	controllers         core.Controllers
+	providers           core.IProviders
+	dbConnections       map[core.DbType]core.IConnection
+	commands            map[string]core.ICommand
 	sessionLifetime     int //in seconds
-	userService         proxy.IUserService
-	middlewares         []proxy.IMiddleware
-	customErrorHandlers map[string]proxy.ErrorHandler
-	loggers             map[string]proxy.Logger
+	userService         core.IUserService
+	middlewares         []core.IMiddleware
+	customErrorHandlers map[string]core.ErrorHandler
+	loggers             map[string]core.Logger
 	domains             map[string]interface{}
-	migrations          []proxy.IMigration
-	seeders             []proxy.ISeeder
-	sessionStorage      proxy.ISessionStorage
-	i18nManager         proxy.Ii18nManager
-	viewEngine          proxy.IViewEngine
-	router              proxy.Router
+	migrations          []core.IMigration
+	seeders             []core.ISeeder
+	sessionStorage      core.ISessionStorage
+	i18nManager         core.Ii18nManager
+	viewEngine          core.IViewEngine
+	router              core.Router
 }
 
 func (thiz *Registrar) SetHomeUrl(url string) {
@@ -61,35 +61,35 @@ type T struct {
 	Registrar
 }
 
-func (thiz *Registrar) RegisterController(controller proxy.IController) {
+func (thiz *Registrar) RegisterController(controller core.IController) {
 	thiz.controllers = append(thiz.controllers, controller)
 }
 
-func (thiz *Registrar) GetControllers() proxy.Controllers {
+func (thiz *Registrar) GetControllers() core.Controllers {
 	return thiz.controllers
 }
 
-func (thiz *Registrar) RegisterProvider(provider proxy.IProvider) {
+func (thiz *Registrar) RegisterProvider(provider core.IProvider) {
 	thiz.providers = append(thiz.providers, provider)
 }
 
-func (thiz *Registrar) GetProviders() proxy.IProviders {
+func (thiz *Registrar) GetProviders() core.IProviders {
 	return thiz.providers
 }
 
-func (thiz *Registrar) RegisterCommand(command proxy.ICommand) {
+func (thiz *Registrar) RegisterCommand(command core.ICommand) {
 	if thiz.commands == nil {
-		thiz.commands = make(map[string]proxy.ICommand)
+		thiz.commands = make(map[string]core.ICommand)
 	}
 
 	thiz.commands[command.GetName()] = command
 }
 
-func (thiz *Registrar) GetCommands() map[string]proxy.ICommand {
+func (thiz *Registrar) GetCommands() map[string]core.ICommand {
 	return thiz.commands
 }
 
-func (thiz *Registrar) GetCommand(name string) proxy.ICommand {
+func (thiz *Registrar) GetCommand(name string) core.ICommand {
 	return thiz.commands[name]
 }
 
@@ -104,48 +104,48 @@ func (thiz *Registrar) GetSessionLifetime() int {
 	return thiz.sessionLifetime
 }
 
-func (thiz *Registrar) SetUserService(service proxy.IUserService) {
+func (thiz *Registrar) SetUserService(service core.IUserService) {
 	thiz.userService = service
 }
 
-func (thiz *Registrar) GetUserService() proxy.IUserService {
+func (thiz *Registrar) GetUserService() core.IUserService {
 	return thiz.userService
 }
 
-func (thiz *Registrar) RegisterMiddleware(middleware proxy.IMiddleware) {
+func (thiz *Registrar) RegisterMiddleware(middleware core.IMiddleware) {
 	if thiz.middlewares == nil {
-		thiz.middlewares = make([]proxy.IMiddleware, 0)
+		thiz.middlewares = make([]core.IMiddleware, 0)
 	}
 	thiz.middlewares = append(thiz.middlewares, middleware)
 }
 
-func (thiz *Registrar) GetMiddlewares() []proxy.IMiddleware {
+func (thiz *Registrar) GetMiddlewares() []core.IMiddleware {
 	return thiz.middlewares
 }
 
-func (thiz *Registrar) RegisterErrorHandler(errorType string, handler proxy.ErrorHandler) {
+func (thiz *Registrar) RegisterErrorHandler(errorType string, handler core.ErrorHandler) {
 	if thiz.customErrorHandlers == nil {
-		thiz.customErrorHandlers = make(map[string]proxy.ErrorHandler)
+		thiz.customErrorHandlers = make(map[string]core.ErrorHandler)
 	}
 	thiz.customErrorHandlers[errorType] = handler
 }
 
-func (thiz *Registrar) GetErrorHandlers() map[string]proxy.ErrorHandler {
+func (thiz *Registrar) GetErrorHandlers() map[string]core.ErrorHandler {
 	return thiz.customErrorHandlers
 }
 
-func (thiz *Registrar) RegisterLogger(key string, logger proxy.Logger) {
+func (thiz *Registrar) RegisterLogger(key string, logger core.Logger) {
 	if thiz.loggers == nil {
-		thiz.loggers = make(map[string]proxy.Logger)
+		thiz.loggers = make(map[string]core.Logger)
 	}
 	thiz.loggers[key] = logger
 }
 
-func (thiz *Registrar) GetLoggers() map[string]proxy.Logger {
+func (thiz *Registrar) GetLoggers() map[string]core.Logger {
 	return thiz.loggers
 }
 
-func (thiz *Registrar) GetLogger(key string) proxy.Logger {
+func (thiz *Registrar) GetLogger(key string) core.Logger {
 	return thiz.loggers[key]
 }
 
@@ -160,62 +160,62 @@ func (thiz *Registrar) GetDomains() map[string]interface{} {
 	return thiz.domains
 }
 
-func (thiz *Registrar) RegisterMigration(migration proxy.IMigration) {
+func (thiz *Registrar) RegisterMigration(migration core.IMigration) {
 	thiz.migrations = append(thiz.migrations, migration)
 }
 
-func (thiz *Registrar) GetMigrations() []proxy.IMigration {
+func (thiz *Registrar) GetMigrations() []core.IMigration {
 	return thiz.migrations
 }
 
-func (thiz *Registrar) RegisterSeeder(seeder proxy.ISeeder) {
+func (thiz *Registrar) RegisterSeeder(seeder core.ISeeder) {
 	thiz.seeders = append(thiz.seeders, seeder)
 }
 
-func (thiz *Registrar) GetSeeders() []proxy.ISeeder {
+func (thiz *Registrar) GetSeeders() []core.ISeeder {
 	return thiz.seeders
 }
 
-func (thiz *Registrar) SetSessionStorage(sessionStorage proxy.ISessionStorage) {
+func (thiz *Registrar) SetSessionStorage(sessionStorage core.ISessionStorage) {
 	thiz.sessionStorage = sessionStorage
 }
 
-func (thiz *Registrar) GetSessionStorage() proxy.ISessionStorage {
+func (thiz *Registrar) GetSessionStorage() core.ISessionStorage {
 	return thiz.sessionStorage
 }
 
-func (thiz *Registrar) SetI18nManager(manager proxy.Ii18nManager) {
+func (thiz *Registrar) SetI18nManager(manager core.Ii18nManager) {
 	thiz.i18nManager = manager
 }
 
-func (thiz *Registrar) GetI18nManager() proxy.Ii18nManager {
+func (thiz *Registrar) GetI18nManager() core.Ii18nManager {
 	return thiz.i18nManager
 }
 
-func (thiz *Registrar) RegisterDbConnection(kind proxy.DbType, connection proxy.IConnection) {
+func (thiz *Registrar) RegisterDbConnection(kind core.DbType, connection core.IConnection) {
 	thiz.dbConnections[kind] = connection
 }
 
-func (thiz *Registrar) GetDbConnections() map[proxy.DbType]proxy.IConnection {
+func (thiz *Registrar) GetDbConnections() map[core.DbType]core.IConnection {
 	return thiz.dbConnections
 }
 
-func (thiz *Registrar) GetDbConnection(kind proxy.DbType) proxy.IConnection {
+func (thiz *Registrar) GetDbConnection(kind core.DbType) core.IConnection {
 	return thiz.dbConnections[kind]
 }
 
-func (thiz *Registrar) RegisterViewEngine(engine proxy.IViewEngine) {
+func (thiz *Registrar) RegisterViewEngine(engine core.IViewEngine) {
 	thiz.viewEngine = engine
 }
 
-func (thiz *Registrar) GetViewEngine() proxy.IViewEngine {
+func (thiz *Registrar) GetViewEngine() core.IViewEngine {
 	return thiz.viewEngine
 }
 
-func (thiz *Registrar) RegisterRouter(router proxy.Router) {
+func (thiz *Registrar) RegisterRouter(router core.Router) {
 	thiz.router = router
 }
 
-func (thiz *Registrar) GetRouter() proxy.Router {
+func (thiz *Registrar) GetRouter() core.Router {
 	return thiz.router
 }

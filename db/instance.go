@@ -1,11 +1,11 @@
 package db
 
 import (
+	"gorgany/app/core"
 	"gorgany/internal"
-	"gorgany/proxy"
 )
 
-func Builder(kind proxy.DbType) proxy.IQueryBuilder {
+func Builder(kind core.DbType) core.IQueryBuilder {
 	connection := internal.GetFrameworkRegistrar().GetDbConnection(kind)
 	return connection.Builder()
 }

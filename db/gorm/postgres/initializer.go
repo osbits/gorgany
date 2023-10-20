@@ -3,14 +3,14 @@ package postgres
 import (
 	"fmt"
 	"github.com/spf13/viper"
+	"gorgany/app/core"
 	"gorgany/db/gorm/plugin"
-	"gorgany/proxy"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
-func NewGormPostgresConnection(config map[string]any) proxy.IConnection {
+func NewGormPostgresConnection(config map[string]any) core.IConnection {
 	dsn := getDataSource(config)
 
 	gormConfig := postgres.Config{DSN: dsn, PreferSimpleProtocol: config["prefer_simple_protocol"].(bool)}

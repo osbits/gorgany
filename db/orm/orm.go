@@ -1,78 +1,78 @@
 package orm
 
 import (
+	"gorgany/app/core"
 	"gorgany/db"
-	"gorgany/proxy"
 	"gorm.io/gorm"
 	"reflect"
 )
 
 type GorganyOrm[T any] struct {
-	builder proxy.IQueryBuilder
+	builder core.IQueryBuilder
 	Model   *T
 }
 
-func (thiz *GorganyOrm[T]) Select(fields ...string) proxy.IOrm[T] {
+func (thiz *GorganyOrm[T]) Select(fields ...string) core.IOrm[T] {
 	thiz.setBuilder()
 	thiz.builder.Select(fields...)
 	return thiz
 }
 
-func (thiz *GorganyOrm[T]) Join(table string, on string) proxy.IOrm[T] {
+func (thiz *GorganyOrm[T]) Join(table string, on string) core.IOrm[T] {
 	thiz.setBuilder()
 	thiz.builder.Join(table, on)
 	return thiz
 }
 
-func (thiz *GorganyOrm[T]) WhereEqual(field string, value interface{}) proxy.IOrm[T] {
+func (thiz *GorganyOrm[T]) WhereEqual(field string, value interface{}) core.IOrm[T] {
 	thiz.setBuilder()
 	thiz.builder.WhereEqual(field, value)
 	return thiz
 }
 
-func (thiz *GorganyOrm[T]) Where(field string, operator string, value interface{}) proxy.IOrm[T] {
+func (thiz *GorganyOrm[T]) Where(field string, operator string, value interface{}) core.IOrm[T] {
 	thiz.setBuilder()
 	thiz.builder.Where(field, operator, value)
 	return thiz
 }
 
-func (thiz *GorganyOrm[T]) WhereClosure(closure func(builder proxy.IQueryBuilder) proxy.IQueryBuilder) proxy.IOrm[T] {
+func (thiz *GorganyOrm[T]) WhereClosure(closure func(builder core.IQueryBuilder) core.IQueryBuilder) core.IOrm[T] {
 	thiz.setBuilder()
 	thiz.builder.WhereClosure(closure)
 	return thiz
 }
 
-func (thiz *GorganyOrm[T]) WhereIn(field string, values ...interface{}) proxy.IOrm[T] {
+func (thiz *GorganyOrm[T]) WhereIn(field string, values ...interface{}) core.IOrm[T] {
 	thiz.setBuilder()
 	thiz.builder.WhereIn(field, values)
 	return thiz
 }
 
-func (thiz *GorganyOrm[T]) WhereAnd(closure func(builder proxy.IQueryBuilder) proxy.IQueryBuilder) proxy.IOrm[T] {
+func (thiz *GorganyOrm[T]) WhereAnd(closure func(builder core.IQueryBuilder) core.IQueryBuilder) core.IOrm[T] {
 	thiz.setBuilder()
 	thiz.builder.WhereAnd(closure)
 	return thiz
 }
 
-func (thiz *GorganyOrm[T]) WhereOr(closure func(builder proxy.IQueryBuilder) proxy.IQueryBuilder) proxy.IOrm[T] {
+func (thiz *GorganyOrm[T]) WhereOr(closure func(builder core.IQueryBuilder) core.IQueryBuilder) core.IOrm[T] {
 	thiz.setBuilder()
 	thiz.builder.WhereOr(closure)
 	return thiz
 }
 
-func (thiz *GorganyOrm[T]) OrderBy(field string, direction string) proxy.IOrm[T] {
+func (thiz *GorganyOrm[T]) OrderBy(field string, direction string) core.IOrm[T] {
 	thiz.setBuilder()
 	thiz.builder.OrderBy(field, direction)
 	return thiz
 }
 
-func (thiz *GorganyOrm[T]) Limit(limit int) proxy.IOrm[T] {
+func (thiz *GorganyOrm[T]) Limit(limit int) core.IOrm[T] {
 	thiz.setBuilder()
 	thiz.builder.Limit(limit)
 	return thiz
 }
 
-func (thiz *GorganyOrm[T]) Offset(offset int) proxy.IOrm[T] {
+func (thiz *GorganyOrm[T]) Offset(offset int) core.IOrm[T] {
 	thiz.setBuilder()
 	thiz.builder.Offset(offset)
 	return thiz
@@ -116,15 +116,40 @@ func (thiz *GorganyOrm[T]) Delete() error {
 func (thiz *GorganyOrm[T]) Association(association string) *gorm.Association {
 	thiz.setBuilder()
 
-	return thiz.builder.FromModel(thiz.Model).(proxy.GormAssociation).Association(association)
+	return thiz.builder.FromModel(thiz.Model).(core.GormAssociation).Association(association)
 }
 
-func (thiz *GorganyOrm[T]) Relation(relation string) proxy.IOrm[T] {
+func (thiz *GorganyOrm[T]) Relation(relation string) core.IOrm[T] {
 	var model T
 	thiz.setBuilder()
 
 	thiz.builder.FromModel(model).Relation(relation)
 	return thiz
+}
+
+func (thiz *GorganyOrm[T]) ReplaceRelation(relation string) error {
+	thiz.setBuilder()
+	return thiz.builder.FromModel(thiz.Model).ReplaceRelation(relation)
+}
+
+func (thiz *GorganyOrm[T]) DeleteRelation(relation string) error {
+	thiz.setBuilder()
+	return thiz.builder.FromModel(thiz.Model).DeleteRelation(relation)
+}
+
+func (thiz *GorganyOrm[T]) ClearRelation(relation string) error {
+	thiz.setBuilder()
+	return thiz.builder.FromModel(thiz.Model).ClearRelation(relation)
+}
+
+func (thiz *GorganyOrm[T]) AppendRelation(relation string, values ...any) error {
+	thiz.setBuilder()
+	return thiz.builder.FromModel(thiz.Model).AppendRelation(relation)
+}
+
+func (thiz *GorganyOrm[T]) LoadRelations(relations ...string) error {
+	thiz.setBuilder()
+	return thiz.builder.FromModel(thiz.Model).LoadRelations(relations...)
 }
 
 func (thiz *GorganyOrm[T]) ToQuery() string {
@@ -137,14 +162,14 @@ func (thiz *GorganyOrm[T]) setBuilder() {
 	}
 
 	rv := reflect.ValueOf(thiz)
-	if !rv.CanConvert(reflect.TypeOf((*proxy.DbTyper)(nil))) {
-		thiz.builder = db.Builder(proxy.GormPostgresQL) //todo read default dbType from config
+	if !rv.CanConvert(reflect.TypeOf((*core.DbTyper)(nil))) {
+		thiz.builder = db.Builder(core.GormPostgresQL) //todo read default dbType from config
 		return
 	}
 
-	casted, ok := rv.Convert(reflect.TypeOf((*proxy.DbTyper)(nil))).Interface().(proxy.DbTyper)
+	casted, ok := rv.Convert(reflect.TypeOf((*core.DbTyper)(nil))).Interface().(core.DbTyper)
 	if !ok {
-		thiz.builder = db.Builder(proxy.GormPostgresQL)
+		thiz.builder = db.Builder(core.GormPostgresQL)
 		return
 	}
 

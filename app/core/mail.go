@@ -1,4 +1,4 @@
-package proxy
+package core
 
 type IMail interface {
 	GetRecipients() []string

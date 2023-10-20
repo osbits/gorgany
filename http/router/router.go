@@ -1,10 +1,10 @@
 package router
 
 import (
+	"gorgany/app/core"
 	"gorgany/internal"
-	"gorgany/proxy"
 )
 
-func GetRouter() proxy.Router {
+func GetRouter() core.Router {
 	return internal.GetFrameworkRegistrar().GetRouter()
 }

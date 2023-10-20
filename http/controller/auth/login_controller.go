@@ -2,11 +2,11 @@ package auth
 
 import (
 	"fmt"
+	"gorgany/app/core"
 	"gorgany/auth"
 	"gorgany/http"
 	"gorgany/http/router"
 	"gorgany/internal"
-	"gorgany/proxy"
 	"gorgany/util"
 	"net/url"
 )
@@ -55,23 +55,23 @@ func (thiz LoginController) Logout(message http.Message) {
 	message.Redirect(router.GetRouter().UrlByNameSequence("cp.login.show"), 301)
 }
 
-func (thiz LoginController) GetRoutes() []proxy.IRouteConfig {
-	return []proxy.IRouteConfig{
+func (thiz LoginController) GetRoutes() []core.IRouteConfig {
+	return []core.IRouteConfig{
 		&router.RouteConfig{
 			Path:    "/login",
-			Method:  proxy.GET,
+			Method:  core.GET,
 			Handler: thiz.ShowLogin,
 			Name:    "cp.login.show",
 		},
 		&router.RouteConfig{
 			Path:    "/login",
-			Method:  proxy.POST,
+			Method:  core.POST,
 			Handler: thiz.Login,
 			Name:    "cp.login",
 		},
 		&router.RouteConfig{
 			Path:    "/logout",
-			Method:  proxy.POST,
+			Method:  core.POST,
 			Handler: thiz.Logout,
 			Name:    "cp.logout",
 		},

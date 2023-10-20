@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"github.com/go-chi/chi"
 	"gorgany"
+	"gorgany/app/core"
 	"gorgany/decoder/multipart"
 	error2 "gorgany/error"
-	"gorgany/proxy"
 	"gorgany/util"
 	gorganyValidator "gorgany/validator"
 	url2 "net/url"
@@ -28,7 +28,7 @@ func (thiz inputResolver) resolve() ([]reflect.Value, error) {
 		in := thiz.reflectedHandler.Type().In(i)
 		argTypeName := in.String()
 
-		if in.Implements(reflect.TypeOf((*proxy.HttpMessage)(nil)).Elem()) {
+		if in.Implements(reflect.TypeOf((*core.HttpMessage)(nil)).Elem()) {
 			args = append(args, reflect.ValueOf(thiz.message))
 			continue
 		}

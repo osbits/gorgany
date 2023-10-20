@@ -1,4 +1,4 @@
-package proxy
+package core
 
 import "gorm.io/gorm"
 
@@ -52,6 +52,11 @@ type IQueryBuilder interface {
 	Relation(relation string) IQueryBuilder
 	Raw(sql string, scan any, values ...any) error
 	GetConnection() IConnection
+	ReplaceRelation(relation string) error
+	DeleteRelation(relation string) error
+	ClearRelation(relation string) error
+	AppendRelation(relation string, values ...any) error
+	LoadRelations(relation ...string) error
 	GetArgs() []any
 }
 
@@ -76,6 +81,11 @@ type IOrm[T any] interface {
 	Count() (int64, error)
 	List() ([]*T, error)
 	Save() error
+	ReplaceRelation(relation string) error
+	DeleteRelation(relation string) error
+	ClearRelation(relation string) error
+	AppendRelation(relation string, values ...any) error
+	LoadRelations(relations ...string) error
 	Delete() error
 	ToQuery() string
 }

@@ -2,12 +2,12 @@ package auth
 
 import (
 	"context"
-	"gorgany/proxy"
+	"gorgany/app/core"
 )
 
 // ctx - context with gorgany/http.Message instance
-func ResolveAuthService(ctx context.Context) proxy.AuthService {
-	message := ctx.Value("message").(proxy.HttpMessage)
+func ResolveAuthService(ctx context.Context) core.AuthService {
+	message := ctx.Value("message").(core.HttpMessage)
 	if message.IsApiNamespace() {
 		return NewJwtService()
 	}

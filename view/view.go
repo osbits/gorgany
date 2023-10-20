@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
+	"gorgany/app/core"
 	"gorgany/http/router"
 	"gorgany/i18n"
 	"gorgany/internal"
-	"gorgany/proxy"
 	"gorgany/util"
 	"io"
 	"net/http"
@@ -33,7 +33,7 @@ func NewEngineRenderer(requestWrapper *requestWrapper) *EngineRenderer {
 }
 
 type EngineRenderer struct {
-	Engine         proxy.IViewEngine
+	Engine         core.IViewEngine
 	requestWrapper *requestWrapper
 }
 

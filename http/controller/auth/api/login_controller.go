@@ -2,11 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"gorgany/app/core"
 	"gorgany/auth"
 	"gorgany/http"
 	"gorgany/http/middleware"
 	"gorgany/http/router"
-	"gorgany/proxy"
 	"gorgany/service/dto"
 	"gorgany/util"
 )
@@ -54,7 +54,7 @@ func (thiz LoginController) Login(message http.Message) {
 	message.ResponseJSON(dto.WrapPayload(responseBodyMap, 200, nil), 200)
 }
 
-func (thiz LoginController) GetRoutes() []proxy.IRouteConfig {
+func (thiz LoginController) GetRoutes() []core.IRouteConfig {
 	corsMiddleware := middleware.NewCorsMiddleware(middleware.Options{
 		AllowedOrigins:   []string{"*"},
 		AllowedMethods:   []string{"POST", "OPTIONS"},
@@ -62,12 +62,12 @@ func (thiz LoginController) GetRoutes() []proxy.IRouteConfig {
 		AllowCredentials: false,
 	})
 
-	return []proxy.IRouteConfig{
+	return []core.IRouteConfig{
 		&router.RouteConfig{
 			Path:        "/{namespace:api}/v1/login",
-			Method:      proxy.POST,
+			Method:      core.POST,
 			Handler:     thiz.Login,
-			Middlewares: []proxy.IMiddleware{corsMiddleware},
+			Middlewares: []core.IMiddleware{corsMiddleware},
 		},
 	}
 }

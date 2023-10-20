@@ -3,10 +3,10 @@ package provider
 import (
 	"fmt"
 	"github.com/spf13/viper"
+	"gorgany/app/core"
 	postgres2 "gorgany/db/gorm/postgres"
 	"gorgany/internal"
 	"gorgany/log"
-	"gorgany/proxy"
 )
 
 type DbProvider struct {
@@ -20,7 +20,7 @@ func (thiz *DbProvider) InitProvider() {
 
 	databases := viper.GetStringMap("databases")
 	for key, config := range databases {
-		dbType := proxy.DbType(key)
+		dbType := core.DbType(key)
 		configMap, ok := config.(map[string]any)
 		if !ok {
 			panic(fmt.Errorf("Incorrect config for '%s' database", key))
@@ -34,16 +34,16 @@ func (thiz *DbProvider) InitProvider() {
 	}
 }
 
-func (thiz *DbProvider) RegisterDbConnection(dbType proxy.DbType, connection proxy.IConnection) {
+func (thiz *DbProvider) RegisterDbConnection(dbType core.DbType, connection core.IConnection) {
 	internal.GetFrameworkRegistrar().RegisterDbConnection(dbType, connection)
 	log.Log("").Infof("Connection for %s initialized", dbType)
 }
 
-func (thiz *DbProvider) resolveDb(kind proxy.DbType, config map[string]any) proxy.IConnection {
+func (thiz *DbProvider) resolveDb(kind core.DbType, config map[string]any) core.IConnection {
 	switch kind {
-	case proxy.GormPostgresQL:
+	case core.GormPostgresQL:
 		return postgres2.NewGormPostgresConnection(config)
-	case proxy.MongoDb:
+	case core.MongoDb:
 		//todo implement me
 	}
 	return nil

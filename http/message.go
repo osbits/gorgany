@@ -8,9 +8,9 @@ import (
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
 	"gorgany"
+	"gorgany/app/core"
 	"gorgany/auth"
 	"gorgany/model"
-	"gorgany/proxy"
 	"gorgany/util"
 	view2 "gorgany/view"
 	"io"
@@ -210,7 +210,7 @@ func (thiz Message) ClearOneTimeParams() {
 	thiz.SetCookie(OneTimeParamsCookieName, "", 10)
 }
 
-func (thiz Message) Login(user proxy.Authenticable) {
+func (thiz Message) Login(user core.Authenticable) {
 	sessionStorage := auth.GetSessionStorage()
 	sessionToken, expiresAt, err := sessionStorage.NewSession(user)
 	if err != nil {
@@ -242,7 +242,7 @@ func (thiz Message) IsLoggedIn() bool {
 	return sessionStorage.IsLoggedIn(sessionToken)
 }
 
-func (thiz Message) CurrentUser() (proxy.Authenticable, error) {
+func (thiz Message) CurrentUser() (core.Authenticable, error) {
 	ctx := context.WithValue(thiz.request.Context(), "message", thiz)
 	authService := auth.ResolveAuthService(ctx)
 	authUser, err := authService.CurrentUser(ctx)
@@ -291,7 +291,7 @@ func (thiz Message) Locale() string {
 	return lang
 }
 
-func (thiz Message) GetFile(key string) (proxy.IFile, error) {
+func (thiz Message) GetFile(key string) (core.IFile, error) {
 	thiz.GetMultipartFormValues()
 	fileRequest, header, err := thiz.request.FormFile(key)
 	if err != nil {
@@ -313,8 +313,8 @@ func (thiz Message) GetFile(key string) (proxy.IFile, error) {
 	}, nil
 }
 
-func (thiz Message) GetFiles(key string) ([]proxy.IFile, error) {
-	files := make([]proxy.IFile, 0)
+func (thiz Message) GetFiles(key string) ([]core.IFile, error) {
+	files := make([]core.IFile, 0)
 
 	multipartForm := thiz.GetMultipartFormValues()
 	filesRequest := multipartForm.File

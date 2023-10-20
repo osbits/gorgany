@@ -3,7 +3,7 @@ package router
 import (
 	"fmt"
 	"github.com/go-chi/chi"
-	"gorgany/proxy"
+	"gorgany/app/core"
 	"net/http"
 	"regexp"
 	"strings"
@@ -12,27 +12,27 @@ import (
 func NewGorganyRouter() *GorganyRouter {
 	return &GorganyRouter{
 		eninge: chi.NewRouter(),
-		routes: make(map[string]proxy.IRouteConfig),
+		routes: make(map[string]core.IRouteConfig),
 	}
 }
 
 type GorganyRouter struct {
 	eninge *chi.Mux
-	routes map[string]proxy.IRouteConfig
+	routes map[string]core.IRouteConfig
 }
 
 func (thiz GorganyRouter) Engine() http.Handler {
 	return thiz.eninge
 }
 
-func (thiz GorganyRouter) RegisterRoute(route proxy.IRouteConfig) {
+func (thiz GorganyRouter) RegisterRoute(route core.IRouteConfig) {
 	castRoute := route.(*RouteConfig)
 	if castRoute.Name == "" {
 		return
 	}
 
 	if thiz.routes == nil {
-		thiz.routes = make(map[string]proxy.IRouteConfig)
+		thiz.routes = make(map[string]core.IRouteConfig)
 	}
 	thiz.routes[castRoute.Name] = castRoute
 }
@@ -55,7 +55,7 @@ func (thiz GorganyRouter) UrlByNameSequence(name string, params ...any) string {
 	return thiz.replaceRouteSegmentsSequence(route.Pattern(), params...)
 }
 
-func (thiz GorganyRouter) RouteByName(name string) proxy.IRouteConfig {
+func (thiz GorganyRouter) RouteByName(name string) core.IRouteConfig {
 	return thiz.routes[name]
 }
 
@@ -101,9 +101,9 @@ func (thiz GorganyRouter) replaceRouteSegmentsSequence(routePattern string, para
 
 type RouteConfig struct {
 	Path        string
-	Method      proxy.Method
-	Handler     proxy.HandlerFunc
-	Middlewares []proxy.IMiddleware
+	Method      core.Method
+	Handler     core.HandlerFunc
+	Middlewares []core.IMiddleware
 	Namespace   string
 	Name        string
 }

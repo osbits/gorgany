@@ -1,9 +1,9 @@
 package provider
 
 import (
+	"gorgany/app/core"
 	"gorgany/internal"
 	"gorgany/log"
-	"gorgany/proxy"
 	"gorgany/view"
 	"reflect"
 )
@@ -19,7 +19,7 @@ func (thiz *ViewProvider) InitProvider() {
 	thiz.RegisterViewEngine(view.NewNativeEngine("./resource/view", "html"))
 }
 
-func (thiz *ViewProvider) RegisterViewEngine(engine proxy.IViewEngine) {
+func (thiz *ViewProvider) RegisterViewEngine(engine core.IViewEngine) {
 	rtEngine := reflect.TypeOf(engine)
 	if rtEngine.Kind() == reflect.Ptr {
 		rtEngine = rtEngine.Elem()

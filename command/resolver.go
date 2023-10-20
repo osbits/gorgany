@@ -3,9 +3,9 @@ package command
 import (
 	"flag"
 	"github.com/go-playground/validator/v10"
+	"gorgany/app/core"
 	"gorgany/internal"
 	"gorgany/log"
-	"gorgany/proxy"
 	"os"
 	"reflect"
 	"regexp"
@@ -30,7 +30,7 @@ func NewCommandResolver() *Resolver {
 	return &Resolver{}
 }
 
-func (thiz Resolver) ResolveCommand(commandName string) proxy.ICommand {
+func (thiz Resolver) ResolveCommand(commandName string) core.ICommand {
 	command := internal.GetFrameworkRegistrar().GetCommand(commandName)
 	if command == nil {
 		log.Log("").Panicf("Command %s does not exist", commandName)

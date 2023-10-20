@@ -1,4 +1,4 @@
-package proxy
+package core
 
 type IProviders []IProvider
 

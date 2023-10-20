@@ -1,15 +1,15 @@
 package middleware
 
 import (
+	"gorgany/app/core"
 	"gorgany/http/router"
-	"gorgany/proxy"
 )
 
 type AuthMiddleware struct {
-	Roles []proxy.UserRole
+	Roles []core.UserRole
 }
 
-func (thiz *AuthMiddleware) Handle(message proxy.HttpMessage) bool {
+func (thiz *AuthMiddleware) Handle(message core.HttpMessage) bool {
 	if !message.IsLoggedIn() {
 		message.Redirect(router.GetRouter().UrlByNameSequence("cp.login.show"), 302)
 		return false

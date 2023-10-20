@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
-	"gorgany/proxy"
+	"gorgany/app/core"
 	"mime/multipart"
 	"net/http"
 	"net/smtp"
@@ -48,7 +48,7 @@ type MailService struct {
 	port     string
 }
 
-func (thiz MailService) Send(mail proxy.IMail) error {
+func (thiz MailService) Send(mail core.IMail) error {
 	body, err := thiz.buildBody(mail)
 	if err != nil {
 		return err
@@ -57,7 +57,7 @@ func (thiz MailService) Send(mail proxy.IMail) error {
 	return smtp.SendMail(thiz.buildSmtpAddress(), thiz.buildAuth(), thiz.sender, mail.GetRecipients(), body)
 }
 
-func (thiz MailService) buildBody(mail proxy.IMail) ([]byte, error) {
+func (thiz MailService) buildBody(mail core.IMail) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
 	buf.WriteString(fmt.Sprintf("Subject: %s\n", mail.GetSubject()))

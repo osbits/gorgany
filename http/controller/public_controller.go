@@ -1,9 +1,9 @@
 package controller
 
 import (
+	"gorgany/app/core"
 	"gorgany/http"
 	"gorgany/http/router"
-	"gorgany/proxy"
 	"mime"
 	"os"
 	path2 "path"
@@ -36,11 +36,11 @@ func (thiz PublicController) load(message http.Message) {
 	message.ResponseBytes(file, 200)
 }
 
-func (thiz PublicController) GetRoutes() []proxy.IRouteConfig {
-	return []proxy.IRouteConfig{
+func (thiz PublicController) GetRoutes() []core.IRouteConfig {
+	return []core.IRouteConfig{
 		&router.RouteConfig{
 			Path:    "/public/*",
-			Method:  proxy.GET,
+			Method:  core.GET,
 			Handler: thiz.load,
 		},
 	}

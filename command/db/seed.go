@@ -2,9 +2,9 @@ package db
 
 import (
 	"fmt"
+	"gorgany/app/core"
 	"gorgany/db"
 	"gorgany/internal"
-	"gorgany/proxy"
 	"gorm.io/gorm"
 	"time"
 )
@@ -17,7 +17,7 @@ func (thiz SeedCommand) GetName() string {
 }
 
 func (thiz SeedCommand) Execute() {
-	gormInstance := db.Builder(proxy.GormPostgresQL).GetConnection().Driver().(*gorm.DB)
+	gormInstance := db.Builder(core.GormPostgresQL).GetConnection().Driver().(*gorm.DB)
 
 	err := gormInstance.AutoMigrate(&db.Seeder{})
 	if err != nil {
