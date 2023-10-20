@@ -1,14 +1,14 @@
 package migration
 
 import (
-    "gorgany/proxy"
+    "gorgany/app/core"
     "gorm.io/gorm"
 )
 
 type {{.StructName}} struct {
 }
 
-func (thiz {{.StructName}}) Up() proxy.MigrationClosure {
+func (thiz {{.StructName}}) Up() core.MigrationClosure {
     return func(dbGorm *gorm.DB) error {
         sql, err := dbGorm.DB()
         if err != nil {
@@ -25,7 +25,7 @@ func (thiz {{.StructName}}) Up() proxy.MigrationClosure {
     }
 }
 
-func (thiz {{.StructName}}) Down() proxy.MigrationClosure {
+func (thiz {{.StructName}}) Down() core.MigrationClosure {
     return func(dbGorm *gorm.DB) error {
         return nil
     }
