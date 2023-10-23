@@ -202,6 +202,7 @@ func (c *Cors) Handle(message core.HttpMessage) bool {
 		c.logf("Handler: Preflight request")
 		isPreflightHandled := c.handlePreflight(message.GetWriter(), message.GetRequest())
 		if !isPreflightHandled {
+			message.Response("", 400)
 			return false
 		}
 
@@ -217,7 +218,14 @@ func (c *Cors) Handle(message core.HttpMessage) bool {
 		}
 	} else {
 		c.logf("Handler: Actual request")
-		return c.handleActualRequest(message.GetWriter(), message.GetRequest())
+
+		handled := c.handleActualRequest(message.GetWriter(), message.GetRequest())
+		if handled {
+			return true
+		}
+
+		message.Response("", 400)
+		return false
 	}
 }
 

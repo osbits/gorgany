@@ -30,7 +30,6 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, 
 	}
 
 	if !preProcess(middlewares, message) {
-		message.Response("", 400)
 		return
 	}
 
