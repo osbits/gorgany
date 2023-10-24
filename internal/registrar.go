@@ -47,6 +47,7 @@ type Registrar struct {
 	i18nManager         core.Ii18nManager
 	viewEngine          core.IViewEngine
 	router              core.Router
+	container           core.IContainer
 }
 
 func (thiz *Registrar) SetHomeUrl(url string) {
@@ -218,4 +219,12 @@ func (thiz *Registrar) RegisterRouter(router core.Router) {
 
 func (thiz *Registrar) GetRouter() core.Router {
 	return thiz.router
+}
+
+func (thiz *Registrar) RegisterContainer(container core.IContainer) {
+	thiz.container = container
+}
+
+func (thiz *Registrar) GetContainer() core.IContainer {
+	return thiz.container
 }

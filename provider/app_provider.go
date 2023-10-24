@@ -4,6 +4,7 @@ import (
 	"gorgany/app/core"
 	"gorgany/internal"
 	"gorgany/log"
+	"gorgany/service"
 	"reflect"
 )
 
@@ -17,6 +18,7 @@ func NewAppProvider() *AppProvider {
 
 func (thiz *AppProvider) InitProvider() {
 	thiz.AppRegistrar = internal.GetFrameworkRegistrar()
+	thiz.AppRegistrar.RegisterContainer(service.NewContainer())
 }
 
 func (thiz *AppProvider) RegisterProvider(provider core.IProvider) {

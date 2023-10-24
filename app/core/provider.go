@@ -49,4 +49,6 @@ type IRegistrar interface {
 	GetViewEngine() IViewEngine
 	RegisterRouter(router Router)
 	GetRouter() Router
+	RegisterContainer(container IContainer)
+	GetContainer() IContainer
 }
