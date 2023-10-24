@@ -9,15 +9,31 @@ import (
 
 func GetStacktrace() string {
 	buf := make([]byte, 1<<16)
-	runtime.Stack(buf, true)
+	runtime.Stack(buf, false)
 	stack := fmt.Sprintf("%s", buf)
 	splitStack := strings.Split(stack, "\n")
 	return strings.Join(splitStack[0:len(splitStack)-1], "\n")
 }
 
 func PrintError(err any) {
-	log.Log("").Warn(err)
-	log.Log("").Warn(GetStacktrace())
+	log.Log("").Error(err)
+	log.Log("").Error(GetStacktrace())
+}
+
+func HandleError(err any) {
+	if err == nil {
+		return
+	}
+	log.Log("").Error("\u001B[0;31mRuntime error: \u001B[0m")
+	log.Log("").Error(err)
+}
+
+func HandleErrorWithStacktrace(err any) {
+	if err == nil {
+		return
+	}
+	log.Log("").Error("\u001B[0;31mRuntime error: \u001B[0m")
+	PrintError(err)
 }
 
 // Validation
