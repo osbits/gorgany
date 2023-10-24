@@ -3,7 +3,7 @@ package middleware
 import (
 	"gorgany/app/core"
 	"gorgany/auth"
-	error2 "gorgany/error"
+	error2 "gorgany/err"
 	"gorgany/service/dto"
 )
 

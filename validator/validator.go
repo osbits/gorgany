@@ -2,7 +2,7 @@ package validator
 
 import (
 	goValidator "github.com/go-playground/validator/v10"
-	error2 "gorgany/error"
+	error2 "gorgany/err"
 	"gorgany/model"
 )
 

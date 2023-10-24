@@ -5,7 +5,7 @@ import (
 	"gorgany"
 	"gorgany/app"
 	"gorgany/app/core"
-	error2 "gorgany/error"
+	error2 "gorgany/err"
 	"gorgany/internal"
 	"reflect"
 )
