@@ -338,11 +338,6 @@ func (thiz Container) Make(structure interface{}, values ...map[string]interface
 	if receiverType.Kind() == reflect.Ptr {
 		elem := receiverType.Elem()
 
-		err := thiz.fill(structure, map[string]any{receiverType.String(): structure})
-		if err != nil {
-			return err
-		}
-
 		if elem.Kind() == reflect.Struct {
 			s := reflect.ValueOf(structure).Elem()
 			if len(values) > 0 {
@@ -354,7 +349,7 @@ func (thiz Container) Make(structure interface{}, values ...map[string]interface
 			}
 		}
 
-		return nil
+		return thiz.fill(structure, map[string]any{receiverType.String(): structure})
 	}
 
 	return errors.New("container: invalid structure")
