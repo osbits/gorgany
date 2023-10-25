@@ -48,6 +48,7 @@ type Registrar struct {
 	viewEngine          core.IViewEngine
 	router              core.Router
 	container           core.IContainer
+	eventBus            core.IEventBus
 }
 
 func (thiz *Registrar) SetHomeUrl(url string) {
@@ -227,4 +228,12 @@ func (thiz *Registrar) RegisterContainer(container core.IContainer) {
 
 func (thiz *Registrar) GetContainer() core.IContainer {
 	return thiz.container
+}
+
+func (thiz *Registrar) RegisterEventBus(eventBus core.IEventBus) {
+	thiz.eventBus = eventBus
+}
+
+func (thiz *Registrar) GetEventBus() core.IEventBus {
+	return thiz.eventBus
 }

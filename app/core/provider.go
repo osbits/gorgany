@@ -51,4 +51,6 @@ type IRegistrar interface {
 	GetRouter() Router
 	RegisterContainer(container IContainer)
 	GetContainer() IContainer
+	RegisterEventBus(bus IEventBus)
+	GetEventBus() IEventBus
 }
