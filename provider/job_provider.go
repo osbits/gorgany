@@ -1,8 +1,10 @@
 package provider
 
 import (
+	"fmt"
 	"github.com/jasonlvhit/gocron"
 	"gorgany/app/core"
+	"gorgany/err"
 	"gorgany/log"
 	"reflect"
 )
@@ -28,22 +30,31 @@ func (this *JobProvider) RegisterJob(job core.IJob) {
 
 func (thiz *JobProvider) startScheduler() {
 	go func() {
-		cronScheduler := gocron.Start()
+		defer func() {
+			if r := recover(); r != nil {
+				err.HandleErrorWithStacktrace(fmt.Sprintf("Error when scheduling job: %v", r))
+			}
+		}()
 
+		cronScheduler := gocron.Start()
 		for j := range thiz.jobs {
 			rtJob := reflect.TypeOf(j).Elem()
 			jobName := rtJob.Name()
-			err := j.InitSchedule().Do(thiz.startJob, jobName, j.Handle)
-			if err != nil {
+			e := j.InitSchedule().Do(thiz.startJob, jobName, j.Handle)
+			if e != nil {
 				log.Log("").Errorf("Unable to start job %s", jobName)
 			}
 		}
-
 		<-cronScheduler
 	}()
 }
 
 func (thiz *JobProvider) startJob(jobName string, handler func()) {
+	defer func() {
+		if r := recover(); r != nil {
+			err.HandleErrorWithStacktrace(fmt.Sprintf("Error when executing job %s: %v", jobName, r))
+		}
+	}()
 	log.Log("").Infof("Start job %s", jobName)
 	handler()
 	log.Log("").Infof("End job %s", jobName)
