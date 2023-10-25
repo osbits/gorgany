@@ -12,6 +12,14 @@ type GorganyOrm[T any] struct {
 	Model   *T
 }
 
+func OrmInstance[T any](model *T) *GorganyOrm[T] {
+	if model == nil {
+		var m T
+		model = &m
+	}
+	return &GorganyOrm[T]{Model: model}
+}
+
 func (thiz *GorganyOrm[T]) Select(fields ...string) core.IOrm[T] {
 	thiz.setBuilder()
 	thiz.builder.Select(fields...)
