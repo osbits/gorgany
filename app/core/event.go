@@ -5,8 +5,8 @@ type ISubscriber interface {
 }
 
 type IEventBus interface {
-	Subscribe(event string, subscriber ISubscriber)
-	SubscribeAsync(event string, subscriber ISubscriber)
+	Subscribe(event string, subscriber ISubscriber) error
+	SubscribeAsync(event string, subscriber ISubscriber) error
 	Publish(event string, args ...map[string]any) error
 	Unsubscribe(event string)
 	WaitAsync()

@@ -1,12 +1,13 @@
 package event
 
 import (
+	"errors"
 	"fmt"
 	"gorgany/app/core"
 	"gorgany/internal"
+	"gorgany/service"
 	"reflect"
 	"sync"
-	"unsafe"
 )
 
 type SubscriptionConfig struct {
@@ -32,22 +33,38 @@ type EventBus struct {
 	subscribers map[string]SubscriptionConfig
 }
 
-func (thiz *EventBus) Subscribe(event string, subscriber core.ISubscriber) {
+func (thiz *EventBus) Subscribe(event string, subscriber core.ISubscriber) error {
 	thiz.mutex.Lock()
+
+	rtSubscriber := reflect.TypeOf(subscriber)
+	if rtSubscriber.Kind() != reflect.Ptr {
+		return errors.New("event_bus: Subscriber must be a pointer")
+	}
+
 	thiz.subscribers[event] = SubscriptionConfig{
 		subscriber: subscriber,
 		async:      false,
 	}
 	thiz.mutex.Unlock()
+
+	return nil
 }
 
-func (thiz *EventBus) SubscribeAsync(event string, subscriber core.ISubscriber) {
+func (thiz *EventBus) SubscribeAsync(event string, subscriber core.ISubscriber) error {
 	thiz.mutex.Lock()
+
+	rtSubscriber := reflect.TypeOf(subscriber)
+	if rtSubscriber.Kind() != reflect.Ptr {
+		return errors.New("event_bus: Subscriber must be a pointer")
+	}
+
 	thiz.subscribers[event] = SubscriptionConfig{
 		subscriber: subscriber,
 		async:      true,
 	}
 	thiz.mutex.Unlock()
+
+	return nil
 }
 
 func (thiz *EventBus) Publish(event string, args ...map[string]any) error {
@@ -57,15 +74,17 @@ func (thiz *EventBus) Publish(event string, args ...map[string]any) error {
 	}
 	subscriberRaw := subscriptionConfig.subscriber
 	rtSubscriber := reflect.TypeOf(subscriberRaw)
-	rvSubscriber := reflect.New(rtSubscriber)
-	if len(args) > 0 {
-		for key, value := range args[0] {
-			f := rvSubscriber.Elem().FieldByName(key)
-			ptr := reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem()
-			ptr.Set(reflect.ValueOf(value))
-		}
+
+	var err error
+	if rtSubscriber.Kind() != reflect.Ptr {
+		return errors.New("event_bus: Subscriber must be a pointer")
 	}
-	subscriber := rvSubscriber.Interface().(core.ISubscriber)
+	err = service.GetContainer().Make(subscriberRaw, args...)
+	if err != nil {
+		return err
+	}
+
+	subscriber := subscriberRaw.(core.ISubscriber)
 	if subscriptionConfig.async {
 		thiz.doPublishAsync(subscriber)
 	} else {
