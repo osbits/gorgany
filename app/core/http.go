@@ -3,6 +3,7 @@ package core
 import (
 	"mime/multipart"
 	"net/http"
+	"net/url"
 )
 
 type HttpMessage interface {
@@ -36,4 +37,9 @@ type HttpMessage interface {
 	GetFile(key string) (IFile, error)
 	GetFiles(key string) ([]IFile, error)
 	IsApiNamespace() bool
+}
+
+type IMessageContext interface {
+	GetURL() *url.URL
+	GetRequestURL() string
 }

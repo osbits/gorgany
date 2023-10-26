@@ -2,6 +2,7 @@ package provider
 
 import (
 	"gorgany/app/core"
+	"gorgany/err"
 	"gorgany/internal"
 	"gorgany/log"
 	"gorgany/service"
@@ -19,6 +20,10 @@ func NewAppProvider() *AppProvider {
 func (thiz *AppProvider) InitProvider() {
 	thiz.AppRegistrar = internal.GetFrameworkRegistrar()
 	thiz.AppRegistrar.RegisterContainer(service.NewContainer())
+
+	err.HandleErrorWithStacktrace(thiz.AppRegistrar.GetContainer().Transient(func() core.IViewEngine {
+		return thiz.AppRegistrar.GetViewEngine()
+	}))
 }
 
 func (thiz *AppProvider) RegisterProvider(provider core.IProvider) {

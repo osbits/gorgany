@@ -1,6 +1,7 @@
 package view
 
 import (
+	"context"
 	"fmt"
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
@@ -10,31 +11,27 @@ import (
 	"gorgany/internal"
 	"gorgany/util"
 	"io"
-	"net/http"
 	"os"
 	"regexp"
 	"strings"
 )
 
-// RequestWrapper
-func NewRequestWrapper(request *http.Request) *requestWrapper {
-	return &requestWrapper{request: request}
-}
-
-type requestWrapper struct {
-	request *http.Request
-}
-
-func NewEngineRenderer(requestWrapper *requestWrapper) *EngineRenderer {
+func NewEngineRenderer(ctx context.Context) *EngineRenderer {
 	return &EngineRenderer{
-		Engine:         internal.GetFrameworkRegistrar().GetViewEngine(),
-		requestWrapper: requestWrapper,
+		Engine: internal.GetFrameworkRegistrar().GetViewEngine(),
+		Ctx:    ctx,
 	}
 }
 
 type EngineRenderer struct {
-	Engine         core.IViewEngine
-	requestWrapper *requestWrapper
+	Engine core.IViewEngine `container:"inject"`
+	Ctx    context.Context
+}
+
+func (thiz *EngineRenderer) Init() {
+	if thiz.Ctx == nil {
+		thiz.Ctx = context.Background()
+	}
 }
 
 func (thiz EngineRenderer) DoRender(w io.Writer, templateName string, opts map[string]any) error {
@@ -61,7 +58,7 @@ func (thiz EngineRenderer) __(code string, opts ...any) string {
 }
 
 func (thiz EngineRenderer) Locale() string {
-	locale := chi.URLParam(thiz.requestWrapper.request, "lang")
+	locale := chi.URLParamFromCtx(thiz.Ctx, "lang")
 	if locale == "" {
 		locale = viper.GetString("i18n.lang.default")
 	}
@@ -82,7 +79,10 @@ func (thiz EngineRenderer) AvailableLocalesOnFront() []string {
 }
 
 func (thiz EngineRenderer) ChangeLanguageLink(locale string) string {
-	path := thiz.requestWrapper.request.URL.Path
+	path := ""
+	if ctx, ok := thiz.Ctx.Value(core.ContextKey).(core.IMessageContext); ok {
+		path = ctx.GetURL().Path
+	}
 
 	availableLangs := viper.GetStringSlice("i18n.lang.available")
 	availableLangs = append(availableLangs, viper.GetString("i18n.lang.default"))
@@ -105,7 +105,10 @@ func (thiz EngineRenderer) ChangeLanguageLink(locale string) string {
 }
 
 func (thiz EngineRenderer) CurrentUrl() string {
-	return thiz.requestWrapper.request.RequestURI
+	if ctx, ok := thiz.Ctx.Value(core.ContextKey).(core.IMessageContext); ok {
+		return ctx.GetRequestURL()
+	}
+	return ""
 }
 
 func (thiz EngineRenderer) registerFunctions(opts map[string]any) map[string]any {

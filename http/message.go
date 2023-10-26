@@ -26,8 +26,13 @@ const OneTimeParamsCookieName = "oneTimeParams"
 const SessionCookieName = "sessionToken"
 
 type Message struct {
-	writer  http.ResponseWriter
-	request *http.Request
+	writer   http.ResponseWriter
+	request  *http.Request
+	renderer *view2.EngineRenderer `container:"inject"`
+}
+
+func (thiz Message) Init() {
+	thiz.renderer.Ctx = NewMessageContext(thiz)
 }
 
 func (thiz Message) GetRequest() *http.Request {
@@ -83,9 +88,7 @@ func (thiz Message) Render(template string, options map[string]any) {
 	}
 
 	options = thiz.addOptionsToView(options)
-
-	engineRenderer := view2.NewEngineRenderer(view2.NewRequestWrapper(thiz.request))
-	err := engineRenderer.DoRender(thiz.writer, template, options)
+	err := thiz.renderer.DoRender(thiz.writer, template, options)
 	if err != nil {
 		panic(fmt.Errorf("Error during render template '%s', %v", template, err))
 	}
