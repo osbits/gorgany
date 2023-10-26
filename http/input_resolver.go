@@ -71,7 +71,7 @@ func (thiz inputResolver) collectPathParams() []string {
 
 	pathParams := make([]string, 0)
 	for i := range routeParams.Values {
-		if routeParams.Keys[i] == "namespace" {
+		if routeParams.Keys[i] == "namespace" || routeParams.Keys[i] == "lang" {
 			continue
 		}
 		pathParams = append(pathParams, routeParams.Values[i])
