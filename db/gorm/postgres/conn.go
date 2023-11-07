@@ -483,6 +483,11 @@ func (thiz *Builder) AddMetaToModel(dest any, statement *gorm.Statement) {
 		domainMetaInstance.SetLoaded(true)
 		domainMetaInstance.SetTable(statement.Table)
 		domainMetaInstance.SetDriver(core.GormPostgreSQL)
+
+		copyDest := util.IndirectValue(reflect.ValueOf(dest)).Interface()
+		domainMetaInstance.SetOriginal(&copyDest)
+
+		domainMetaInstance.SetDomain(dest)
 	}
 }
 

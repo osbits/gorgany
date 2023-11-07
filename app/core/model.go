@@ -2,12 +2,16 @@ package core
 
 type IDomain[T any] interface {
 	Query() IOrm[T]
+	Clone() *T
+	GetDomainMeta() IDomainMeta
 }
 
 type IDomainMeta interface {
 	SetLoaded(loaded bool)
 	SetTable(table string)
 	SetDriver(driver DbType)
+	SetOriginal(original any)
+	SetDomain(domain any)
 }
 
 type IFile interface {
