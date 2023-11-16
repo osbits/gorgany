@@ -32,7 +32,7 @@ func (thiz DiffCommand) GetName() string {
 }
 
 func (thiz DiffCommand) Execute() {
-	gormDb := db.Builder(core.GormPostgreSQL).GetConnection().Driver().(*gorm.DB)
+	gormDb := db.Builder().GetConnection().Driver().(*gorm.DB)
 	tx := gormDb.Begin()
 	defer tx.Rollback()
 
@@ -107,7 +107,7 @@ func (thiz DiffCommand) Execute() {
 
 func isColumnExists(tableName string, columnName string) bool {
 	var count int64
-	err := db.Builder(core.GormPostgreSQL).Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", &count, tableName, columnName)
+	err := db.Builder().Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", &count, tableName, columnName)
 	if err != nil {
 		return false
 	}

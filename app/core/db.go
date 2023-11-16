@@ -91,6 +91,6 @@ type IOrm[T any] interface {
 	ToQuery() string
 }
 
-type DbTyper interface {
-	GetDbType() DbType
+type DbConnectionNamer interface {
+	DbConnectionName() string
 }

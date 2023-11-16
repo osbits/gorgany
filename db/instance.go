@@ -5,7 +5,13 @@ import (
 	"gorgany/internal"
 )
 
-func Builder(kind core.DbType) core.IQueryBuilder {
-	connection := internal.GetFrameworkRegistrar().GetDbConnection(kind)
-	return connection.Builder()
+func Connection(name ...string) core.IConnection {
+	if len(name) == 0 {
+		return internal.GetFrameworkRegistrar().GetDbConnection("default")
+	}
+	return internal.GetFrameworkRegistrar().GetDbConnection(name[0])
+}
+
+func Builder(name ...string) core.IQueryBuilder {
+	return Connection(name...).Builder()
 }

@@ -14,7 +14,7 @@ func init() {
 	frameworkRegistrar = &Registrar{
 		controllers:         make(core.Controllers, 0),
 		providers:           make(core.IProviders, 0),
-		dbConnections:       make(map[core.DbType]core.IConnection),
+		dbConnections:       make(map[string]core.IConnection),
 		commands:            make(map[string]core.ICommand),
 		middlewares:         make([]core.IMiddleware, 0),
 		customErrorHandlers: make(map[string]core.ErrorHandler),
@@ -33,7 +33,7 @@ type Registrar struct {
 	homeUrl             string
 	controllers         core.Controllers
 	providers           core.IProviders
-	dbConnections       map[core.DbType]core.IConnection
+	dbConnections       map[string]core.IConnection
 	commands            map[string]core.ICommand
 	sessionLifetime     int //in seconds
 	userService         core.IUserService
@@ -194,16 +194,16 @@ func (thiz *Registrar) GetI18nManager() core.Ii18nManager {
 	return thiz.i18nManager
 }
 
-func (thiz *Registrar) RegisterDbConnection(kind core.DbType, connection core.IConnection) {
-	thiz.dbConnections[kind] = connection
+func (thiz *Registrar) RegisterDbConnection(name string, connection core.IConnection) {
+	thiz.dbConnections[name] = connection
 }
 
-func (thiz *Registrar) GetDbConnections() map[core.DbType]core.IConnection {
+func (thiz *Registrar) GetDbConnections() map[string]core.IConnection {
 	return thiz.dbConnections
 }
 
-func (thiz *Registrar) GetDbConnection(kind core.DbType) core.IConnection {
-	return thiz.dbConnections[kind]
+func (thiz *Registrar) GetDbConnection(name string) core.IConnection {
+	return thiz.dbConnections[name]
 }
 
 func (thiz *Registrar) RegisterViewEngine(engine core.IViewEngine) {

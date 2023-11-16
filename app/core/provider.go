@@ -18,9 +18,9 @@ type IRegistrar interface {
 	GetControllers() Controllers
 	RegisterProvider(provider IProvider)
 	GetProviders() IProviders
-	RegisterDbConnection(dbType DbType, connection IConnection)
-	GetDbConnections() map[DbType]IConnection
-	GetDbConnection(kind DbType) IConnection
+	RegisterDbConnection(name string, connection IConnection)
+	GetDbConnections() map[string]IConnection
+	GetDbConnection(name string) IConnection
 	RegisterCommand(command ICommand)
 	GetCommands() map[string]ICommand
 	GetCommand(name string) ICommand

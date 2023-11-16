@@ -26,7 +26,7 @@ func (thiz DynamicAccessService) ResolveFilterAccessCondition(domain any, user c
 	domainName := reflectedDomainType.Name()
 
 	dynamicAccesses := make([]*model.DynamicAccess, 0)
-	db.Builder(core.GormPostgreSQL).FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
+	db.Builder().FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
 
 	if len(dynamicAccesses) > 0 {
 		reflectedCurrentUserValue = reflect.ValueOf(user)
@@ -69,7 +69,7 @@ func (thiz DynamicAccessService) IsAbleToAction(record any, user core.Authentica
 	domainName := reflectedDomainType.Name()
 
 	dynamicAccesses := make([]*model.DynamicAccess, 0)
-	db.Builder(core.GormPostgreSQL).FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
+	db.Builder().FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
 
 	if len(dynamicAccesses) > 0 {
 		reflectedCurrentUserValue = reflect.ValueOf(user)
@@ -99,7 +99,7 @@ func (thiz DynamicAccessService) ResolveAccessForRecord(record any, user core.Au
 	domainName := reflectedDomainType.Name()
 
 	dynamicAccesses := make([]*model.DynamicAccess, 0)
-	db.Builder(core.GormPostgreSQL).FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
+	db.Builder().FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
 
 	for _, dynamicAccess := range dynamicAccesses {
 		reflectedUserProperty := reflectedCurrentUserValue.Elem().FieldByName(dynamicAccess.UserProperty)
@@ -126,7 +126,7 @@ func (thiz DynamicAccessService) ResolveActionsForRecord(record any, user core.A
 	domainName := reflectedDomainType.Name()
 
 	dynamicAccesses := make([]*model.DynamicAccess, 0)
-	db.Builder(core.GormPostgreSQL).FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
+	db.Builder().FromModel(model.DynamicAccess{}).Where("domain_name", "=", domainName).List(&dynamicAccesses)
 	if len(dynamicAccesses) > 0 {
 		reflectedCurrentUserValue = reflect.ValueOf(user)
 	}

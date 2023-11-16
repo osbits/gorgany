@@ -19,24 +19,29 @@ func NewDbProvider() *DbProvider {
 func (thiz *DbProvider) InitProvider() {
 
 	databases := viper.GetStringMap("databases")
-	for key, config := range databases {
-		dbType := core.DbType(key)
+	for name, config := range databases {
 		configMap, ok := config.(map[string]any)
 		if !ok {
-			panic(fmt.Errorf("Incorrect config for '%s' database", key))
+			panic(fmt.Errorf("Incorrect config for '%s' database", name))
 		}
+		dbTypeRaw := configMap["driver"].(string)
+		if dbTypeRaw == "" {
+			panic(fmt.Errorf("Incorrect driver for '%s'", name))
+		}
+		dbType := core.DbType(dbTypeRaw)
+
 		conn := thiz.resolveDb(dbType, configMap)
 		if conn != nil {
-			thiz.RegisterDbConnection(dbType, conn)
+			thiz.RegisterDbConnection(name, conn)
 		} else {
 			log.Log("").Infof("Connection for %s did not initialize\n", dbType)
 		}
 	}
 }
 
-func (thiz *DbProvider) RegisterDbConnection(dbType core.DbType, connection core.IConnection) {
-	internal.GetFrameworkRegistrar().RegisterDbConnection(dbType, connection)
-	log.Log("").Infof("Connection for %s initialized", dbType)
+func (thiz *DbProvider) RegisterDbConnection(name string, connection core.IConnection) {
+	internal.GetFrameworkRegistrar().RegisterDbConnection(name, connection)
+	log.Log("").Infof("Connection for %s initialized", name)
 }
 
 func (thiz *DbProvider) resolveDb(kind core.DbType, config map[string]any) core.IConnection {

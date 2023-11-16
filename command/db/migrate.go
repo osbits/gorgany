@@ -2,7 +2,6 @@ package db
 
 import (
 	"fmt"
-	"gorgany/app/core"
 	"gorgany/db"
 	"gorgany/internal"
 	"gorm.io/gorm"
@@ -42,7 +41,7 @@ func (thiz MigrateCommand) Execute() {
 }
 
 func (thiz MigrateCommand) up() {
-	gormInstance := db.Builder(core.GormPostgreSQL).GetConnection().Driver().(*gorm.DB)
+	gormInstance := db.Builder().GetConnection().Driver().(*gorm.DB)
 
 	err := gormInstance.AutoMigrate(&db.Migration{})
 	if err != nil {

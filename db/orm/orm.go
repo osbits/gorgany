@@ -170,17 +170,17 @@ func (thiz *GorganyOrm[T]) setBuilder() {
 	}
 
 	rv := reflect.ValueOf(thiz)
-	if !rv.CanConvert(reflect.TypeOf((*core.DbTyper)(nil))) {
-		thiz.builder = db.Builder(core.GormPostgreSQL) //todo read default dbType from config
+	if !rv.CanConvert(reflect.TypeOf((*core.DbConnectionNamer)(nil))) {
+		thiz.builder = db.Builder()
 		return
 	}
 
-	casted, ok := rv.Convert(reflect.TypeOf((*core.DbTyper)(nil))).Interface().(core.DbTyper)
+	casted, ok := rv.Convert(reflect.TypeOf((*core.DbConnectionNamer)(nil))).Interface().(core.DbConnectionNamer)
 	if !ok {
-		thiz.builder = db.Builder(core.GormPostgreSQL)
+		thiz.builder = db.Builder()
 		return
 	}
 
-	thiz.builder = db.Builder(casted.GetDbType())
+	thiz.builder = db.Builder(casted.DbConnectionName())
 	return
 }
