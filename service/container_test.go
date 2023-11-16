@@ -190,25 +190,7 @@ func TestContainer_NamedSingletonLazy(t *testing.T) {
 }
 
 func TestContainer_Transient(t *testing.T) {
-	err := instance.Transient(func() Shape {
-		return &Circle{a: 666}
-	})
-	assert.NoError(t, err)
-
-	err = instance.Call(func(s1 Shape) {
-		s1.SetArea(13)
-	})
-	assert.NoError(t, err)
-
-	err = instance.Call(func(s2 Shape) {
-		a := s2.GetArea()
-		assert.Equal(t, a, 666)
-	})
-	assert.NoError(t, err)
-}
-
-func TestContainer_TransientLazy(t *testing.T) {
-	err := instance.TransientLazy(func() Shape {
+	err := instance.Bind(func() Shape {
 		return &Circle{a: 666}
 	})
 	assert.NoError(t, err)
@@ -226,23 +208,18 @@ func TestContainer_TransientLazy(t *testing.T) {
 }
 
 func TestContainer_Transient_With_Resolve_That_Returns_Nothing(t *testing.T) {
-	err := instance.Transient(func() {})
-	assert.Error(t, err, "container: resolver function signature is invalid")
-}
-
-func TestContainer_TransientLazy_With_Resolve_That_Returns_Nothing(t *testing.T) {
-	err := instance.TransientLazy(func() {})
+	err := instance.Bind(func() {})
 	assert.Error(t, err, "container: resolver function signature is invalid")
 }
 
 func TestContainer_Transient_With_Resolve_That_Returns_Error(t *testing.T) {
-	err := instance.Transient(func() (Shape, error) {
+	err := instance.Bind(func() (Shape, error) {
 		return nil, errors.New("app: error")
 	})
 	assert.Error(t, err, "app: error")
 
 	firstCall := true
-	err = instance.Transient(func() (Database, error) {
+	err = instance.Bind(func() (Database, error) {
 		if firstCall {
 			firstCall = false
 			return &MySQL{}, nil
@@ -252,66 +229,19 @@ func TestContainer_Transient_With_Resolve_That_Returns_Error(t *testing.T) {
 	assert.NoError(t, err)
 
 	var db Database
-	err = instance.Resolve(&db)
-	assert.Error(t, err, "app: second call error")
-}
-
-func TestContainer_TransientLazy_With_Resolve_That_Returns_Error(t *testing.T) {
-	err := instance.TransientLazy(func() (Shape, error) {
-		return nil, errors.New("app: error")
-	})
-	assert.NoError(t, err)
-
-	var s Shape
-	err = instance.Resolve(&s)
-	assert.Error(t, err, "app: error")
-
-	firstCall := true
-	err = instance.TransientLazy(func() (Database, error) {
-		if firstCall {
-			firstCall = false
-			return &MySQL{}, nil
-		}
-		return nil, errors.New("app: second call error")
-	})
-	assert.NoError(t, err)
-
-	var db Database
-	err = instance.Resolve(&db)
-	assert.NoError(t, err)
-
 	err = instance.Resolve(&db)
 	assert.Error(t, err, "app: second call error")
 }
 
 func TestContainer_Transient_With_Resolve_With_Invalid_Signature_It_Should_Fail(t *testing.T) {
-	err := instance.Transient(func() (Shape, Database, error) {
-		return nil, nil, nil
-	})
-	assert.Error(t, err, "container: resolver function signature is invalid")
-}
-
-func TestContainer_TransientLazy_With_Resolve_With_Invalid_Signature_It_Should_Fail(t *testing.T) {
-	err := instance.TransientLazy(func() (Shape, Database, error) {
+	err := instance.Bind(func() (Shape, Database, error) {
 		return nil, nil, nil
 	})
 	assert.Error(t, err, "container: resolver function signature is invalid")
 }
 
 func TestContainer_NamedTransient(t *testing.T) {
-	err := instance.NamedTransient("theCircle", func() Shape {
-		return &Circle{a: 13}
-	})
-	assert.NoError(t, err)
-
-	var sh Shape
-	err = instance.NamedResolve(&sh, "theCircle")
-	assert.NoError(t, err)
-	assert.Equal(t, sh.GetArea(), 13)
-}
-
-func TestContainer_NamedTransientLazy(t *testing.T) {
-	err := instance.NamedTransientLazy("theCircle", func() Shape {
+	err := instance.NamedBind("theCircle", func() Shape {
 		return &Circle{a: 13}
 	})
 	assert.NoError(t, err)

@@ -6,10 +6,10 @@ type IContainer interface {
 	SingletonLazy(resolver interface{}) error
 	NamedSingleton(name string, resolver interface{}) error
 	NamedSingletonLazy(name string, resolver interface{}) error
-	Transient(resolver interface{}) error
-	TransientLazy(resolver interface{}) error
-	NamedTransient(name string, resolver interface{}) error
-	NamedTransientLazy(name string, resolver interface{}) error
+	Bind(resolver interface{}) error
+	BindLazy(resolver interface{}) error
+	NamedBind(name string, resolver interface{}) error
+	NamedBindLazy(name string, resolver interface{}) error
 	Call(function interface{}) error
 	Resolve(abstraction interface{}) error
 	NamedResolve(abstraction interface{}, name string) error

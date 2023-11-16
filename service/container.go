@@ -169,29 +169,29 @@ func (thiz Container) NamedSingletonLazy(name string, resolver interface{}) erro
 	return thiz.bind(resolver, name, true, true)
 }
 
-// Transient binds an abstraction to concrete in transient mode.
+// Bind binds an abstraction to concrete in transient mode.
 // It takes a resolver function that returns the concrete, and its return type matches the abstraction (interface).
 // The resolver function can have arguments of abstraction that have been declared in the Container already.
-func (thiz Container) Transient(resolver interface{}) error {
+func (thiz Container) Bind(resolver interface{}) error {
 	return thiz.bind(resolver, "", false, false)
 }
 
-// TransientLazy binds an abstraction to concrete lazily in transient mode.
+// BindLazy binds an abstraction to concrete lazily in transient mode.
 // Normally the resolver will be called during registration, but that is skipped in lazy mode.
 // It takes a resolver function that returns the concrete, and its return type matches the abstraction (interface).
 // The resolver function can have arguments of abstraction that have been declared in the Container already.
-func (thiz Container) TransientLazy(resolver interface{}) error {
+func (thiz Container) BindLazy(resolver interface{}) error {
 	return thiz.bind(resolver, "", false, true)
 }
 
-// NamedTransient binds a named abstraction to concrete lazily in transient mode.
-func (thiz Container) NamedTransient(name string, resolver interface{}) error {
+// NamedBind binds a named abstraction to concrete lazily in transient mode.
+func (thiz Container) NamedBind(name string, resolver interface{}) error {
 	return thiz.bind(resolver, name, false, false)
 }
 
-// NamedTransient binds a named abstraction to concrete in transient mode.
+// NamedBindLazy binds a named abstraction to concrete in transient mode.
 // Normally the resolver will be called during registration, but that is skipped in lazy mode.
-func (thiz Container) NamedTransientLazy(name string, resolver interface{}) error {
+func (thiz Container) NamedBindLazy(name string, resolver interface{}) error {
 	return thiz.bind(resolver, name, false, true)
 }
 

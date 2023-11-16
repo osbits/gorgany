@@ -21,7 +21,7 @@ func (thiz *AppProvider) InitProvider() {
 	thiz.AppRegistrar = internal.GetFrameworkRegistrar()
 	thiz.AppRegistrar.RegisterContainer(service.NewContainer())
 
-	err.HandleErrorWithStacktrace(thiz.AppRegistrar.GetContainer().Transient(func() core.IViewEngine {
+	err.HandleErrorWithStacktrace(thiz.AppRegistrar.GetContainer().Bind(func() core.IViewEngine {
 		return thiz.AppRegistrar.GetViewEngine()
 	}))
 }
