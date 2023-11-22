@@ -60,10 +60,15 @@ func (thiz JwtService) GetUser(token string) (core.Authenticable, error) {
 	return GetAuthEntityService().GetByUsername(claims["user"].(string))
 }
 
-// ctx - context with gorgany/http.Message instance
+// CurrentUser
+// ctx - instance of core.IMessageContext
 func (thiz JwtService) CurrentUser(ctx context.Context) (core.Authenticable, error) {
-	message := ctx.Value("message").(core.HttpMessage)
-	token := message.GetBearerToken()
+	messageContext, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext)
+	if !ok {
+		return nil, fmt.Errorf("Context is not IMessageContext instance")
+	}
+
+	token := messageContext.GetBearerToken()
 	if token == "" {
 		return nil, fmt.Errorf("User not found")
 	}

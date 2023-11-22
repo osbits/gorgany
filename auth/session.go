@@ -66,7 +66,15 @@ func (thiz *MemorySession) NewSession(user core.Authenticable) (string, time.Tim
 	return hashedToken, session.expiry, nil
 }
 
-func (thiz *MemorySession) IsLoggedIn(sessionToken string) bool {
+// IsLoggedIn
+// ctx - instance of core.IMessageContext
+func (thiz *MemorySession) IsLoggedIn(ctx context.Context) bool {
+	messageContext, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext)
+	if !ok {
+		return false
+	}
+
+	sessionToken := messageContext.GetSessionToken()
 	session, ok := thiz.sessions[sessionToken]
 	if !ok {
 		return false
@@ -80,7 +88,15 @@ func (thiz *MemorySession) IsLoggedIn(sessionToken string) bool {
 	return true
 }
 
-func (thiz *MemorySession) Logout(sessionToken string) {
+// Logout
+// ctx - instance of core.IMessageContext
+func (thiz *MemorySession) Logout(ctx context.Context) {
+	messageContext, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext)
+	if !ok {
+		return
+	}
+
+	sessionToken := messageContext.GetSessionToken()
 	delete(thiz.sessions, sessionToken)
 }
 
@@ -92,14 +108,15 @@ func (thiz *MemorySession) ClearExpiredSessions() {
 	}
 }
 
-// ctx - context with gorgany/http.Message instance
+// CurrentUser
+// ctx - instance of core.IMessageContext
 func (thiz *MemorySession) CurrentUser(ctx context.Context) (core.Authenticable, error) {
-	message := ctx.Value("message").(core.HttpMessage)
-	cookie, err := message.GetCookie("sessionToken")
-	if err != nil {
-		return nil, nil
+	messageContext, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext)
+	if !ok {
+		return nil, fmt.Errorf("Ctx is not core.IMessageContext instance")
 	}
-	sessionToken := cookie.Value
+
+	sessionToken := messageContext.GetSessionToken()
 	session, ok := thiz.sessions[sessionToken]
 	if !ok {
 		return nil, nil

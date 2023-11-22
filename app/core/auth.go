@@ -7,8 +7,8 @@ import (
 
 type ISessionStorage interface {
 	NewSession(user Authenticable) (string, time.Time, error)
-	IsLoggedIn(sessionToken string) bool
-	Logout(sessionToken string)
+	IsLoggedIn(ctx context.Context) bool
+	Logout(ctx context.Context)
 	CurrentUser(ctx context.Context) (Authenticable, error)
 	ClearExpiredSessions()
 }

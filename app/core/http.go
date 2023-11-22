@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"mime/multipart"
 	"net/http"
 	"net/url"
@@ -37,9 +38,18 @@ type HttpMessage interface {
 	GetFile(key string) (IFile, error)
 	GetFiles(key string) ([]IFile, error)
 	IsApiNamespace() bool
+	Context() context.Context
 }
 
 type IMessageContext interface {
 	GetURL() *url.URL
 	GetRequestURL() string
+	GetCookies() []*http.Cookie
+	GetCookie(name string) *http.Cookie
+	GetHeader() http.Header
+	GetSessionToken() string
+	GetBearerToken() string
+	GetPathParam(name string) string
+
+	GetParent() context.Context
 }

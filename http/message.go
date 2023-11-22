@@ -22,9 +22,6 @@ import (
 	"time"
 )
 
-const OneTimeParamsCookieName = "oneTimeParams"
-const SessionCookieName = "sessionToken"
-
 type Message struct {
 	writer   http.ResponseWriter
 	request  *http.Request
@@ -32,7 +29,7 @@ type Message struct {
 }
 
 func (thiz Message) Init() {
-	thiz.renderer.Ctx = NewMessageContext(thiz)
+	thiz.renderer.Ctx = thiz.Context()
 }
 
 func (thiz Message) GetRequest() *http.Request {
@@ -171,7 +168,7 @@ func (thiz Message) RedirectWithParams(url string, redirectCode int, params map[
 			addToValues(key, value, &oneTimeParams)
 		}
 	}
-	thiz.SetCookie(OneTimeParamsCookieName, oneTimeParams.Encode(), 1)
+	thiz.SetCookie(core.OneTimeParamsCookieName, oneTimeParams.Encode(), 1)
 
 	url = util.AddLocaleToURL(thiz.Locale(), url)
 	http.Redirect(thiz.writer, thiz.request, url, redirectCode)
@@ -185,7 +182,7 @@ func (thiz Message) Redirect(url string, redirectCode int) {
 func (thiz Message) OneTimeParams() map[string][]string {
 	oneTimeParams := url2.Values{}
 
-	cookie, err := thiz.request.Cookie(OneTimeParamsCookieName)
+	cookie, err := thiz.request.Cookie(core.OneTimeParamsCookieName)
 	if err != nil {
 		if strings.Contains(err.Error(), "named cookie not present") {
 			return oneTimeParams
@@ -210,7 +207,7 @@ func (thiz Message) GetOneTimeParam(key string) string {
 }
 
 func (thiz Message) ClearOneTimeParams() {
-	thiz.SetCookie(OneTimeParamsCookieName, "", 10)
+	thiz.SetCookie(core.OneTimeParamsCookieName, "", 1)
 }
 
 func (thiz Message) Login(user core.Authenticable) {
@@ -219,46 +216,29 @@ func (thiz Message) Login(user core.Authenticable) {
 	if err != nil {
 		panic(err) //todo
 	}
-	thiz.SetCookie(SessionCookieName, sessionToken, int(expiresAt.Sub(time.Now()).Seconds()))
+	thiz.SetCookie(core.SessionCookieName, sessionToken, int(expiresAt.Sub(time.Now()).Seconds()))
 }
 
 func (thiz Message) Logout() {
 	sessionStorage := auth.GetSessionStorage()
-	sessionCookie, err := thiz.request.Cookie(SessionCookieName)
-	if err != nil {
-		return
-	}
-	sessionToken := sessionCookie.Value
-	sessionStorage.Logout(sessionToken)
-	thiz.SetCookie(SessionCookieName, "", 10)
+	sessionStorage.Logout(thiz.Context())
+	thiz.SetCookie(core.SessionCookieName, "", 10)
 }
 
 func (thiz Message) IsLoggedIn() bool {
 	sessionStorage := auth.GetSessionStorage()
-
-	sessionCookie, err := thiz.request.Cookie(SessionCookieName)
-	if err != nil {
-		return false
-	}
-
-	sessionToken := sessionCookie.Value
-	return sessionStorage.IsLoggedIn(sessionToken)
+	return sessionStorage.IsLoggedIn(thiz.Context())
 }
 
 func (thiz Message) CurrentUser() (core.Authenticable, error) {
-	ctx := context.WithValue(thiz.request.Context(), "message", thiz)
-	authService := auth.ResolveAuthService(ctx)
-	authUser, err := authService.CurrentUser(ctx)
+	authService, err := auth.ResolveAuthService(thiz.Context())
+	authUser, err := authService.CurrentUser(thiz.Context())
 	return authUser, err
 }
 
 func (thiz Message) GetBearerToken() string {
 	bearerToken := thiz.GetHeader().Get("Authorization")
-	if bearerToken == "" {
-		return ""
-	}
-	token := strings.Split(bearerToken, " ")[1]
-	return token
+	return util.ParseBearerToken(bearerToken)
 }
 
 func (thiz Message) GetQueryParam(key string) any {
@@ -346,6 +326,19 @@ func (thiz Message) IsApiNamespace() bool {
 		return true
 	}
 	return false
+}
+
+func (thiz Message) Context() context.Context {
+	messageContext := MessageContext{}
+	messageContext.URL = thiz.GetRequest().URL
+	messageContext.RequestURI = thiz.GetRequest().RequestURI
+	messageContext.Cookies = thiz.GetRequest().Cookies()
+	messageContext.Headers = thiz.GetHeader()
+
+	parentRequest := thiz.GetRequest().Context()
+	messageContext.Parent = parentRequest
+
+	return context.WithValue(parentRequest, core.MessageContextKey, messageContext)
 }
 
 func (thiz Message) addOptionsToView(options map[string]any) map[string]any {

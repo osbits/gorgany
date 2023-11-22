@@ -3,6 +3,7 @@ package util
 import (
 	"github.com/spf13/viper"
 	"regexp"
+	"strings"
 )
 
 func AddLocaleToURL(locale string, url string) string {
@@ -23,4 +24,16 @@ func AddLocaleToURL(locale string, url string) string {
 	}
 
 	return "/" + url
+}
+
+func ParseBearerToken(bearerToken string) string {
+	if bearerToken == "" {
+		return ""
+	}
+	token := strings.Split(bearerToken, " ")
+	if len(token) < 2 {
+		return ""
+	}
+
+	return token[1]
 }

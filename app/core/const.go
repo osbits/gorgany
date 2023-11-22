@@ -17,4 +17,7 @@ const GorganyORMTag = "grgorm"
 const GorganyORMPreload = "preload"
 const GorganyORMExtends = "extends"
 
-const MessageURLContextKey = "messageUrlContext"
+const MessageContextKey = "messageContext"
+
+const OneTimeParamsCookieName = "oneTimeParams"
+const SessionCookieName = "sessionToken"
