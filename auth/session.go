@@ -15,14 +15,6 @@ func GetSessionStorage() core.ISessionStorage {
 	return internal.GetFrameworkRegistrar().GetSessionStorage()
 }
 
-func InitSessionClear() {
-	go func() {
-		for range time.Tick(time.Duration(internal.GetFrameworkRegistrar().GetSessionLifetime()) * time.Second) {
-			GetSessionStorage().ClearExpiredSessions()
-		}
-	}()
-}
-
 // concrete session
 type Session struct {
 	username string

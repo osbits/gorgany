@@ -6,6 +6,7 @@ import (
 	"gorgany/app/core"
 	"gorgany/err"
 	"gorgany/log"
+	"gorgany/util"
 	"reflect"
 )
 
@@ -24,8 +25,8 @@ func (thiz *JobProvider) InitProvider() {
 	thiz.startScheduler()
 }
 
-func (this *JobProvider) RegisterJob(job core.IJob) {
-	this.jobs <- job
+func (thiz *JobProvider) RegisterJob(job core.IJob) {
+	thiz.jobs <- job
 }
 
 func (thiz *JobProvider) startScheduler() {
@@ -38,7 +39,7 @@ func (thiz *JobProvider) startScheduler() {
 
 		cronScheduler := gocron.Start()
 		for j := range thiz.jobs {
-			rtJob := reflect.TypeOf(j).Elem()
+			rtJob := util.IndirectType(reflect.TypeOf(j))
 			jobName := rtJob.Name()
 			e := j.InitSchedule().Do(thiz.startJob, jobName, j.Handle)
 			if e != nil {
