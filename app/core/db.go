@@ -17,27 +17,31 @@ type IConnection interface {
 type IQueryBuilder interface {
 	Select(fields ...string) IQueryBuilder
 	From(table string) IQueryBuilder
+	FromSubquery(table any) IQueryBuilder
 	FromModel(model any) IQueryBuilder
-	Join(table string, on string) IQueryBuilder
+	Join(table any, left, operator, right string) IQueryBuilder
+	LeftJoin(table any, left, operator, right string) IQueryBuilder
+	RightJoin(table any, left, operator, right string) IQueryBuilder
+	FullJoin(table any, left, operator, right string) IQueryBuilder
 	WhereEqual(field string, value interface{}) IQueryBuilder
 	Where(field string, operator string, value interface{}) IQueryBuilder
+	// Deprecated. Use WhereAnd instead
 	WhereClosure(closure func(builder IQueryBuilder) IQueryBuilder) IQueryBuilder
 	WhereIn(field string, values ...interface{}) IQueryBuilder
+	WhereNotIn(field string, values ...interface{}) IQueryBuilder
 	WhereAnd(closure func(builder IQueryBuilder) IQueryBuilder) IQueryBuilder
 	WhereOr(closure func(builder IQueryBuilder) IQueryBuilder) IQueryBuilder
 	OrderBy(field string, direction string) IQueryBuilder
 	Limit(limit int) IQueryBuilder
 	Offset(offset int) IQueryBuilder
 	BuildSelect() string
-	BuildJoin() string
-	BuildWhere() string
-	BuildWhereAnd() string
-	BuildWhereOr() string
+	BuildJoin() (string, []any)
+	BuildWhere() (string, []any)
 	BuildOrder() string
 	BuildLimit() string
 	BuildOffset() string
-	DeleteQuery() string
-	ToQuery() string
+	DeleteQuery() (string, []any)
+	ToQuery() (string, []any)
 	ToProcessedQuery() string
 	Get(dest any) error
 	Count(dest *int64) error
@@ -47,7 +51,7 @@ type IQueryBuilder interface {
 	Delete() error
 	DeleteModel(model any) error
 	StartTransaction() IQueryBuilder
-	EndTransaction() IQueryBuilder
+	CommitTransaction() IQueryBuilder
 	RollbackTransaction() IQueryBuilder
 	Relation(relation string) IQueryBuilder
 	Raw(sql string, scan any, values ...any) error
@@ -57,8 +61,10 @@ type IQueryBuilder interface {
 	ClearRelation(relation string) error
 	AppendRelation(relation string, values ...any) error
 	LoadRelations(relation ...string) error
-	GetArgs() []any
+	GetWhere() IWhere
 	AddMetaToModel(dest any, statement *gorm.Statement)
+	SetAlias(alias string) IQueryBuilder
+	GetAlias() string
 }
 
 type GormAssociation interface {
@@ -67,7 +73,10 @@ type GormAssociation interface {
 
 type IOrm[T any] interface {
 	Select(fields ...string) IOrm[T]
-	Join(table string, on string) IOrm[T]
+	Join(table string, left, operator, right string) IOrm[T]
+	LeftJoin(table string, left, operator, right string) IOrm[T]
+	RightJoin(table string, left, operator, right string) IOrm[T]
+	FullJoin(table string, left, operator, right string) IOrm[T]
 	WhereEqual(field string, value interface{}) IOrm[T]
 	Where(field string, operator string, value interface{}) IOrm[T]
 	WhereClosure(closure func(builder IQueryBuilder) IQueryBuilder) IOrm[T]
@@ -93,4 +102,23 @@ type IOrm[T any] interface {
 
 type DbConnectionNamer interface {
 	DbConnectionName() string
+}
+
+type IFrom interface {
+	From(table any, alias string)
+	ToQuery() (string, []any)
+}
+
+type IJoin interface {
+	InnerJoin(table any, left, operator, right string)
+	LeftJoin(table any, left, operator, right string)
+	RightJoin(table any, left, operator, right string)
+	FullJoin(table any, left, operator, right string)
+	ToQuery() (string, []any)
+}
+
+type IWhere interface {
+	AddCondition(column string, operator string, value any)
+	AddNestedCondition(connectorOperator string, nestedWhere IWhere)
+	ToQuery() (string, []any)
 }

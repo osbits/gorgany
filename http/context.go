@@ -10,7 +10,7 @@ func NewMessageContext(message Message) context.Context {
 	valContext := MessageContext{}
 	valContext.URL = message.GetRequest().URL
 	valContext.RequestURI = message.GetRequest().RequestURI
-	return context.WithValue(message.GetRequest().Context(), core.ContextKey, valContext)
+	return context.WithValue(message.GetRequest().Context(), core.MessageURLContextKey, valContext)
 }
 
 type MessageContext struct {

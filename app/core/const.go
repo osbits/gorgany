@@ -17,4 +17,4 @@ const GorganyORMTag = "grgorm"
 const GorganyORMPreload = "preload"
 const GorganyORMExtends = "extends"
 
-const ContextKey = "gorganyValContext"
+const MessageURLContextKey = "messageUrlContext"

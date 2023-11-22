@@ -40,13 +40,13 @@ type Builder struct {
 	gormInstance    core.IConnection
 	config          Config
 	selectStatement []string
-	table           string
-	join            []string
-	where           []string
+	from            core.IFrom
+	join            core.IJoin
+	where           core.IWhere
 	order           []string
-	args            []any
 	limit           *int
 	offset          *int
+	alias           string
 	copyGorm        *gorm.DB
 }
 
@@ -54,6 +54,9 @@ func NewBuilder(gormInstance core.IConnection) *Builder {
 	return &Builder{
 		gormInstance: gormInstance,
 		config:       Config{PreloadingMaxDeep: RecursiveRelationMaxDeep},
+		from:         &From{},
+		join:         &Join{make(map[string][]JoinItems)},
+		where:        &Where{operator: "AND"},
 	}
 }
 
@@ -61,6 +64,9 @@ func NewBuilderWithConfig(gormInstance core.IConnection, config Config) *Builder
 	return &Builder{
 		gormInstance: gormInstance,
 		config:       config,
+		from:         &From{},
+		join:         &Join{make(map[string][]JoinItems)},
+		where:        &Where{operator: "AND"},
 	}
 }
 
@@ -70,10 +76,16 @@ func (thiz *Builder) Select(fields ...string) core.IQueryBuilder {
 }
 
 func (thiz *Builder) From(table string) core.IQueryBuilder {
-	thiz.table = table
+	thiz.from.From(table, "")
 	return thiz
 }
 
+func (thiz *Builder) FromSubquery(table any) core.IQueryBuilder {
+	thiz.from.From(table, "")
+	return thiz
+}
+
+// FromModel. It allows to use only for setting one (main) table
 func (thiz *Builder) FromModel(model any) core.IQueryBuilder {
 	thiz.copyGorm = &(*thiz.GetDriver())
 	thiz.copyGorm = thiz.copyGorm.Model(model)
@@ -81,65 +93,79 @@ func (thiz *Builder) FromModel(model any) core.IQueryBuilder {
 	namingStrategy := schema.NamingStrategy{}
 	rtModel := reflect.TypeOf(model)
 
-	if tabler, ok := model.(schema.Tabler); ok {
-		thiz.From(tabler.TableName())
-	} else {
-		thiz.From(namingStrategy.TableName(rtModel.Name()))
+	if len(thiz.GetPostgresGORMFrom().fromItems) == 0 { // allow using FromModel only for specifying one (main) table
+		if tabler, ok := model.(schema.Tabler); ok {
+			thiz.From(tabler.TableName())
+		} else {
+			thiz.From(namingStrategy.TableName(rtModel.Name()))
+		}
 	}
 
 	return thiz
 }
 
-func (thiz *Builder) Join(table string, on string) core.IQueryBuilder {
-	thiz.join = append(thiz.join, fmt.Sprintf("JOIN %s ON %s", table, on))
+func (thiz *Builder) Join(table any, left, operator, right string) core.IQueryBuilder {
+	thiz.join.InnerJoin(table, left, operator, right)
+	return thiz
+}
+
+func (thiz *Builder) LeftJoin(table any, left, operator, right string) core.IQueryBuilder {
+	thiz.join.LeftJoin(table, left, operator, right)
+	return thiz
+}
+
+func (thiz *Builder) RightJoin(table any, left, operator, right string) core.IQueryBuilder {
+	thiz.join.RightJoin(table, left, operator, right)
+	return thiz
+}
+
+func (thiz *Builder) FullJoin(table any, left, operator, right string) core.IQueryBuilder {
+	thiz.join.FullJoin(table, left, operator, right)
 	return thiz
 }
 
 func (thiz *Builder) WhereEqual(field string, value interface{}) core.IQueryBuilder {
-	thiz.where = append(thiz.where, field+" = ?")
-	thiz.args = append(thiz.args, value)
+	thiz.where.AddCondition(field, "=", value)
 	return thiz
 }
 
 func (thiz *Builder) Where(field string, operator string, value interface{}) core.IQueryBuilder {
-	thiz.where = append(thiz.where, field+" "+operator+" ?")
-	thiz.args = append(thiz.args, value)
-	return thiz
-}
-
-func (thiz *Builder) WhereClosure(closure func(builder core.IQueryBuilder) core.IQueryBuilder) core.IQueryBuilder {
-	builder := closure(NewBuilder(thiz.GetConnection()))
-	thiz.where = append(thiz.where, builder.BuildWhereAnd())
+	thiz.where.AddCondition(field, operator, value)
 	return thiz
 }
 
 func (thiz *Builder) WhereIn(field string, values ...interface{}) core.IQueryBuilder {
-	placeholders := make([]string, len(values))
-	for i := 0; i < len(values); i++ {
-		placeholders[i] = "?"
-	}
-	thiz.where = append(thiz.where, field+" IN ("+strings.Join(placeholders, ",")+")")
-	thiz.args = append(thiz.args, values...)
+	thiz.where.AddCondition(field, "IN", values)
+	return thiz
+}
+
+func (thiz *Builder) WhereNotIn(field string, values ...interface{}) core.IQueryBuilder {
+	thiz.where.AddCondition(field, "NOT IN", values)
+	return thiz
+}
+
+// WhereClosure. Deprecated. Use WhereAnd instead
+func (thiz *Builder) WhereClosure(closure func(builder core.IQueryBuilder) core.IQueryBuilder) core.IQueryBuilder {
+	builder := closure(NewBuilder(thiz.GetConnection()))
+	thiz.where.AddNestedCondition("AND", builder.GetWhere())
 	return thiz
 }
 
 func (thiz *Builder) WhereAnd(closure func(builder core.IQueryBuilder) core.IQueryBuilder) core.IQueryBuilder {
 	builder := closure(NewBuilder(thiz.GetConnection()))
-	builtWhere := builder.BuildWhere()
-	if builtWhere != "" {
-		thiz.where = append(thiz.where, "("+builder.BuildWhereAnd()+")")
+	nestedWhere := builder.GetWhere()
+	if nestedWhere != nil {
+		thiz.where.AddNestedCondition("AND", nestedWhere)
 	}
-	thiz.args = append(thiz.args, builder.GetArgs()...)
 	return thiz
 }
 
 func (thiz *Builder) WhereOr(closure func(builder core.IQueryBuilder) core.IQueryBuilder) core.IQueryBuilder {
 	builder := closure(NewBuilder(thiz.GetConnection()))
-	builtWhere := builder.BuildWhereOr()
-	if builtWhere != "" {
-		thiz.where = append(thiz.where, "("+builder.BuildWhereOr()+")")
+	nestedWhere := builder.GetWhere()
+	if nestedWhere != nil {
+		thiz.where.AddNestedCondition("OR", nestedWhere)
 	}
-	thiz.args = append(thiz.args, builder.GetArgs()...)
 	return thiz
 }
 
@@ -158,23 +184,27 @@ func (thiz *Builder) Offset(offset int) core.IQueryBuilder {
 	return thiz
 }
 
-func (thiz *Builder) DeleteQuery() string {
+func (thiz *Builder) DeleteQuery() (string, []any) {
+	where, args := thiz.BuildWhere()
 	if viper.GetBool("databases.postgres_gorm.log") == true {
-		fmt.Printf("DELETE FROM %s %s\n", thiz.table, thiz.BuildWhere())
+		fmt.Printf("DELETE FROM %s %s\n", thiz.from, where)
 	}
-	return fmt.Sprintf("DELETE FROM %s %s\n", thiz.table, thiz.BuildWhere())
+	return fmt.Sprintf("DELETE FROM %s %s", thiz.from, where), args
 }
 
-func (thiz *Builder) ToQuery() string {
-	if viper.GetBool("databases.postgres_gorm.log") == true {
-		fmt.Printf("SELECT %s FROM %s %s %s %s %s %s\n", thiz.BuildSelect(), thiz.table, thiz.BuildJoin(), thiz.BuildWhere(), thiz.BuildOrder(), thiz.BuildLimit(), thiz.BuildOffset())
-	}
-	return fmt.Sprintf("SELECT %s FROM %s %s %s %s %s %s", thiz.BuildSelect(), thiz.table, thiz.BuildJoin(), thiz.BuildWhere(), thiz.BuildOrder(), thiz.BuildLimit(), thiz.BuildOffset())
+func (thiz *Builder) ToQuery() (string, []any) {
+	from, fromArgs := thiz.BuildFrom()
+	join, joinArgs := thiz.BuildJoin()
+	where, whereArgs := thiz.BuildWhere()
+	args := append(fromArgs, joinArgs...)
+	args = append(args, whereArgs...)
+	return fmt.Sprintf("SELECT %s FROM %s%s%s%s%s%s", thiz.BuildSelect(), from, join, where, thiz.BuildOrder(), thiz.BuildLimit(), thiz.BuildOffset()), args
 }
 
 func (thiz *Builder) ToProcessedQuery() string {
 	return thiz.GetDriver().ToSQL(func(g *gorm.DB) *gorm.DB {
-		return g.Raw(thiz.ToQuery(), thiz.args...)
+		query, args := thiz.ToQuery()
+		return g.Raw(query, args...)
 	})
 }
 
@@ -182,53 +212,52 @@ func (thiz *Builder) BuildSelect() string {
 	if len(thiz.selectStatement) == 0 {
 		return "*"
 	}
-	return strings.Join(thiz.selectStatement, ",")
+	return strings.Join(thiz.selectStatement, ", ")
 }
 
-func (thiz *Builder) BuildWhere() string {
-	if len(thiz.where) == 0 {
-		return ""
+func (thiz *Builder) BuildFrom() (string, []any) {
+	if len(thiz.GetPostgresGORMFrom().fromItems) == 0 {
+		return "", nil
 	}
-	return "WHERE " + thiz.BuildWhereAnd()
+	buildFrom, args := thiz.from.ToQuery()
+	return buildFrom, args
 }
 
-func (thiz *Builder) BuildWhereOr() string {
-	if len(thiz.where) == 0 {
-		return ""
+func (thiz *Builder) BuildJoin() (string, []any) {
+	if len(thiz.GetPostgresGORMJoin().joinItems) == 0 {
+		return "", nil
 	}
-	return strings.Join(thiz.where, " OR ")
+	builtJoin, args := thiz.join.ToQuery()
+	return " " + builtJoin, args
 }
 
-func (thiz *Builder) BuildWhereAnd() string {
-	if len(thiz.where) == 0 {
-		return ""
+func (thiz *Builder) BuildWhere() (string, []any) {
+	if len(thiz.GetPostgresGORMWhere().whereItems) == 0 {
+		return "", nil
 	}
-	return strings.Join(thiz.where, " AND ")
-}
-
-func (thiz *Builder) BuildJoin() string {
-	return strings.Join(thiz.join, " ")
+	builtWhere, args := thiz.where.ToQuery()
+	return " WHERE " + builtWhere, args
 }
 
 func (thiz *Builder) BuildOrder() string {
 	if len(thiz.order) == 0 {
 		return ""
 	}
-	return "ORDER BY " + strings.Join(thiz.order, ",")
+	return " ORDER BY " + strings.Join(thiz.order, ",")
 }
 
 func (thiz *Builder) BuildLimit() string {
 	if thiz.limit == nil {
 		return ""
 	}
-	return fmt.Sprintf("LIMIT %d", *thiz.limit)
+	return fmt.Sprintf(" LIMIT %d", *thiz.limit)
 }
 
 func (thiz *Builder) BuildOffset() string {
 	if thiz.offset == nil {
 		return ""
 	}
-	return fmt.Sprintf("OFFSET %d", *thiz.offset)
+	return fmt.Sprintf(" OFFSET %d", *thiz.offset)
 }
 
 func (thiz *Builder) Get(dest any) error {
@@ -242,13 +271,17 @@ func (thiz *Builder) Get(dest any) error {
 		return err
 	}
 
-	thiz.FromModel(rvDest.Elem().Interface())
+	if len(thiz.GetPostgresGORMFrom().fromItems) == 0 {
+		thiz.FromModel(rvDest.Elem().Interface())
+	}
+
 	keys := thiz.walkNestedRelations(sc.Relationships.Relations, "", 0)
 	for _, key := range keys {
 		thiz.Relation(key)
 	}
 
-	res := thiz.GetDriver().Raw(thiz.ToQuery(), thiz.args...).First(dest)
+	query, args := thiz.ToQuery()
+	res := thiz.GetDriver().Raw(query, args...).First(dest)
 	thiz.AddMetaToModel(dest, res.Statement)
 
 	thiz.clearQueryParams()
@@ -261,7 +294,8 @@ func (thiz *Builder) Get(dest any) error {
 
 func (thiz *Builder) Count(dest *int64) error {
 	thiz.Select("count(*)")
-	res := thiz.GetDriver().Raw(thiz.ToQuery(), thiz.args...).Scan(dest)
+	query, args := thiz.ToQuery()
+	res := thiz.GetDriver().Raw(query, args...).Scan(dest)
 	thiz.clearQueryParams()
 	return res.Error
 }
@@ -289,7 +323,8 @@ func (thiz *Builder) List(dest any) error {
 		thiz.Relation(key)
 	}
 
-	res := thiz.GetDriver().Raw(thiz.ToQuery(), thiz.args...).Find(dest)
+	query, args := thiz.ToQuery()
+	res := thiz.GetDriver().Raw(query, args...).Find(dest)
 	thiz.clearQueryParams()
 
 	for _, d := range util.GetSliceFromAny(dest) {
@@ -329,7 +364,8 @@ func (thiz *Builder) Save(model any) error {
 }
 
 func (thiz *Builder) Delete() error {
-	res := thiz.GetDriver().Raw(thiz.DeleteQuery(), thiz.args...)
+	query, args := thiz.DeleteQuery()
+	res := thiz.GetDriver().Raw(query, args...)
 	thiz.clearQueryParams()
 	return res.Error
 }
@@ -360,18 +396,18 @@ func (thiz *Builder) GetDriver() *gorm.DB {
 }
 
 func (thiz *Builder) StartTransaction() core.IQueryBuilder {
-	thiz.GetDriver().Begin()
+	thiz.copyGorm = thiz.GetDriver().Begin()
 	return thiz
 }
 
-func (thiz *Builder) EndTransaction() core.IQueryBuilder {
-	thiz.GetDriver().Commit()
+func (thiz *Builder) CommitTransaction() core.IQueryBuilder {
+	thiz.copyGorm = thiz.GetDriver().Commit()
 	thiz.clearQueryParams()
 	return thiz
 }
 
 func (thiz *Builder) RollbackTransaction() core.IQueryBuilder {
-	thiz.GetDriver().Rollback()
+	thiz.copyGorm = thiz.GetDriver().Rollback()
 	thiz.clearQueryParams()
 	return thiz
 }
@@ -464,17 +500,17 @@ func (thiz *Builder) LoadRelations(relations ...string) error {
 
 func (thiz *Builder) clearQueryParams() {
 	thiz.selectStatement = make([]string, 0)
-	thiz.where = make([]string, 0)
-	thiz.table = ""
-	thiz.join = make([]string, 0)
+	thiz.where = &Where{operator: "AND"}
+	thiz.from = &From{}
+	thiz.join = &Join{make(map[string][]JoinItems)}
 	thiz.limit = nil
 	thiz.order = make([]string, 0)
 	thiz.offset = nil
 	thiz.copyGorm = nil
 }
 
-func (thiz *Builder) GetArgs() []any {
-	return thiz.args
+func (thiz *Builder) GetWhere() core.IWhere {
+	return thiz.where
 }
 
 func (thiz *Builder) AddMetaToModel(dest any, statement *gorm.Statement) {
@@ -489,6 +525,27 @@ func (thiz *Builder) AddMetaToModel(dest any, statement *gorm.Statement) {
 
 		domainMetaInstance.SetDomain(dest)
 	}
+}
+
+func (thiz *Builder) SetAlias(alias string) core.IQueryBuilder {
+	thiz.alias = alias
+	return thiz
+}
+
+func (thiz *Builder) GetAlias() string {
+	return thiz.alias
+}
+
+func (thiz *Builder) GetPostgresGORMFrom() *From {
+	return thiz.from.(*From)
+}
+
+func (thiz *Builder) GetPostgresGORMJoin() *Join {
+	return thiz.join.(*Join)
+}
+
+func (thiz *Builder) GetPostgresGORMWhere() *Where {
+	return thiz.where.(*Where)
 }
 
 func (thiz *Builder) value(value interface{}) string {

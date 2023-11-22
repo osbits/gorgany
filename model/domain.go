@@ -2,20 +2,14 @@ package model
 
 import (
 	"gorgany/app/core"
-	"gorgany/db/orm"
 )
 
 type Domain[T core.IDomain[T]] struct {
 	DomainMeta
 }
 
-func (thiz Domain[T]) Query() core.IOrm[T] {
-	var emptyDomain T
-	domain := &emptyDomain
-	if thiz.Domain != nil {
-		domain = thiz.Domain.(*T)
-	}
-	return orm.OrmInstance[T](domain)
+func (thiz *Domain[T]) Query() core.IOrm[T] {
+	panic("Implement me in child struct. See doc...") // todo add doc url
 }
 
 func (thiz Domain[T]) GetDomainMeta() core.IDomainMeta {

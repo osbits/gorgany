@@ -80,7 +80,7 @@ func (thiz EngineRenderer) AvailableLocalesOnFront() []string {
 
 func (thiz EngineRenderer) ChangeLanguageLink(locale string) string {
 	path := ""
-	if ctx, ok := thiz.Ctx.Value(core.ContextKey).(core.IMessageContext); ok {
+	if ctx, ok := thiz.Ctx.Value(core.MessageURLContextKey).(core.IMessageContext); ok {
 		path = ctx.GetURL().Path
 	}
 
@@ -105,7 +105,7 @@ func (thiz EngineRenderer) ChangeLanguageLink(locale string) string {
 }
 
 func (thiz EngineRenderer) CurrentUrl() string {
-	if ctx, ok := thiz.Ctx.Value(core.ContextKey).(core.IMessageContext); ok {
+	if ctx, ok := thiz.Ctx.Value(core.MessageURLContextKey).(core.IMessageContext); ok {
 		return ctx.GetRequestURL()
 	}
 	return ""

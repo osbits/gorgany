@@ -14,8 +14,7 @@ import (
 )
 
 type RouteProvider struct {
-	router      core.Router
-	controllers core.Controllers
+	router core.Router
 }
 
 func NewRouteProvider() *RouteProvider {
@@ -23,9 +22,12 @@ func NewRouteProvider() *RouteProvider {
 }
 
 func (thiz *RouteProvider) InitProvider() {
-	r := router.NewGorganyRouter()
-	internal.GetFrameworkRegistrar().RegisterRouter(r)
-	thiz.router = r
+	thiz.RegisterRouter(router.NewGorganyRouter())
+}
+
+func (thiz *RouteProvider) RegisterRouter(router core.Router) {
+	internal.GetFrameworkRegistrar().RegisterRouter(router)
+	thiz.router = router
 }
 
 func (thiz *RouteProvider) RegisterController(controller core.IController) {
@@ -91,8 +93,6 @@ func (thiz *RouteProvider) RegisterController(controller core.IController) {
 			}
 		}
 	}
-
-	thiz.controllers = append(thiz.controllers, controller)
 }
 
 func (thiz *RouteProvider) SetHomeUrl(url string) {

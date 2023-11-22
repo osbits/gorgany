@@ -17,7 +17,10 @@ func OrmInstance[T any](model *T) *GorganyOrm[T] {
 		var m T
 		model = &m
 	}
-	return &GorganyOrm[T]{Model: model}
+	orm := &GorganyOrm[T]{Model: model}
+	orm.setBuilder()
+
+	return orm
 }
 
 func (thiz *GorganyOrm[T]) Select(fields ...string) core.IOrm[T] {
@@ -26,9 +29,27 @@ func (thiz *GorganyOrm[T]) Select(fields ...string) core.IOrm[T] {
 	return thiz
 }
 
-func (thiz *GorganyOrm[T]) Join(table string, on string) core.IOrm[T] {
+func (thiz *GorganyOrm[T]) Join(table string, left, operator, right string) core.IOrm[T] {
 	thiz.setBuilder()
-	thiz.builder.Join(table, on)
+	thiz.builder.Join(table, left, operator, right)
+	return thiz
+}
+
+func (thiz *GorganyOrm[T]) LeftJoin(table string, left, operator, right string) core.IOrm[T] {
+	thiz.setBuilder()
+	thiz.builder.Join(table, left, operator, right)
+	return thiz
+}
+
+func (thiz *GorganyOrm[T]) RightJoin(table string, left, operator, right string) core.IOrm[T] {
+	thiz.setBuilder()
+	thiz.builder.Join(table, left, operator, right)
+	return thiz
+}
+
+func (thiz *GorganyOrm[T]) FullJoin(table string, left, operator, right string) core.IOrm[T] {
+	thiz.setBuilder()
+	thiz.builder.Join(table, left, operator, right)
 	return thiz
 }
 
@@ -93,21 +114,17 @@ func (thiz *GorganyOrm[T]) Get() (*T, error) {
 }
 
 func (thiz *GorganyOrm[T]) Count() (int64, error) {
-	var model T
-
 	thiz.setBuilder()
 
 	var count int64
-	err := thiz.builder.FromModel(model).Count(&count)
+	err := thiz.builder.Count(&count)
 	return count, err
 }
 
 func (thiz *GorganyOrm[T]) List() ([]*T, error) {
-	var model T
-
 	thiz.setBuilder()
 	domains := make([]*T, 0)
-	err := thiz.builder.FromModel(model).List(&domains)
+	err := thiz.builder.List(&domains)
 	return domains, err
 }
 
@@ -124,40 +141,39 @@ func (thiz *GorganyOrm[T]) Delete() error {
 func (thiz *GorganyOrm[T]) Association(association string) *gorm.Association {
 	thiz.setBuilder()
 
-	return thiz.builder.FromModel(thiz.Model).(core.GormAssociation).Association(association)
+	return thiz.builder.(core.GormAssociation).Association(association)
 }
 
 func (thiz *GorganyOrm[T]) Relation(relation string) core.IOrm[T] {
-	var model T
 	thiz.setBuilder()
 
-	thiz.builder.FromModel(model).Relation(relation)
+	thiz.builder.Relation(relation)
 	return thiz
 }
 
 func (thiz *GorganyOrm[T]) ReplaceRelation(relation string) error {
 	thiz.setBuilder()
-	return thiz.builder.FromModel(thiz.Model).ReplaceRelation(relation)
+	return thiz.builder.ReplaceRelation(relation)
 }
 
 func (thiz *GorganyOrm[T]) DeleteRelation(relation string) error {
 	thiz.setBuilder()
-	return thiz.builder.FromModel(thiz.Model).DeleteRelation(relation)
+	return thiz.builder.DeleteRelation(relation)
 }
 
 func (thiz *GorganyOrm[T]) ClearRelation(relation string) error {
 	thiz.setBuilder()
-	return thiz.builder.FromModel(thiz.Model).ClearRelation(relation)
+	return thiz.builder.ClearRelation(relation)
 }
 
 func (thiz *GorganyOrm[T]) AppendRelation(relation string, values ...any) error {
 	thiz.setBuilder()
-	return thiz.builder.FromModel(thiz.Model).AppendRelation(relation)
+	return thiz.builder.AppendRelation(relation)
 }
 
 func (thiz *GorganyOrm[T]) LoadRelations(relations ...string) error {
 	thiz.setBuilder()
-	return thiz.builder.FromModel(thiz.Model).LoadRelations(relations...)
+	return thiz.builder.LoadRelations(relations...)
 }
 
 func (thiz *GorganyOrm[T]) ToQuery() string {
@@ -172,15 +188,18 @@ func (thiz *GorganyOrm[T]) setBuilder() {
 	rv := reflect.ValueOf(thiz)
 	if !rv.CanConvert(reflect.TypeOf((*core.DbConnectionNamer)(nil))) {
 		thiz.builder = db.Builder()
+		thiz.builder.FromModel(thiz.Model)
 		return
 	}
 
 	casted, ok := rv.Convert(reflect.TypeOf((*core.DbConnectionNamer)(nil))).Interface().(core.DbConnectionNamer)
 	if !ok {
 		thiz.builder = db.Builder()
+		thiz.builder.FromModel(thiz.Model)
 		return
 	}
 
 	thiz.builder = db.Builder(casted.DbConnectionName())
+	thiz.builder.FromModel(thiz.Model)
 	return
 }
