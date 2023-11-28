@@ -1,12 +1,9 @@
 package core
 
 type IDomain[T any] interface {
+	Query() IOrm[T]
 	Clone() *T
 	GetDomainMeta() IDomainMeta
-}
-
-type IQuerier[T any] interface {
-	Query() IOrm[T]
 }
 
 type IDomainMeta interface {

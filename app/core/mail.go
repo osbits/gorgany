@@ -4,7 +4,7 @@ type IMail interface {
 	GetRecipients() []string
 	GetBody() ([]byte, error)
 	GetSubject() string
-	GetAttachments() []IAttachment
+	GetAttachments() ([]IAttachment, error)
 }
 
 type IAttachment interface {

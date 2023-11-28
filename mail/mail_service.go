@@ -65,7 +65,12 @@ func (thiz MailService) buildBody(mail core.IMail) ([]byte, error) {
 	writer := multipart.NewWriter(buf)
 	boundary := writer.Boundary()
 
-	if len(mail.GetAttachments()) == 0 {
+	attachments, err := mail.GetAttachments()
+	if err != nil {
+		return nil, err
+	}
+
+	if len(attachments) == 0 {
 		buf.WriteString("Content-Type: text/html; charset=\"UTF-8\";\n\n")
 	} else {
 		buf.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=%s\n", boundary))
@@ -77,12 +82,12 @@ func (thiz MailService) buildBody(mail core.IMail) ([]byte, error) {
 		return nil, err
 	}
 
-	if mailBody != nil && len(mail.GetAttachments()) > 0 {
+	if mailBody != nil && len(attachments) > 0 {
 		buf.WriteString("Content-Type: text/html; charset=\"UTF-8\";\n\n")
 	}
 	buf.Write(mailBody)
 
-	for _, attachment := range mail.GetAttachments() {
+	for _, attachment := range attachments {
 		buf.WriteString(fmt.Sprintf("\n\n--%s\n", boundary))
 		buf.WriteString(fmt.Sprintf("Content-Type: %s\n", http.DetectContentType(attachment.GetContent())))
 		buf.WriteString("Content-Transfer-Encoding: base64\n")

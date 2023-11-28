@@ -10,6 +10,7 @@ import (
 	"gorgany"
 	"gorgany/app/core"
 	"gorgany/auth"
+	"gorgany/log"
 	"gorgany/model"
 	"gorgany/util"
 	view2 "gorgany/view"
@@ -251,11 +252,16 @@ func (thiz Message) GetQueryParam(key string) any {
 
 func (thiz Message) GetBodyParam(key string) any {
 	parsedBody := make(map[string]any)
-	err := json.Unmarshal(thiz.GetBody(), &parsedBody)
-	if err != nil {
-		return "" //todo log
+	contentType := thiz.GetHeader().Get("Content-Type")
+	if contentType == "application/json" {
+		err := json.Unmarshal(thiz.GetBody(), &parsedBody)
+		if err != nil {
+			return "" //todo log
+		}
+		return parsedBody[key]
 	}
-	return parsedBody[key]
+	log.Log("").Warnf("http.Message: GetBodyParam is not implemented for %s yet", contentType)
+	return ""
 }
 
 func (thiz Message) GetMultipartFormValues() *multipart.Form {
