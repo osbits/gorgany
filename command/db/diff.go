@@ -67,7 +67,7 @@ func (thiz DiffCommand) Execute() {
 		}
 	}
 
-	models := make([]interface{}, 0)
+	models := make([]any, 0)
 
 	for _, model := range modelsMap {
 		models = append(models, model)
@@ -78,31 +78,57 @@ func (thiz DiffCommand) Execute() {
 		return
 	}
 
-	namingStrategyService := schema.NamingStrategy{}
 	for _, model := range models {
 		rType := reflect.TypeOf(model)
-		for i := 0; i < rType.NumField(); i++ {
-			rField := rType.Field(i)
-
-			if rField.Anonymous && rField.Type.Kind() == reflect.Struct && orm.IsParamInTagExists(rField.Tag, core.GorganyORMExtends) {
-				tableName := namingStrategyService.TableName(rField.Type.Name())
-				if !isColumnExists(tableName, plugin.StructModelColumn()) {
-					statements = append(statements, fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS model_struct varchar(255)", tableName))
-				}
-			}
-
-			if tx.Migrator().HasConstraint(model, rField.Name) {
-				continue
-			}
-
-			if err := tx.Migrator().CreateConstraint(model, rField.Name); err != nil {
-				fmt.Println(err)
-				return
-			}
+		err := migrateModelConstraints(rType, &statements, tx.Migrator())
+		if err != nil {
+			fmt.Printf("Domain: %s, error: %v", rType.Name(), err)
+			return
 		}
 	}
 
 	thiz.generateMigration(statements)
+}
+
+func migrateModelConstraints(rModel reflect.Type, statements *[]string, migrator gorm.Migrator) error {
+	namingStrategyService := schema.NamingStrategy{}
+	alreadyExtends := false
+	for i := 0; i < rModel.NumField(); i++ {
+		rField := rModel.Field(i)
+
+		if rField.Anonymous && rField.Type.Kind() == reflect.Struct && orm.IsParamInTagExists(rField.Tag, core.GorganyORMExtends) {
+			if alreadyExtends {
+				return fmt.Errorf("Gorgany ORM only supports one struct extension!")
+			}
+
+			tableName := namingStrategyService.TableName(rField.Type.Name())
+			if !isColumnExists(tableName, plugin.StructModelColumn()) {
+				*statements = append(*statements, fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s varchar(255)", tableName, plugin.StructDefaultColumn))
+			}
+
+			alreadyExtends = true
+
+			err := migrateModelConstraints(rField.Type, statements, migrator)
+			if err != nil {
+				return err
+			}
+
+			continue
+		}
+
+		indirectRModel := util.IndirectType(rModel)
+		rvModel := reflect.New(indirectRModel)
+		model := rvModel.Interface()
+
+		if migrator.HasConstraint(model, rField.Name) {
+			continue
+		}
+
+		if err := migrator.CreateConstraint(model, rField.Name); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func isColumnExists(tableName string, columnName string) bool {

@@ -52,7 +52,7 @@ func ValidateStruct(s any) error {
 		}
 
 		if len(validationErrors.Errors) > 0 {
-			return validationErrors
+			return &validationErrors
 		}
 	}
 

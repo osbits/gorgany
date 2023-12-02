@@ -41,12 +41,16 @@ type ValidationErrors struct {
 	Errors []ValidationError
 }
 
-func (thiz ValidationErrors) Error() string {
+func (thiz *ValidationErrors) Error() string {
 	errs := make([]string, 0)
 	for _, err := range thiz.Errors {
 		errs = append(errs, err.Error())
 	}
 	return strings.Join(errs, "\n")
+}
+
+func (thiz *ValidationErrors) AddValidationError(validationError ValidationError) {
+	thiz.Errors = append(thiz.Errors, validationError)
 }
 
 type ValidationError struct {

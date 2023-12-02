@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-const StructDefaultColumn = "struct"
+const StructDefaultColumn = "model_struct"
 
 type StructNamer interface {
 	StructName() string

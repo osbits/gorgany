@@ -60,7 +60,7 @@ func (thiz MigrateCommand) up() {
 		tx := gormInstance.Begin()
 
 		closure := migration.Up()
-		err = closure(gormInstance)
+		err = closure(tx)
 		if err != nil {
 			fmt.Println(err)
 			tx.Rollback()

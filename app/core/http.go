@@ -31,7 +31,9 @@ type HttpMessage interface {
 	IsLoggedIn() bool
 	CurrentUser() (Authenticable, error)
 	GetBearerToken() string
-	GetQueryParam(key string) any
+	GetQueryParam(key string) string
+	GetQueryParams(key string) []string
+	GetQueryParamsMap(key string) []map[string]string
 	GetBodyParam(key string) any
 	GetMultipartFormValues() *multipart.Form
 	Locale() string

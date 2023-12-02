@@ -21,3 +21,7 @@ const MessageContextKey = "messageContext"
 
 const OneTimeParamsCookieName = "oneTimeParams"
 const SessionCookieName = "sessionToken"
+
+// Error
+
+const GeneralError = "GeneralError"

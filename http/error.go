@@ -12,8 +12,8 @@ import (
 
 var defaultErrorHandlerMap = map[string]core.ErrorHandler{
 	"ValidationErrors":     processValidationErrors,
-	"InputBodyParseError":  processInputParsingError,
-	"InputParamParseError": processBodyParsingError,
+	"InputBodyParseError":  processBodyParsingError,
+	"InputParamParseError": processInputParsingError,
 	"Default":              processDefaultError,
 	"JwtAuthError":         processJwtAuthError,
 }
@@ -63,7 +63,7 @@ func processDefaultError(err error, message core.HttpMessage) {
 }
 
 func processValidationErrors(error error, message core.HttpMessage) {
-	concreteError := error.(error2.ValidationErrors)
+	concreteError := error.(*error2.ValidationErrors)
 	req := message.GetRequest()
 	message.RedirectWithParams(req.Referer(), 301, map[string]any{"validation": concreteError.Errors})
 	return
@@ -71,7 +71,7 @@ func processValidationErrors(error error, message core.HttpMessage) {
 
 func processInputParsingError(error error, message core.HttpMessage) {
 	error2.PrintError(error)
-	message.Response("", 400)
+	message.Response("", 404)
 	return
 }
 

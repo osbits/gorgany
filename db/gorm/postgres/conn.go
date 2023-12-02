@@ -413,7 +413,7 @@ func (thiz *Builder) RollbackTransaction() core.IQueryBuilder {
 }
 
 func (thiz *Builder) Raw(sql string, scan any, values ...any) error {
-	res := thiz.GetDriver().Raw(sql, values)
+	res := thiz.GetDriver().Raw(sql, values...)
 
 	rvScan := reflect.ValueOf(scan)
 	if rvScan.Kind() != reflect.Ptr { //nil ??

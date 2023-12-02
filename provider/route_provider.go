@@ -23,6 +23,7 @@ func NewRouteProvider() *RouteProvider {
 
 func (thiz *RouteProvider) InitProvider() {
 	thiz.RegisterRouter(router.NewGorganyRouter())
+	thiz.caseSensitiveRoutes()
 }
 
 func (thiz *RouteProvider) RegisterRouter(router core.Router) {
@@ -33,6 +34,8 @@ func (thiz *RouteProvider) RegisterRouter(router core.Router) {
 func (thiz *RouteProvider) RegisterController(controller core.IController) {
 	availableLangsRegex := thiz.buildLangRegex()
 	routerEngine := thiz.router.Engine().(chi.Router)
+
+	caseSensitiveRoutes := viper.GetBool("app.server.caseSensitiveRoutes")
 
 	for _, rc := range controller.GetRoutes() {
 		routeConfig := rc.(*router.RouteConfig)
@@ -59,6 +62,10 @@ func (thiz *RouteProvider) RegisterController(controller core.IController) {
 		}
 
 		for _, pattern := range patterns {
+			if !caseSensitiveRoutes {
+				pattern = strings.ToLower(pattern)
+			}
+
 			if pattern[len(pattern)-1] == '/' && len(pattern) > 1 {
 				pattern = pattern[:len(pattern)-1]
 			}
@@ -108,4 +115,16 @@ func (thiz *RouteProvider) buildLangRegex() string {
 	availableLangs = append(availableLangs, viper.GetString("i18n.lang.default"))
 
 	return strings.Join(availableLangs, "|")
+}
+
+func (thiz *RouteProvider) caseSensitiveRoutes() {
+	if !viper.GetBool("app.server.caseSensitiveRoutes") {
+		thiz.router.Engine().(chi.Router).Use(func(next http2.Handler) http2.Handler {
+			fn := func(w http2.ResponseWriter, r *http2.Request) {
+				r.URL.Path = strings.ToLower(r.URL.Path)
+				next.ServeHTTP(w, r)
+			}
+			return http2.HandlerFunc(fn)
+		})
+	}
 }

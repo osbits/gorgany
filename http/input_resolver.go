@@ -2,7 +2,9 @@ package http
 
 import (
 	"encoding/json"
+	"errors"
 	"github.com/go-chi/chi"
+	"github.com/gorilla/schema"
 	"gorgany"
 	"gorgany/app/core"
 	"gorgany/decoder/multipart"
@@ -101,7 +103,20 @@ type jsonParser struct {
 func (thiz jsonParser) parse(arg interface{}) error {
 	err := json.Unmarshal(thiz.message.GetBody(), arg)
 	if err != nil {
-		return error2.NewInputBodyParseError(thiz.message.GetBodyContent(), "json", err)
+		validationErrors := error2.ValidationErrors{make([]error2.ValidationError, 0)}
+		if errors.As(err, &json.UnmarshalTypeError{}) {
+			typeError := err.(*json.UnmarshalTypeError)
+			validationErrors.AddValidationError(error2.ValidationError{
+				Field: typeError.Field,
+				Err:   typeError.Error(),
+			})
+		} else {
+			validationErrors.AddValidationError(error2.ValidationError{
+				Field: core.GeneralError,
+				Err:   err.Error(),
+			})
+		}
+		return &validationErrors
 	}
 	return nil
 }
@@ -116,11 +131,27 @@ func (thiz multipartParser) parse(arg interface{}) error {
 	decoder := multipart.NewFormValuesDecoder()
 	err := decoder.Decode(arg, multipartForm.Value)
 	if err != nil {
-		return error2.NewInputBodyParseError(thiz.message.GetBodyContent(), "multipart form", err)
+		validationErrors := error2.ValidationErrors{Errors: make([]error2.ValidationError, 0)}
+		if errors.As(err, &schema.MultiError{}) {
+			multiError := err.(schema.MultiError)
+			for key, err := range multiError {
+				validationErrors.AddValidationError(error2.ValidationError{Field: key, Err: err.Error()})
+			}
+		} else {
+			validationErrors.AddValidationError(error2.ValidationError{
+				Field: core.GeneralError,
+				Err:   err.Error(),
+			})
+		}
+		return &validationErrors
 	}
 	err = multipart.DecodeFiles(multipartForm.File, arg)
 	if err != nil {
-		return error2.NewInputBodyParseError(thiz.message.GetBodyContent(), "multipart files", err)
+		validationErrors := error2.ValidationErrors{Errors: make([]error2.ValidationError, 0)}
+		for key, _ := range multipartForm.File {
+			validationErrors.AddValidationError(error2.ValidationError{Field: key, Err: "Incorrect files"})
+		}
+		return &validationErrors
 	}
 	return nil
 }
@@ -134,11 +165,26 @@ func (thiz formParser) parse(arg interface{}) error {
 	decoder := multipart.NewFormValuesDecoder()
 	values, err := url2.ParseQuery(thiz.message.GetBodyContent())
 	if err != nil {
-		return error2.NewInputBodyParseError(thiz.message.GetBodyContent(), "form", err)
+		return &error2.ValidationErrors{Errors: []error2.ValidationError{{
+			Field: core.GeneralError,
+			Err:   err.Error(),
+		}}}
 	}
 	err = decoder.Decode(arg, values)
 	if err != nil {
-		return error2.NewInputBodyParseError(thiz.message.GetBodyContent(), "form", err)
+		validationErrors := error2.ValidationErrors{Errors: make([]error2.ValidationError, 0)}
+		if errors.As(err, &schema.MultiError{}) {
+			multiError := err.(schema.MultiError)
+			for key, err := range multiError {
+				validationErrors.AddValidationError(error2.ValidationError{Field: key, Err: err.Error()})
+			}
+		} else {
+			validationErrors.AddValidationError(error2.ValidationError{
+				Field: core.GeneralError,
+				Err:   err.Error(),
+			})
+		}
+		return &validationErrors
 	}
 
 	return nil
