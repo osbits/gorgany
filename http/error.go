@@ -65,8 +65,11 @@ func processDefaultError(err error, message core.HttpMessage) {
 func processValidationErrors(error error, message core.HttpMessage) {
 	concreteError := error.(*error2.ValidationErrors)
 	req := message.GetRequest()
+	if message.IsApiNamespace() {
+		message.ResponseJSON(error, 429)
+		return
+	}
 	message.RedirectWithParams(req.Referer(), 301, map[string]any{"validation": concreteError.Errors})
-	return
 }
 
 func processInputParsingError(error error, message core.HttpMessage) {

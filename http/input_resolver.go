@@ -104,7 +104,7 @@ func (thiz jsonParser) parse(arg interface{}) error {
 	err := json.Unmarshal(thiz.message.GetBody(), arg)
 	if err != nil {
 		validationErrors := error2.ValidationErrors{make([]error2.ValidationError, 0)}
-		if errors.As(err, &json.UnmarshalTypeError{}) {
+		if errors.Is(err, &json.UnmarshalTypeError{}) {
 			typeError := err.(*json.UnmarshalTypeError)
 			validationErrors.AddValidationError(error2.ValidationError{
 				Field: typeError.Field,

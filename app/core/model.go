@@ -29,3 +29,7 @@ type ILocalizedString interface {
 	Text(lang string) string
 	Map() map[string]string
 }
+
+type ProtectedFields interface {
+	GetProtectedFields() []string
+}

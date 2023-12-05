@@ -151,6 +151,11 @@ func (thiz *GorganyOrm[T]) Relation(relation string) core.IOrm[T] {
 	return thiz
 }
 
+func (thiz *GorganyOrm[T]) CountRelation(relation string) (int64, error) {
+	thiz.setBuilder()
+	return thiz.builder.CountRelation(relation)
+}
+
 func (thiz *GorganyOrm[T]) ReplaceRelation(relation string) error {
 	thiz.setBuilder()
 	return thiz.builder.ReplaceRelation(relation)
@@ -168,7 +173,7 @@ func (thiz *GorganyOrm[T]) ClearRelation(relation string) error {
 
 func (thiz *GorganyOrm[T]) AppendRelation(relation string, values ...any) error {
 	thiz.setBuilder()
-	return thiz.builder.AppendRelation(relation)
+	return thiz.builder.AppendRelation(relation, values...)
 }
 
 func (thiz *GorganyOrm[T]) LoadRelations(relations ...string) error {

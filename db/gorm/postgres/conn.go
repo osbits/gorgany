@@ -435,11 +435,18 @@ func (thiz *Builder) Association(association string) *gorm.Association {
 	return thiz.copyGorm.Association(association)
 }
 
-func (thiz *Builder) ReplaceRelation(relation string) error {
+func (thiz *Builder) CountRelation(relation string) (int64, error) {
+	if thiz.copyGorm == nil {
+		return 0, fmt.Errorf("You must specify model. Call postgres.Builder.FromModel(model any)")
+	}
+	return thiz.copyGorm.Association(relation).Count(), nil
+}
+
+func (thiz *Builder) ReplaceRelation(relation string, values ...any) error {
 	if thiz.copyGorm == nil {
 		return fmt.Errorf("You must specify model. Call postgres.Builder.FromModel(model any)")
 	}
-	return thiz.copyGorm.Association(relation).Replace()
+	return thiz.copyGorm.Association(relation).Replace(values...)
 }
 
 func (thiz *Builder) DeleteRelation(relation string) error {
@@ -460,7 +467,7 @@ func (thiz *Builder) AppendRelation(relation string, values ...any) error {
 	if thiz.copyGorm == nil {
 		return fmt.Errorf("You must specify model. Call postgres.Builder.FromModel(model any)")
 	}
-	return thiz.copyGorm.Association(relation).Append(values)
+	return thiz.copyGorm.Association(relation).Append(values...)
 }
 
 func (thiz *Builder) LoadRelations(relations ...string) error {

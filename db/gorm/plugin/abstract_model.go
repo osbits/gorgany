@@ -94,7 +94,28 @@ func (thiz ExtendedModelProcessor) AddModelTypeToWhere(db *gorm.DB) {
 		return
 	}
 
-	db.Where(fmt.Sprintf("%s = '%s'", StructModelColumn(), StructName(model)))
+	db.Where(fmt.Sprintf("%s = ?", StructModelColumn()), StructName(model))
+}
+
+func (thiz ExtendedModelProcessor) AddMainTypeInsteadOfExtension(db *gorm.DB) {
+	model := db.Statement.Model
+
+	rValue := util.IndirectValue(db.Statement.ReflectValue)
+	if rValue.Kind() == reflect.Slice {
+		model = reflect.MakeSlice(rValue.Type(), 1, 1).Index(0).Interface()
+	}
+
+	rType := util.IndirectType(reflect.TypeOf(model))
+	model = reflect.New(rType).Elem().Interface()
+
+	if !thiz.hasAbstractModel(model) {
+		return
+	}
+
+	for i := 0; i < rType.NumField(); i++ {
+		field := rType.Field(i)
+		fmt.Println(field)
+	}
 }
 
 func (thiz ExtendedModelProcessor) hasAbstractModel(model any) bool {
@@ -117,7 +138,7 @@ func (thiz ExtendedModelProcessor) hasAbstractModel(model any) bool {
 func (thiz ExtendedModelProcessor) value(value interface{}) string {
 	switch value.(type) {
 	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, bool:
-		return fmt.Sprintf("%v", value)
+		return fmt.Sprintf("'%v'", value)
 	default:
 		val := fmt.Sprintf("%v", value)
 		//escape single quotes: ' -> ''

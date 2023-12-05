@@ -53,6 +53,6 @@ const (
 )
 
 const (
-	GorganyFieldTag = "gorgany"
+	GorganyFieldTag = "grgorm"
 	ExtendsValue    = "extends"
 )
