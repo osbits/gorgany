@@ -2,7 +2,6 @@ package auth
 
 import (
 	"fmt"
-	"gorgany"
 	"gorgany/app/core"
 	"gorgany/db"
 	"gorgany/model"
@@ -19,7 +18,7 @@ type AccessFilterCondition struct {
 	Value string
 }
 
-func (thiz DynamicAccessService) ResolveFilterAccessCondition(domain any, user core.Authenticable, actionType gorgany.DynamicAccessActionType) (*AccessFilterCondition, bool) {
+func (thiz DynamicAccessService) ResolveFilterAccessCondition(domain any, user core.Authenticable, actionType core.DynamicAccessActionType) (*AccessFilterCondition, bool) {
 	var reflectedCurrentUserValue reflect.Value
 	reflectedDomainType := reflect.TypeOf(domain)
 
@@ -41,12 +40,12 @@ func (thiz DynamicAccessService) ResolveFilterAccessCondition(domain any, user c
 		if currentUserPropertyValue != dynamicAccess.UserPropertyValue {
 			continue
 		}
-		if dynamicAccess.Constraint == gorgany.Edit {
+		if dynamicAccess.Constraint == core.Edit {
 			if dynamicAccess.DomainProperty == "" {
 				return nil, true
 			}
 			return &AccessFilterCondition{Field: columnName, Value: dynamicAccess.DomainPropertyValue}, true
-		} else if dynamicAccess.Constraint == gorgany.Show {
+		} else if dynamicAccess.Constraint == core.Show {
 			if dynamicAccess.Constraint == actionType {
 				if dynamicAccess.DomainProperty == "" {
 					return nil, true
@@ -62,7 +61,7 @@ func (thiz DynamicAccessService) ResolveFilterAccessCondition(domain any, user c
 	return nil, false
 }
 
-func (thiz DynamicAccessService) IsAbleToAction(record any, user core.Authenticable, action gorgany.DynamicAccessActionType) bool {
+func (thiz DynamicAccessService) IsAbleToAction(record any, user core.Authenticable, action core.DynamicAccessActionType) bool {
 	var reflectedCurrentUserValue reflect.Value
 	reflectedDomainType := reflect.TypeOf(record).Elem()
 
@@ -119,7 +118,7 @@ func (thiz DynamicAccessService) ResolveAccessForRecord(record any, user core.Au
 	return false
 }
 
-func (thiz DynamicAccessService) ResolveActionsForRecord(record any, user core.Authenticable) []gorgany.DynamicAccessActionType {
+func (thiz DynamicAccessService) ResolveActionsForRecord(record any, user core.Authenticable) []core.DynamicAccessActionType {
 	var reflectedCurrentUserValue reflect.Value
 	reflectedDomainType := util.IndirectType(reflect.TypeOf(record))
 
@@ -131,7 +130,7 @@ func (thiz DynamicAccessService) ResolveActionsForRecord(record any, user core.A
 		reflectedCurrentUserValue = reflect.ValueOf(user)
 	}
 
-	accessLevels := make([]gorgany.DynamicAccessActionType, 0)
+	accessLevels := make([]core.DynamicAccessActionType, 0)
 	for _, dynamicAccess := range dynamicAccesses {
 		reflectedUserProperty := reflectedCurrentUserValue.Elem().FieldByName(dynamicAccess.UserProperty)
 		currentUserPropertyValue := fmt.Sprintf("%v", reflectedUserProperty.Interface())
@@ -147,24 +146,24 @@ func (thiz DynamicAccessService) ResolveActionsForRecord(record any, user core.A
 	}
 
 	if len(dynamicAccesses) == 0 {
-		return []gorgany.DynamicAccessActionType{gorgany.Show, gorgany.Edit, gorgany.Delete}
+		return []core.DynamicAccessActionType{core.Show, core.Edit, core.Delete}
 	}
 	if len(accessLevels) > 0 {
-		return util.UniqueSlice[gorgany.DynamicAccessActionType](accessLevels)
+		return util.UniqueSlice[core.DynamicAccessActionType](accessLevels)
 	}
-	return []gorgany.DynamicAccessActionType{}
+	return []core.DynamicAccessActionType{}
 }
 
-func (thiz DynamicAccessService) resolveAccessLevel(dynamicAccess *model.DynamicAccess) []gorgany.DynamicAccessActionType {
-	if dynamicAccess.Constraint == gorgany.Create {
-		return []gorgany.DynamicAccessActionType{gorgany.Create}
+func (thiz DynamicAccessService) resolveAccessLevel(dynamicAccess *model.DynamicAccess) []core.DynamicAccessActionType {
+	if dynamicAccess.Constraint == core.Create {
+		return []core.DynamicAccessActionType{core.Create}
 	}
-	if dynamicAccess.Constraint == gorgany.Delete {
-		return []gorgany.DynamicAccessActionType{gorgany.Show, gorgany.Edit, gorgany.Delete}
-	} else if dynamicAccess.Constraint == gorgany.Edit {
-		return []gorgany.DynamicAccessActionType{gorgany.Show, gorgany.Edit}
+	if dynamicAccess.Constraint == core.Delete {
+		return []core.DynamicAccessActionType{core.Show, core.Edit, core.Delete}
+	} else if dynamicAccess.Constraint == core.Edit {
+		return []core.DynamicAccessActionType{core.Show, core.Edit}
 	}
-	return []gorgany.DynamicAccessActionType{gorgany.Show}
+	return []core.DynamicAccessActionType{core.Show}
 }
 
 func (thiz DynamicAccessService) isAccessAllowed(record any, field string, value string) bool {

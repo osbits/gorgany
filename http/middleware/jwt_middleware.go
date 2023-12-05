@@ -38,6 +38,6 @@ func (thiz JwtMiddleware) Handle(message core.HttpMessage) bool {
 		}
 	}
 
-	message.ResponseJSON(dto.ReturnObject(nil, 403, nil), 200)
+	message.ResponseJSON(dto.ReturnObject(nil, core.ForbiddenHttpStatus, nil), 200)
 	return false
 }

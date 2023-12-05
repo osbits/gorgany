@@ -1,6 +1,8 @@
 package model
 
-import "gorgany"
+import (
+	"gorgany/app/core"
+)
 
 type DynamicAccess struct {
 	Id int
@@ -15,7 +17,7 @@ type DynamicAccess struct {
 
 	UserPropertyValue string `validate:"required"`
 
-	Constraint gorgany.DynamicAccessActionType `validate:"required"`
+	Constraint core.DynamicAccessActionType `validate:"required"`
 
 	//Fields []struct { //todo
 	//	Id              int

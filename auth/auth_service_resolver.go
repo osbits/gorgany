@@ -3,7 +3,6 @@ package auth
 import (
 	"context"
 	"fmt"
-	"gorgany"
 	"gorgany/app/core"
 )
 
@@ -15,8 +14,7 @@ func ResolveAuthService(ctx context.Context) (core.AuthService, error) {
 		return nil, fmt.Errorf("ctx is not core.IMessageContext instance")
 	}
 
-	ns := messageContext.GetPathParam("namespace")
-	if ns == string(gorgany.Api) {
+	if messageContext.GetHeader().Get("Content-Type") == core.ApplicationJson {
 		return NewJwtService(), nil
 	}
 	return GetSessionStorage(), nil

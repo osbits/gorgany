@@ -5,7 +5,6 @@ import (
 	"errors"
 	"github.com/go-chi/chi"
 	"github.com/gorilla/schema"
-	"gorgany"
 	"gorgany/app/core"
 	"gorgany/decoder/multipart"
 	error2 "gorgany/err"
@@ -86,9 +85,9 @@ type bodyParser interface {
 }
 
 func resolveBodyParser(contentType string, message *Message) bodyParser {
-	if contentType == gorgany.ApplicationJson {
+	if contentType == core.ApplicationJson {
 		return jsonParser{message: message}
-	} else if strings.Contains(contentType, gorgany.MultipartFormData) {
+	} else if strings.Contains(contentType, core.MultipartFormData) {
 		return multipartParser{message: message}
 	} else {
 		return formParser{message: message}

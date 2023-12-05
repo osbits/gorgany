@@ -7,6 +7,7 @@ import (
 	"gorgany/app/core"
 	error2 "gorgany/err"
 	"gorgany/internal"
+	"gorgany/service/dto"
 	"reflect"
 )
 
@@ -56,16 +57,21 @@ func Catch(err error, message core.HttpMessage) {
 func processDefaultError(err error, message core.HttpMessage) {
 	error2.PrintError(err)
 	if app.GetRunMode() == gorgany.Dev {
+		if message.GetHeader().Get("Content-Type") == core.ApplicationJson || message.IsApiNamespace() {
+			message.ResponseJSON(dto.ReturnObject(nil, core.InternalErrorHttpStatus, err.Error()), 200)
+			return
+		}
 		message.Response(fmt.Sprintf("Oops... 500 error.\n %v \n%s", err, error2.GetStacktrace()), 500)
-	} else {
-		message.Response("Oops... Internal error.", 500)
+		return
 	}
+
+	message.Response("Oops... Internal error.", 500)
 }
 
 func processValidationErrors(error error, message core.HttpMessage) {
 	concreteError := error.(*error2.ValidationErrors)
 	req := message.GetRequest()
-	if message.IsApiNamespace() {
+	if message.GetHeader().Get("Content-Type") == core.ApplicationJson || message.IsApiNamespace() {
 		message.ResponseJSON(error, 429)
 		return
 	}
@@ -85,5 +91,10 @@ func processBodyParsingError(error error, message core.HttpMessage) {
 }
 
 func processJwtAuthError(err error, message core.HttpMessage) {
-	message.ResponseJSON("", 401)
+	if message.GetHeader().Get("Content-Type") == core.ApplicationJson || message.IsApiNamespace() {
+		message.ResponseJSON(dto.ReturnObject(nil, core.NotAuthorizedHttpStatus, "Invalid JWT"), 401)
+		return
+	}
+	message.Response("", 401)
+	return
 }

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
-	"gorgany"
 	"gorgany/app/core"
 	"gorgany/auth"
 	"gorgany/log"
@@ -421,7 +420,7 @@ func (thiz Message) GetFiles(key string) ([]core.IFile, error) {
 
 func (thiz Message) IsApiNamespace() bool {
 	namespace := thiz.GetPathParam("namespace")
-	if namespace == string(gorgany.Api) {
+	if namespace == string(core.Api) {
 		return true
 	}
 	return false

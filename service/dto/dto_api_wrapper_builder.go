@@ -1,13 +1,13 @@
 package dto
 
 import (
-	"gorgany"
+	"gorgany/app/core"
 	"gorgany/model"
 	"gorgany/util"
 	"reflect"
 )
 
-func ReturnObject(payload any, status gorgany.HttpStatus, errors any) *model.ApiReturnObject { //todo status and errors
+func ReturnObject(payload any, status core.HttpStatus, errors any) *model.ApiReturnObject { //todo status and errors
 	dto := &model.ApiReturnObject{}
 	dto.Body = payload
 	dto.HttpStatus = status

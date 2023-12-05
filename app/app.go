@@ -67,7 +67,7 @@ func (s *app) ServerTimezone() *time.Location {
 }
 
 func (s *app) validate() error {
-	s.log("").Infof("Validation of the generated files is performed")
+	s.log("").Infof("ValidationHttpStatus of the generated files is performed")
 	lock, err := s.parseLock()
 	if err != nil {
 		return err
