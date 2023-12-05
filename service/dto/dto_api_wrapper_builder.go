@@ -4,42 +4,21 @@ import (
 	"gorgany"
 	"gorgany/model"
 	"gorgany/util"
+	"reflect"
 )
 
-func WrapPayload(payload any, status int, errors any) *model.ApiResponseWrapper { //todo status and errors
-	dto := &model.ApiResponseWrapper{}
+func ReturnObject(payload any, status gorgany.HttpStatus, errors any) *model.ApiReturnObject { //todo status and errors
+	dto := &model.ApiReturnObject{}
 	dto.Body = payload
-	dto.Status = status
+	dto.HttpStatus = status
 
 	if errors != nil {
-		dto.Errors = util.InterfaceSlice(errors)
-	}
-
-	switch dto.Status {
-	case 200:
-		dto.StatusCode = gorgany.Success
-		break
-	case 204:
-		dto.StatusCode = gorgany.Deleted
-		break
-	case 400:
-		dto.StatusCode = gorgany.BadRequest
-		break
-	case 401:
-		dto.StatusCode = gorgany.NotAuthorized
-		break
-	case 403:
-		dto.StatusCode = gorgany.Forbidden
-		break
-	case 404:
-		dto.StatusCode = gorgany.NotFound
-		break
-	case 422:
-		dto.StatusCode = gorgany.Validation
-		break
-	case 500:
-		dto.StatusCode = gorgany.InternalError
-		break
+		e := reflect.ValueOf(errors)
+		if e.Kind() != reflect.Slice {
+			dto.Errors = []any{errors}
+		} else {
+			dto.Errors = util.InterfaceSlice(errors)
+		}
 	}
 
 	return dto

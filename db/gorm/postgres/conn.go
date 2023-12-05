@@ -169,6 +169,14 @@ func (thiz *Builder) WhereOr(closure func(builder core.IQueryBuilder) core.IQuer
 	return thiz
 }
 
+func (thiz *Builder) Between(field string, firstValue, secondValue any) core.IQueryBuilder {
+	thiz.where.AddCondition(field, "BETWEEN", Between{
+		firstValue:  firstValue,
+		secondValue: secondValue,
+	})
+	return thiz
+}
+
 func (thiz *Builder) OrderBy(field string, direction string) core.IQueryBuilder {
 	thiz.order = append(thiz.order, field+" "+direction)
 	return thiz

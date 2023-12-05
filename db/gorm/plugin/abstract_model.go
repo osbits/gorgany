@@ -97,27 +97,6 @@ func (thiz ExtendedModelProcessor) AddModelTypeToWhere(db *gorm.DB) {
 	db.Where(fmt.Sprintf("%s = ?", StructModelColumn()), StructName(model))
 }
 
-func (thiz ExtendedModelProcessor) AddMainTypeInsteadOfExtension(db *gorm.DB) {
-	model := db.Statement.Model
-
-	rValue := util.IndirectValue(db.Statement.ReflectValue)
-	if rValue.Kind() == reflect.Slice {
-		model = reflect.MakeSlice(rValue.Type(), 1, 1).Index(0).Interface()
-	}
-
-	rType := util.IndirectType(reflect.TypeOf(model))
-	model = reflect.New(rType).Elem().Interface()
-
-	if !thiz.hasAbstractModel(model) {
-		return
-	}
-
-	for i := 0; i < rType.NumField(); i++ {
-		field := rType.Field(i)
-		fmt.Println(field)
-	}
-}
-
 func (thiz ExtendedModelProcessor) hasAbstractModel(model any) bool {
 	rModel := util.IndirectType(reflect.TypeOf(model))
 

@@ -89,6 +89,12 @@ func (thiz *GorganyOrm[T]) WhereOr(closure func(builder core.IQueryBuilder) core
 	return thiz
 }
 
+func (thiz *GorganyOrm[T]) Between(field string, firstValue any, secondValue any) core.IOrm[T] {
+	thiz.setBuilder()
+	thiz.builder.Between(field, firstValue, secondValue)
+	return thiz
+}
+
 func (thiz *GorganyOrm[T]) OrderBy(field string, direction string) core.IOrm[T] {
 	thiz.setBuilder()
 	thiz.builder.OrderBy(field, direction)

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"gorgany"
 	"gorgany/app/core"
 	"gorgany/auth"
 	"gorgany/http/middleware"
@@ -32,12 +33,12 @@ func (thiz LoginController) Login(message core.HttpMessage) {
 
 	user, err := auth.GetAuthEntityService().GetByUsername(loginPayload.Username)
 	if err != nil {
-		message.ResponseJSON(dto.WrapPayload("Unauthorized", 401, nil), 401)
+		message.ResponseJSON(dto.ReturnObject("Unauthorized", gorgany.NotAuthorized, nil), 401)
 		return
 	}
 
 	if user == nil || !util.CompareSaltedHash(user.GetPassword(), loginPayload.Password) {
-		message.ResponseJSON(dto.WrapPayload("Unauthorized", 401, nil), 401)
+		message.ResponseJSON(dto.ReturnObject("Unauthorized", gorgany.NotAuthorized, nil), 401)
 		return
 	}
 
@@ -50,7 +51,7 @@ func (thiz LoginController) Login(message core.HttpMessage) {
 	responseBodyMap := make(map[string]string)
 
 	responseBodyMap["access_token"] = token
-	message.ResponseJSON(dto.WrapPayload(responseBodyMap, 200, nil), 200)
+	message.ResponseJSON(dto.ReturnObject(responseBodyMap, gorgany.Success, nil), 200)
 }
 
 func (thiz LoginController) GetRoutes() []core.IRouteConfig {

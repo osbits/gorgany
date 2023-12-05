@@ -32,17 +32,20 @@ const (
 	Web               = "web"
 )
 
-type HttpStatusCode string
+type HttpStatus struct {
+	Status int
+	Code   string
+}
 
-const (
-	Success       HttpStatusCode = "SUCCESS"
-	Deleted                      = "DELETED"
-	BadRequest                   = "BAD_REQUEST"
-	NotAuthorized                = "NOT_AUTHORIZED"
-	Forbidden                    = "FORBIDDEN"
-	NotFound                     = "NOT_FOUND"
-	Validation                   = "VALIDATION"
-	InternalError                = "InternalError"
+var (
+	Success       HttpStatus = HttpStatus{Status: 200, Code: "SUCCESS"}
+	Deleted       HttpStatus = HttpStatus{Status: 204, Code: "DELETED"}
+	BadRequest    HttpStatus = HttpStatus{Status: 400, Code: "BAD_REQUEST"}
+	NotAuthorized HttpStatus = HttpStatus{Status: 401, Code: "NOT_AUTHORIZED"}
+	Forbidden     HttpStatus = HttpStatus{Status: 403, Code: "FORBIDDEN"}
+	NotFound      HttpStatus = HttpStatus{Status: 404, Code: "NOT_FOUND"}
+	Validation    HttpStatus = HttpStatus{Status: 429, Code: "VALIDATION"}
+	InternalError HttpStatus = HttpStatus{Status: 429, Code: "INTERNAL_ERROR"}
 )
 
 type ContentType string

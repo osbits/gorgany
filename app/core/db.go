@@ -31,6 +31,7 @@ type IQueryBuilder interface {
 	WhereNotIn(field string, values ...interface{}) IQueryBuilder
 	WhereAnd(closure func(builder IQueryBuilder) IQueryBuilder) IQueryBuilder
 	WhereOr(closure func(builder IQueryBuilder) IQueryBuilder) IQueryBuilder
+	Between(field string, firstValue any, secondValue any) IQueryBuilder
 	OrderBy(field string, direction string) IQueryBuilder
 	Limit(limit int) IQueryBuilder
 	Offset(offset int) IQueryBuilder
@@ -84,6 +85,7 @@ type IOrm[T any] interface {
 	WhereIn(field string, values ...interface{}) IOrm[T]
 	WhereAnd(closure func(builder IQueryBuilder) IQueryBuilder) IOrm[T]
 	WhereOr(closure func(builder IQueryBuilder) IQueryBuilder) IOrm[T]
+	Between(field string, firstValue any, secondValue any) IOrm[T]
 	OrderBy(field string, direction string) IOrm[T]
 	Relation(relation string) IOrm[T]
 	Limit(limit int) IOrm[T]

@@ -61,6 +61,10 @@ func (thiz WhereItem) prepareValue(value any) (string, []any) {
 		builder := value.(core.IQueryBuilder)
 		query, args := builder.ToQuery()
 		return fmt.Sprintf("%s %s (%s)", thiz.column, thiz.operator, query), args
+	case Between:
+		between := value.(Between)
+		query, args := between.ToQuery()
+		return fmt.Sprintf("%s %s %s", thiz.column, thiz.operator, query), args
 	default:
 		if strings.ToUpper(thiz.operator) == "IN" || strings.ToUpper(thiz.operator) == "ANY" {
 			if slice, ok := value.([]any); ok {
