@@ -97,5 +97,8 @@ func (thiz FieldBinder) isFieldAllowed(field string, model any) bool {
 		}
 	}
 
+	if len(thiz.Fields) == 1 && thiz.Fields[0] == "*" {
+		return true
+	}
 	return util.InArray(field, thiz.Fields)
 }
