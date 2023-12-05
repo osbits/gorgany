@@ -54,8 +54,8 @@ func (thiz *ValidationErrors) AddValidationError(validationError ValidationError
 }
 
 type ValidationError struct {
-	Field string
-	Err   string
+	Field string `json:"field"`
+	Err   string `json:"err"`
 }
 
 func (thiz ValidationError) Error() string {
