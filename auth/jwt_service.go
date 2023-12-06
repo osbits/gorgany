@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/spf13/viper"
 	"gorgany/app/core"
 	"os"
-	"strconv"
 	"time"
 )
 
@@ -21,16 +21,11 @@ func (thiz JwtService) GenerateJwt(user core.Authenticable) (string, error) {
 	token := jwt.New(jwt.SigningMethodHS256)
 	claims := token.Claims.(jwt.MapClaims)
 
-	jwtLifeTimeVar := os.Getenv("JWT_LIFE_TIME")
-	jwtLifeTime, err := strconv.Atoi(jwtLifeTimeVar)
-	if err != nil {
-		return "", err
-	}
-
+	jwtLifeTime := viper.GetInt("auth.jwt.lifeTime")
 	claims["exp"] = time.Now().Add(time.Duration(jwtLifeTime) * time.Second).Unix()
 	claims["user"] = user.GetUsername()
 
-	tokenString, err := token.SignedString([]byte(os.Getenv("JWT_SECRET_KEY")))
+	tokenString, err := token.SignedString([]byte(viper.GetString("auth.jwt.secret")))
 	if err != nil {
 		return "", err
 	}
