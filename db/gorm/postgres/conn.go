@@ -489,11 +489,11 @@ func (thiz *Builder) ReplaceRelation(relation string, values ...any) error {
 	return thiz.copyGorm.Association(relation).Replace(values...)
 }
 
-func (thiz *Builder) DeleteRelation(relation string) error {
+func (thiz *Builder) DeleteRelation(relation string, values ...any) error {
 	if thiz.copyGorm == nil {
 		return fmt.Errorf("You must specify model. Call postgres.Builder.FromModel(model any)")
 	}
-	return thiz.copyGorm.Association(relation).Delete()
+	return thiz.copyGorm.Association(relation).Delete(values...)
 }
 
 func (thiz *Builder) ClearRelation(relation string) error {

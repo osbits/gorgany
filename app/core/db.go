@@ -61,7 +61,7 @@ type IQueryBuilder interface {
 	GetConnection() IConnection
 	CountRelation(relation string) (int64, error)
 	ReplaceRelation(relation string, values ...any) error
-	DeleteRelation(relation string) error
+	DeleteRelation(relation string, values ...any) error
 	ClearRelation(relation string) error
 	AppendRelation(relation string, values ...any) error
 	LoadRelations(relation ...string) error
@@ -100,7 +100,7 @@ type IOrm[T any] interface {
 	Save() error
 	CountRelation(relation string) (int64, error)
 	ReplaceRelation(relation string) error
-	DeleteRelation(relation string) error
+	DeleteRelation(relation string, values ...any) error
 	ClearRelation(relation string) error
 	AppendRelation(relation string, values ...any) error
 	LoadRelations(relations ...string) error

@@ -179,9 +179,9 @@ func (thiz *GorganyOrm[T]) ReplaceRelation(relation string) error {
 	return thiz.builder.ReplaceRelation(relation)
 }
 
-func (thiz *GorganyOrm[T]) DeleteRelation(relation string) error {
+func (thiz *GorganyOrm[T]) DeleteRelation(relation string, values ...any) error {
 	thiz.setBuilder()
-	return thiz.builder.DeleteRelation(relation)
+	return thiz.builder.DeleteRelation(relation, values...)
 }
 
 func (thiz *GorganyOrm[T]) ClearRelation(relation string) error {
