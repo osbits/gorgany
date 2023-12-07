@@ -36,7 +36,7 @@ func (thiz SeedCommand) Execute() {
 		fmt.Printf("Executing %s seeder\n", seeder.Name())
 		seederCount := 0
 		for _, model := range seeder.CollectInsertModels() {
-			res := gormInstance.Create(model)
+			res := gormInstance.Save(model)
 			if res.Error != nil {
 				tx.Rollback()
 				panic(res.Error)

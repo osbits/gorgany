@@ -113,6 +113,18 @@ func (thiz *GorganyOrm[T]) Offset(offset int) core.IOrm[T] {
 	return thiz
 }
 
+func (thiz *GorganyOrm[T]) GroupBy(field string) core.IOrm[T] {
+	thiz.setBuilder()
+	thiz.builder.GroupBy(field)
+	return thiz
+}
+
+func (thiz *GorganyOrm[T]) Having(rawStatement string, operator string, value any) core.IOrm[T] {
+	thiz.setBuilder()
+	thiz.builder.Having(rawStatement, operator, value)
+	return thiz
+}
+
 func (thiz *GorganyOrm[T]) Get() (*T, error) {
 	thiz.setBuilder()
 	err := thiz.builder.Get(thiz.Model)

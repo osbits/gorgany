@@ -55,7 +55,7 @@ func (thiz *Join) ToQuery() (string, []any) {
 		for _, item := range items {
 			sql, args := item.PrepareForSQL()
 			joins = append(joins, sql)
-			allArgs = append(allArgs, args)
+			allArgs = append(allArgs, args...)
 		}
 		allJoins = append(allJoins, fmt.Sprintf("%s %s", joinType, strings.Join(joins, ", ")))
 	}

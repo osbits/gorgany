@@ -35,6 +35,8 @@ type IQueryBuilder interface {
 	OrderBy(field string, direction string) IQueryBuilder
 	Limit(limit int) IQueryBuilder
 	Offset(offset int) IQueryBuilder
+	GroupBy(field string) IQueryBuilder
+	Having(rawStatement string, operator string, value any) IQueryBuilder
 	BuildSelect() string
 	BuildJoin() (string, []any)
 	BuildWhere() (string, []any)
@@ -90,6 +92,8 @@ type IOrm[T any] interface {
 	Relation(relation string) IOrm[T]
 	Limit(limit int) IOrm[T]
 	Offset(offset int) IOrm[T]
+	GroupBy(field string) IOrm[T]
+	Having(rawStatement string, operator string, value any) IOrm[T]
 	Get() (*T, error)
 	Count() (int64, error)
 	List() ([]*T, error)
@@ -124,5 +128,10 @@ type IJoin interface {
 type IWhere interface {
 	AddCondition(column string, operator string, value any)
 	AddNestedCondition(connectorOperator string, nestedWhere IWhere)
+	ToQuery() (string, []any)
+}
+
+type IHaving interface {
+	AddItem(rawStatement string, operator string, value any)
 	ToQuery() (string, []any)
 }

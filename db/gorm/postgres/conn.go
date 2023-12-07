@@ -47,7 +47,10 @@ type Builder struct {
 	limit           *int
 	offset          *int
 	alias           string
-	copyGorm        *gorm.DB
+	groupBy         []string
+	having          core.IHaving
+
+	copyGorm *gorm.DB
 }
 
 func NewBuilder(gormInstance core.IConnection) *Builder {
@@ -57,6 +60,7 @@ func NewBuilder(gormInstance core.IConnection) *Builder {
 		from:         &From{},
 		join:         &Join{make(map[string][]JoinItems)},
 		where:        &Where{operator: "AND"},
+		having:       &Having{},
 	}
 }
 
@@ -67,6 +71,7 @@ func NewBuilderWithConfig(gormInstance core.IConnection, config Config) *Builder
 		from:         &From{},
 		join:         &Join{make(map[string][]JoinItems)},
 		where:        &Where{operator: "AND"},
+		having:       &Having{},
 	}
 }
 
@@ -97,7 +102,7 @@ func (thiz *Builder) FromModel(model any) core.IQueryBuilder {
 		if tabler, ok := model.(schema.Tabler); ok {
 			thiz.From(tabler.TableName())
 		} else {
-			thiz.From(namingStrategy.TableName(rtModel.Name()))
+			thiz.From(namingStrategy.TableName(util.IndirectType(rtModel).Name()))
 		}
 	}
 
@@ -192,6 +197,16 @@ func (thiz *Builder) Offset(offset int) core.IQueryBuilder {
 	return thiz
 }
 
+func (thiz *Builder) GroupBy(groupBy string) core.IQueryBuilder {
+	thiz.groupBy = append(thiz.groupBy, groupBy)
+	return thiz
+}
+
+func (thiz *Builder) Having(rawStatement string, operator string, value any) core.IQueryBuilder {
+	thiz.having.AddItem(rawStatement, operator, value)
+	return thiz
+}
+
 func (thiz *Builder) DeleteQuery() (string, []any) {
 	where, args := thiz.BuildWhere()
 	if viper.GetBool("databases.postgres_gorm.log") == true {
@@ -204,9 +219,11 @@ func (thiz *Builder) ToQuery() (string, []any) {
 	from, fromArgs := thiz.BuildFrom()
 	join, joinArgs := thiz.BuildJoin()
 	where, whereArgs := thiz.BuildWhere()
+	having, havingArgs := thiz.BuildHaving()
 	args := append(fromArgs, joinArgs...)
 	args = append(args, whereArgs...)
-	return fmt.Sprintf("SELECT %s FROM %s%s%s%s%s%s", thiz.BuildSelect(), from, join, where, thiz.BuildOrder(), thiz.BuildLimit(), thiz.BuildOffset()), args
+	args = append(args, havingArgs...)
+	return fmt.Sprintf("SELECT %s FROM %s%s%s%s%s%s%s%s", thiz.BuildSelect(), from, join, where, thiz.BuildOrder(), thiz.BuildLimit(), thiz.BuildOffset(), thiz.BuildGroupBy(), having), args
 }
 
 func (thiz *Builder) ToProcessedQuery() string {
@@ -266,6 +283,21 @@ func (thiz *Builder) BuildOffset() string {
 		return ""
 	}
 	return fmt.Sprintf(" OFFSET %d", *thiz.offset)
+}
+
+func (thiz *Builder) BuildGroupBy() string {
+	if len(thiz.groupBy) == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" GROUP BY ", strings.Join(thiz.groupBy, ","))
+}
+
+func (thiz *Builder) BuildHaving() (string, []any) {
+	if len(thiz.GetPostgresGORMHaving().havingItems) == 0 {
+		return "", nil
+	}
+	builtHaving, args := thiz.having.ToQuery()
+	return " HAVING " + builtHaving, args
 }
 
 func (thiz *Builder) Get(dest any) error {
@@ -521,6 +553,8 @@ func (thiz *Builder) clearQueryParams() {
 	thiz.limit = nil
 	thiz.order = make([]string, 0)
 	thiz.offset = nil
+	thiz.groupBy = make([]string, 0)
+	thiz.having = &Having{}
 	thiz.copyGorm = nil
 }
 
@@ -561,6 +595,10 @@ func (thiz *Builder) GetPostgresGORMJoin() *Join {
 
 func (thiz *Builder) GetPostgresGORMWhere() *Where {
 	return thiz.where.(*Where)
+}
+
+func (thiz *Builder) GetPostgresGORMHaving() *Having {
+	return thiz.having.(*Having)
 }
 
 func (thiz *Builder) value(value interface{}) string {
