@@ -70,3 +70,6 @@ const (
 	GorganyFieldTag = "grgorm"
 	ExtendsValue    = "extends"
 )
+
+var GlobalDateFormat = "2006-01-02"
+var GlobalDateTimeFormat = "2006-01-02 15:04:05"

@@ -1,6 +1,9 @@
 package model
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type Filter struct {
 	Field    string
@@ -14,7 +17,7 @@ func NewFilter(field string, operator string, value string) (*Filter, error) {
 		return nil, fmt.Errorf("Filter: Field is required")
 	}
 
-	if operator == "" || (operator != "=" && operator != "!=" && operator != "like" && operator != "not like") {
+	if operator == "" || (operator != "=" && operator != "!=" && operator != "like" && operator != "not like" && operator != "in" && operator != "not in") {
 		operator = "="
 	}
 
@@ -23,6 +26,14 @@ func NewFilter(field string, operator string, value string) (*Filter, error) {
 		Operator: operator,
 		Value:    value,
 	}, nil
+}
+
+func (thiz Filter) GetValue() any {
+	if thiz.Operator == "in" || thiz.Operator == "not in" {
+		values := strings.Split(thiz.Value, ",")
+		return values
+	}
+	return thiz.Value
 }
 
 type SortParam struct {
