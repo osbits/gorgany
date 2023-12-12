@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"git.qix.sx/gorgany/gorgany.git"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/command"
 	"git.qix.sx/gorgany/gorgany.git/config"
