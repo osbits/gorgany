@@ -2,12 +2,12 @@ package provider
 
 import (
 	"fmt"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/http"
+	"git.qix.sx/gorgany/gorgany.git/http/router"
+	"git.qix.sx/gorgany/gorgany.git/internal"
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
-	"gorgany/app/core"
-	"gorgany/http"
-	"gorgany/http/router"
-	"gorgany/internal"
 	http2 "net/http"
 	"reflect"
 	"strings"

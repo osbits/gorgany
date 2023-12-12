@@ -3,9 +3,9 @@ package event
 import (
 	"errors"
 	"fmt"
-	"gorgany/app/core"
-	"gorgany/internal"
-	"gorgany/service"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/internal"
+	"git.qix.sx/gorgany/gorgany.git/service"
 	"reflect"
 	"sync"
 )

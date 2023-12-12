@@ -2,10 +2,10 @@ package command
 
 import (
 	"flag"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/internal"
+	"git.qix.sx/gorgany/gorgany.git/log"
 	"github.com/go-playground/validator/v10"
-	"gorgany/app/core"
-	"gorgany/internal"
-	"gorgany/log"
 	"os"
 	"reflect"
 	"regexp"

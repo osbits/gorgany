@@ -2,8 +2,8 @@ package view
 
 import (
 	"fmt"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"github.com/eknkc/amber"
-	"gorgany/app/core"
 	template2 "html/template"
 	"io"
 	"path"

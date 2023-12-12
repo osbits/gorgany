@@ -1,8 +1,8 @@
 package postgres
 
 import (
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"github.com/stretchr/testify/assert"
-	"gorgany/app/core"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"

@@ -1,10 +1,10 @@
 package provider
 
 import (
-	"gorgany/app/core"
-	"gorgany/internal"
-	"gorgany/log"
-	"gorgany/view"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/internal"
+	"git.qix.sx/gorgany/gorgany.git/log"
+	"git.qix.sx/gorgany/gorgany.git/view"
 	"reflect"
 )
 

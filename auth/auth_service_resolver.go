@@ -3,7 +3,7 @@ package auth
 import (
 	"context"
 	"fmt"
-	"gorgany/app/core"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 )
 
 // ResolveAuthService

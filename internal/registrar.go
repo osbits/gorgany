@@ -1,7 +1,7 @@
 package internal
 
 import (
-	"gorgany/app/core"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 )
 
 var frameworkRegistrar core.IRegistrar

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"fmt"
-	"gorgany/app/core"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"mime/multipart"
 	"net/http"
 	"net/smtp"

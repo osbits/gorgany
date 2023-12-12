@@ -2,8 +2,8 @@ package model
 
 import (
 	"fmt"
-	"gorgany/app/core"
-	"gorgany/util"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/util"
 	"reflect"
 )
 

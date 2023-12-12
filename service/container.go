@@ -3,9 +3,9 @@ package service
 import (
 	"errors"
 	"fmt"
-	"gorgany/app/core"
-	"gorgany/internal"
-	"gorgany/util"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/internal"
+	"git.qix.sx/gorgany/gorgany.git/util"
 	"reflect"
 	"unsafe"
 )

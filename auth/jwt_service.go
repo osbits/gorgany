@@ -3,9 +3,9 @@ package auth
 import (
 	"context"
 	"fmt"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/spf13/viper"
-	"gorgany/app/core"
 	"os"
 	"time"
 )

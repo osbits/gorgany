@@ -2,11 +2,11 @@ package postgres
 
 import (
 	"fmt"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/db/orm"
+	"git.qix.sx/gorgany/gorgany.git/util"
+	"git.qix.sx/gorgany/gorgany.git/validator"
 	"github.com/spf13/viper"
-	"gorgany/app/core"
-	"gorgany/db/orm"
-	"gorgany/util"
-	"gorgany/validator"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 	"reflect"

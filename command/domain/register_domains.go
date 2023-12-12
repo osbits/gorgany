@@ -3,8 +3,8 @@ package domain
 import (
 	"bytes"
 	"fmt"
-	"gorgany/internal"
-	"gorgany/util"
+	"git.qix.sx/gorgany/gorgany.git/internal"
+	"git.qix.sx/gorgany/gorgany.git/util"
 	"os"
 	"path/filepath"
 	"runtime"

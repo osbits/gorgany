@@ -2,9 +2,9 @@ package plugin
 
 import (
 	"fmt"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/util"
 	"github.com/spf13/viper"
-	"gorgany/app/core"
-	"gorgany/util"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 	"reflect"

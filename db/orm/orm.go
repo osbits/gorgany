@@ -1,8 +1,8 @@
 package orm
 
 import (
-	"gorgany/app/core"
-	"gorgany/db"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/db"
 	"gorm.io/gorm"
 	"reflect"
 )

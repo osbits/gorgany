@@ -5,9 +5,9 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/internal"
 	"github.com/google/uuid"
-	"gorgany/app/core"
-	"gorgany/internal"
 	"time"
 )
 

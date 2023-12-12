@@ -2,8 +2,8 @@ package db
 
 import (
 	"fmt"
-	"gorgany/db"
-	"gorgany/internal"
+	"git.qix.sx/gorgany/gorgany.git/db"
+	"git.qix.sx/gorgany/gorgany.git/internal"
 	"gorm.io/gorm"
 	"time"
 )

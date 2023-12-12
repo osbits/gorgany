@@ -2,8 +2,8 @@ package validator
 
 import (
 	"encoding/json"
+	"git.qix.sx/gorgany/gorgany.git/model"
 	goValidator "github.com/go-playground/validator/v10"
-	"gorgany/model"
 	"mime"
 	"reflect"
 	"strconv"

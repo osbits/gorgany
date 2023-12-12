@@ -2,9 +2,9 @@ package http
 
 import (
 	"context"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/util"
 	"github.com/go-chi/chi"
-	"gorgany/app/core"
-	"gorgany/util"
 	"net/http"
 	"net/url"
 )

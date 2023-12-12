@@ -2,10 +2,10 @@ package auth
 
 import (
 	"fmt"
-	"gorgany/app/core"
-	"gorgany/db"
-	"gorgany/model"
-	"gorgany/util"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/db"
+	"git.qix.sx/gorgany/gorgany.git/model"
+	"git.qix.sx/gorgany/gorgany.git/util"
 	"gorm.io/gorm/schema"
 	"reflect"
 )

@@ -1,8 +1,8 @@
 package controller
 
 import (
-	"gorgany/app/core"
-	"gorgany/http/router"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/http/router"
 	"mime"
 	"os"
 	path2 "path"

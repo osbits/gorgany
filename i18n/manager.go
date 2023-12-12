@@ -1,8 +1,8 @@
 package i18n
 
 import (
-	"gorgany/app/core"
-	"gorgany/internal"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/internal"
 )
 
 func GetManager() core.Ii18nManager {

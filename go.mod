@@ -1,4 +1,4 @@
-module gorgany
+module git.qix.sx/gorgany/gorgany.git
 
 go 1.19
 

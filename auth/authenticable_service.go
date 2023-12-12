@@ -1,8 +1,8 @@
 package auth
 
 import (
-	"gorgany/app/core"
-	"gorgany/internal"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/internal"
 )
 
 func GetAuthEntityService() core.IUserService {

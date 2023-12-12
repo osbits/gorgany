@@ -1,10 +1,10 @@
 package middleware
 
 import (
-	"gorgany/app/core"
-	"gorgany/auth"
-	error2 "gorgany/err"
-	"gorgany/service/dto"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/auth"
+	error2 "git.qix.sx/gorgany/gorgany.git/err"
+	"git.qix.sx/gorgany/gorgany.git/service/dto"
 )
 
 type JwtMiddleware struct {

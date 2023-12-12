@@ -2,11 +2,11 @@ package http
 
 import (
 	"fmt"
-	"gorgany/app/core"
-	err2 "gorgany/err"
-	"gorgany/internal"
-	"gorgany/service"
-	"gorgany/util"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	err2 "git.qix.sx/gorgany/gorgany.git/err"
+	"git.qix.sx/gorgany/gorgany.git/internal"
+	"git.qix.sx/gorgany/gorgany.git/service"
+	"git.qix.sx/gorgany/gorgany.git/util"
 	"net/http"
 	"reflect"
 )

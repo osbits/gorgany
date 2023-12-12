@@ -1,10 +1,10 @@
 package provider
 
 import (
-	"gorgany/app/core"
-	"gorgany/err"
-	eventService "gorgany/event"
-	"gorgany/internal"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/err"
+	eventService "git.qix.sx/gorgany/gorgany.git/event"
+	"git.qix.sx/gorgany/gorgany.git/internal"
 )
 
 type EventProvider struct {

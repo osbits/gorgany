@@ -2,8 +2,8 @@ package router
 
 import (
 	"fmt"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"github.com/go-chi/chi"
-	"gorgany/app/core"
 	"net/http"
 	"regexp"
 	"strings"

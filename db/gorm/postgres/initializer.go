@@ -2,9 +2,9 @@ package postgres
 
 import (
 	"fmt"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/db/gorm/plugin"
 	"github.com/spf13/viper"
-	"gorgany/app/core"
-	"gorgany/db/gorm/plugin"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"

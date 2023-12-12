@@ -2,7 +2,6 @@ package command
 
 import (
 	"fmt"
-	"gorgany"
 )
 
 type VersionCommand struct {

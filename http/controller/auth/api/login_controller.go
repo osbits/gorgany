@@ -2,12 +2,12 @@ package api
 
 import (
 	"encoding/json"
-	"gorgany/app/core"
-	"gorgany/auth"
-	"gorgany/http/middleware"
-	"gorgany/http/router"
-	"gorgany/service/dto"
-	"gorgany/util"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/auth"
+	"git.qix.sx/gorgany/gorgany.git/http/middleware"
+	"git.qix.sx/gorgany/gorgany.git/http/router"
+	"git.qix.sx/gorgany/gorgany.git/service/dto"
+	"git.qix.sx/gorgany/gorgany.git/util"
 )
 
 func NewLoginController() *LoginController {

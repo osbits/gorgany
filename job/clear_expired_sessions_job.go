@@ -1,9 +1,9 @@
 package job
 
 import (
+	"git.qix.sx/gorgany/gorgany.git/auth"
+	"git.qix.sx/gorgany/gorgany.git/internal"
 	"github.com/jasonlvhit/gocron"
-	"gorgany/auth"
-	"gorgany/internal"
 )
 
 type ClearExpiredSessionsJob struct {

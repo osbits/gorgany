@@ -1,11 +1,11 @@
 package provider
 
 import (
-	"gorgany/app/core"
-	"gorgany/command"
-	"gorgany/command/db"
-	"gorgany/command/domain"
-	"gorgany/internal"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/command"
+	"git.qix.sx/gorgany/gorgany.git/command/db"
+	"git.qix.sx/gorgany/gorgany.git/command/domain"
+	"git.qix.sx/gorgany/gorgany.git/internal"
 )
 
 type CommandProvider struct{}

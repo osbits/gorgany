@@ -1,10 +1,10 @@
 package provider
 
 import (
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/i18n"
+	"git.qix.sx/gorgany/gorgany.git/internal"
 	"github.com/spf13/viper"
-	"gorgany/app/core"
-	"gorgany/i18n"
-	"gorgany/internal"
 )
 
 type I18nProvider struct{}

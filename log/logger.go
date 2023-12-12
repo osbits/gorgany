@@ -1,8 +1,8 @@
 package log
 
 import (
-	"gorgany/app/core"
-	"gorgany/internal"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/internal"
 )
 
 // Log returns the Logger instance that was registered with the specified key, you need to check if the Logger is not null

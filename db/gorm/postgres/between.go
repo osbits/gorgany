@@ -2,7 +2,7 @@ package postgres
 
 import (
 	"fmt"
-	"gorgany/app/core"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 )
 
 type Between struct {

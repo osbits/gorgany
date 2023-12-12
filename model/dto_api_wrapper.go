@@ -2,8 +2,8 @@ package model
 
 import (
 	"encoding/json"
-	"gorgany/app/core"
-	"gorgany/err"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/err"
 )
 
 type ApiReturnObject struct {

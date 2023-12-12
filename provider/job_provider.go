@@ -2,11 +2,11 @@ package provider
 
 import (
 	"fmt"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/err"
+	"git.qix.sx/gorgany/gorgany.git/log"
+	"git.qix.sx/gorgany/gorgany.git/util"
 	"github.com/jasonlvhit/gocron"
-	"gorgany/app/core"
-	"gorgany/err"
-	"gorgany/log"
-	"gorgany/util"
 	"reflect"
 )
 

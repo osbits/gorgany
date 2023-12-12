@@ -1,9 +1,9 @@
 package validator
 
 import (
+	error2 "git.qix.sx/gorgany/gorgany.git/err"
+	"git.qix.sx/gorgany/gorgany.git/model"
 	goValidator "github.com/go-playground/validator/v10"
-	error2 "gorgany/err"
-	"gorgany/model"
 )
 
 func New() *goValidator.Validate {

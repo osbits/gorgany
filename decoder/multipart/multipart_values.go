@@ -1,8 +1,8 @@
 package multipart
 
 import (
+	"git.qix.sx/gorgany/gorgany.git/model"
 	"github.com/gorilla/schema"
-	"gorgany/model"
 	"reflect"
 	"strings"
 	"time"

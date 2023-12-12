@@ -2,11 +2,11 @@ package provider
 
 import (
 	"fmt"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	postgres2 "git.qix.sx/gorgany/gorgany.git/db/gorm/postgres"
+	"git.qix.sx/gorgany/gorgany.git/internal"
+	"git.qix.sx/gorgany/gorgany.git/log"
 	"github.com/spf13/viper"
-	"gorgany/app/core"
-	postgres2 "gorgany/db/gorm/postgres"
-	"gorgany/internal"
-	"gorgany/log"
 )
 
 type DbProvider struct {

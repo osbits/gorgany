@@ -1,9 +1,9 @@
 package middleware
 
 import (
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
-	"gorgany/app/core"
 )
 
 type LangMiddleware struct {

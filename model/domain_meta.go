@@ -1,6 +1,6 @@
 package model
 
-import "gorgany/app/core"
+import "git.qix.sx/gorgany/gorgany.git/app/core"
 
 type DomainMeta struct {
 	Loaded   bool
