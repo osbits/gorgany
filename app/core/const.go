@@ -67,8 +67,9 @@ const (
 )
 
 const (
-	GorganyFieldTag = "grgorm"
-	ExtendsValue    = "extends"
+	GorganyFieldTag         = "grgorm"
+	ExtendsValue            = "extends"
+	GeneratedDomainTagValue = "generated"
 )
 
 var GlobalDateFormat = "2006-01-02"

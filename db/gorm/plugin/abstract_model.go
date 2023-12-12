@@ -9,6 +9,7 @@ import (
 	"gorm.io/gorm/schema"
 	"reflect"
 	"strings"
+	"unsafe"
 )
 
 const StructDefaultColumn = "model_struct"
@@ -38,28 +39,44 @@ type ExtendedModelProcessor struct {
 }
 
 func (thiz ExtendedModelProcessor) AddModelTypeAfterInsert(db *gorm.DB) {
-	model := db.Statement.Model
-	rValue := util.IndirectValue(db.Statement.ReflectValue)
+	rValue := db.Statement.ReflectValue
+	values := make([]any, 0)
+
 	if rValue.Kind() == reflect.Slice {
-		model = reflect.MakeSlice(rValue.Type(), 1, 1).Index(0).Interface()
+		for i := 0; i < rValue.Len(); i++ {
+			elem := rValue.Index(i)
+			if elem.Kind() == reflect.Ptr {
+				elem = elem.Elem()
+			}
+
+			elem = reflect.NewAt(elem.Type(), unsafe.Pointer(elem.UnsafeAddr()))
+			values = append(values, elem.Interface().(any))
+		}
+	} else {
+		rValue := reflect.NewAt(rValue.Type(), unsafe.Pointer(rValue.UnsafeAddr()))
+		values = append(values, rValue.Interface().(any))
 	}
 
-	rType := util.IndirectType(reflect.TypeOf(model))
-	model = reflect.New(rType).Elem().Interface()
+	for _, value := range values {
+		rType := util.IndirectType(reflect.TypeOf(value))
+		model := reflect.New(rType).Elem().Interface()
 
-	abstractModels := thiz.abstractModels(model)
-	if len(abstractModels) == 0 {
-		return
-	}
+		parentStruct := thiz.findParentStruct(rType)
+		if parentStruct == nil {
+			return
+		}
 
-	for _, abstractModel := range abstractModels {
-		rModelValue := reflect.ValueOf(abstractModel)
-		tableName := thiz.namingStrategyService.TableName(rModelValue.Type().Name())
+		tableName := ""
+		if tabler, ok := (value).(schema.Tabler); ok {
+			tableName = (tabler).TableName()
+		} else {
+			tableName = thiz.namingStrategyService.TableName(rType.Name())
+		}
 		primaryFields := db.Model(model).Statement.Schema.PrimaryFields
 
 		conds := make([]string, 0)
 		for _, primaryField := range primaryFields {
-			field := rModelValue.FieldByName(primaryField.Name)
+			field := rValue.FieldByName(primaryField.Name)
 			conds = append(conds,
 				fmt.Sprintf("%s = %s",
 					thiz.namingStrategyService.ColumnName(tableName, primaryField.Name), thiz.value(field.Interface()),
@@ -100,18 +117,11 @@ func (thiz ExtendedModelProcessor) AddModelTypeToWhere(db *gorm.DB) {
 func (thiz ExtendedModelProcessor) hasAbstractModel(model any) bool {
 	rModel := util.IndirectType(reflect.TypeOf(model))
 
-	hasAbstractModel := false
-	for i := 0; i < rModel.NumField(); i++ {
-		field := rModel.Field(i)
-		gorganyTag, ok := field.Tag.Lookup(core.GorganyFieldTag)
-		if field.Anonymous && field.Type.Kind() == reflect.Struct && ok {
-			_, found := util.FindValueInTagValues(core.ExtendsValue, gorganyTag, ",")
-			if found {
-				hasAbstractModel = true
-			}
-		}
+	if thiz.findParentStruct(rModel) == nil {
+		return false
 	}
-	return hasAbstractModel
+
+	return true
 }
 
 func (thiz ExtendedModelProcessor) value(value interface{}) string {
@@ -126,29 +136,27 @@ func (thiz ExtendedModelProcessor) value(value interface{}) string {
 	}
 }
 
-func (thiz ExtendedModelProcessor) abstractModels(model any) []any {
-	rType := util.IndirectType(reflect.TypeOf(model))
-
-	abstractFieldNames := make([]string, 0)
-	for i := 0; i < rType.NumField(); i++ {
-		rField := rType.Field(i)
+func (thiz ExtendedModelProcessor) findParentStruct(rModel reflect.Type) any {
+	for i := 0; i < rModel.NumField(); i++ {
+		rField := rModel.Field(i)
 
 		gorganyTag, ok := rField.Tag.Lookup(core.GorganyFieldTag)
-		if rField.Anonymous && rField.Type.Kind() == reflect.Struct && ok {
-			_, found := util.FindValueInTagValues(core.ExtendsValue, gorganyTag, ",")
-			if found {
-				abstractFieldNames = append(abstractFieldNames, rField.Name)
-			}
+		if !rField.Anonymous && rField.Type.Kind() != reflect.Struct && !ok {
+			continue
+		}
+
+		_, generatedDomainTag := util.FindValueInTagValues(core.GeneratedDomainTagValue, gorganyTag, ",")
+		if generatedDomainTag {
+			return thiz.findParentStruct(rField.Type)
+		}
+
+		_, found := util.FindValueInTagValues(core.ExtendsValue, gorganyTag, ",")
+		if found {
+			indirectRModel := util.IndirectType(rField.Type)
+			rvModel := reflect.New(indirectRModel)
+			return rvModel.Interface()
 		}
 	}
 
-	abstractModels := make([]any, 0)
-	rValue := util.IndirectValue(reflect.ValueOf(model))
-
-	for _, fieldName := range abstractFieldNames {
-		field := rValue.FieldByName(fieldName)
-		abstractModels = append(abstractModels, field.Interface())
-	}
-
-	return abstractModels
+	return nil
 }

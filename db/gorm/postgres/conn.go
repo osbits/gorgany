@@ -320,8 +320,9 @@ func (thiz *Builder) Get(dest any) error {
 		thiz.Relation(key)
 	}
 
-	query, args := thiz.ToQuery()
-	res := thiz.GetDriver().Raw(query, args...).First(dest)
+	thiz.buildGormQuery()
+	res := thiz.GetDriver().Find(dest)
+
 	thiz.AddMetaToModel(dest, res.Statement)
 
 	thiz.clearQueryParams()
@@ -363,8 +364,8 @@ func (thiz *Builder) List(dest any) error {
 		thiz.Relation(key)
 	}
 
-	query, args := thiz.ToQuery()
-	res := thiz.GetDriver().Raw(query, args...).Find(dest)
+	thiz.buildGormQuery()
+	res := thiz.GetDriver().Find(dest)
 	thiz.clearQueryParams()
 
 	for _, d := range util.GetSliceFromAny(dest) {
@@ -641,4 +642,34 @@ func (thiz *Builder) walkNestedRelations(relations map[string]*schema.Relationsh
 	}
 
 	return keys
+}
+
+func (thiz *Builder) buildGormQuery() {
+	if thiz.BuildSelect() != "*" {
+		thiz.GetDriver().Select(thiz.BuildSelect())
+	}
+	if len(thiz.GetPostgresGORMJoin().joinItems) > 0 {
+		builtJoin, args := thiz.join.ToQuery()
+		thiz.GetDriver().Joins(builtJoin, args...)
+	}
+	if len(thiz.GetPostgresGORMWhere().whereItems) > 0 {
+		builtWhere, args := thiz.where.ToQuery()
+		thiz.GetDriver().Where(builtWhere, args...)
+	}
+	if len(thiz.GetPostgresGORMHaving().havingItems) > 0 {
+		builtHaving, args := thiz.having.ToQuery()
+		thiz.GetDriver().Having(builtHaving, args...)
+	}
+	for _, groupBy := range thiz.groupBy {
+		thiz.GetDriver().Group(groupBy)
+	}
+	if thiz.limit != nil {
+		thiz.GetDriver().Limit(*thiz.limit)
+	}
+	if thiz.offset != nil {
+		thiz.GetDriver().Offset(*thiz.offset)
+	}
+	for _, order := range thiz.order {
+		thiz.GetDriver().Order(order)
+	}
 }

@@ -24,7 +24,10 @@ func HandleError(err any) {
 	if err == nil {
 		return
 	}
-	log.Log("").Error("\u001B[0;31mRuntime error: \u001B[0m")
+	_, file, line, _ := runtime.Caller(1)
+	//pc, file, line, _ := runtime.Caller(1)
+	//funcName := runtime.FuncForPC(pc).Name()
+	log.Log("").Errorf("\u001B[0;31mRuntime error in %s, line: %d: \u001B[0m", file, line)
 	log.Log("").Error(err)
 }
 

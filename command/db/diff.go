@@ -18,6 +18,7 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"text/template"
 	"time"
 )
@@ -25,6 +26,8 @@ import (
 const MigrationDir = "db/migration"
 
 type DiffCommand struct {
+	modelStructAlreadyAdded map[string]bool
+	pivotTables             map[string]bool
 }
 
 func (thiz DiffCommand) GetName() string {
@@ -32,6 +35,9 @@ func (thiz DiffCommand) GetName() string {
 }
 
 func (thiz DiffCommand) Execute() {
+	thiz.modelStructAlreadyAdded = make(map[string]bool)
+	thiz.pivotTables = make(map[string]bool)
+
 	gormDb := db.Builder().GetConnection().Driver().(*gorm.DB)
 	tx := gormDb.Begin()
 	defer tx.Rollback()
@@ -67,20 +73,19 @@ func (thiz DiffCommand) Execute() {
 		}
 	}
 
-	models := make([]any, 0)
-
 	for _, model := range modelsMap {
-		models = append(models, model)
+		err := thiz.migrateModel(model, tx)
+		if err != nil {
+			rType := reflect.TypeOf(model)
+			fmt.Printf("Domain: %s, error: %v", rType.Name(), err)
+			return
+		}
 	}
 
-	if err := tx.AutoMigrate(models...); err != nil {
-		fmt.Println(err)
-		return
-	}
-
-	for _, model := range models {
+	migrator := tx.Migrator()
+	for _, model := range modelsMap {
 		rType := reflect.TypeOf(model)
-		err := migrateModelConstraints(rType, &statements, tx.Migrator())
+		err := thiz.migrateModelConstraints(rType, &statements, migrator)
 		if err != nil {
 			fmt.Printf("Domain: %s, error: %v", rType.Name(), err)
 			return
@@ -90,11 +95,84 @@ func (thiz DiffCommand) Execute() {
 	thiz.generateMigration(statements)
 }
 
-func migrateModelConstraints(rModel reflect.Type, statements *[]string, migrator gorm.Migrator) error {
+func (thiz DiffCommand) migrateModel(model any, tx *gorm.DB) error {
+	migrator := tx.Migrator()
+
+	rModel := util.IndirectType(reflect.TypeOf(model))
+
+	if migrator.HasTable(model) {
+		for i := 0; i < rModel.NumField(); i++ {
+			field := rModel.Field(i)
+
+			if field.Anonymous && field.Type.Kind() == reflect.Struct && orm.IsParamInTagExists(field.Tag, core.GeneratedDomainTagValue) {
+				indirectRModel := util.IndirectType(field.Type)
+				rvModel := reflect.New(indirectRModel)
+				generatedModel := rvModel.Interface()
+
+				err := thiz.migrateModel(generatedModel, tx)
+				if err != nil {
+					return err
+				}
+
+				continue
+			}
+
+			if field.Anonymous || util.IndirectType(field.Type).Kind() == reflect.Struct ||
+				util.IndirectType(field.Type).Kind() == reflect.Slice || migrator.HasColumn(model, field.Name) {
+				continue
+			}
+
+			err := migrator.AddColumn(model, field.Name)
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		err := migrator.CreateTable(model)
+		if err != nil {
+			return err
+		}
+	}
+
+	return thiz.migratePivatTable(model, tx)
+}
+
+func (thiz DiffCommand) migratePivatTable(model any, tx *gorm.DB) error {
+	namer := schema.NamingStrategy{}
+	parseScheme, _ := schema.Parse(model, &sync.Map{}, namer)
+	many2manies := parseScheme.Relationships.Many2Many
+
+	for _, relation := range many2manies {
+		if _, ok := thiz.pivotTables[relation.JoinTable.Table]; ok {
+			continue
+		}
+
+		indirectRModel := util.IndirectType(relation.Field.FieldType)
+		rvModel := reflect.New(indirectRModel)
+		relationModel := rvModel.Interface()
+
+		err := tx.Table(relation.JoinTable.Table).AutoMigrate(model, relationModel)
+		if err != nil {
+			return err
+		}
+		thiz.pivotTables[relation.JoinTable.Table] = true
+	}
+	return nil
+}
+
+func (thiz DiffCommand) migrateModelConstraints(rModel reflect.Type, statements *[]string, migrator gorm.Migrator) error {
 	namingStrategyService := schema.NamingStrategy{}
 	alreadyExtends := false
 	for i := 0; i < rModel.NumField(); i++ {
 		rField := rModel.Field(i)
+
+		if rField.Anonymous && rField.Type.Kind() == reflect.Struct && orm.IsParamInTagExists(rField.Tag, core.GeneratedDomainTagValue) {
+			err := thiz.migrateModelConstraints(rField.Type, statements, migrator)
+			if err != nil {
+				return err
+			}
+			continue
+		}
 
 		if rField.Anonymous && rField.Type.Kind() == reflect.Struct && orm.IsParamInTagExists(rField.Tag, core.GorganyORMExtends) {
 			if alreadyExtends {
@@ -102,13 +180,20 @@ func migrateModelConstraints(rModel reflect.Type, statements *[]string, migrator
 			}
 
 			tableName := namingStrategyService.TableName(rField.Type.Name())
-			if !isColumnExists(tableName, plugin.StructModelColumn()) {
+
+			if _, ok := thiz.modelStructAlreadyAdded[tableName]; ok {
+				continue
+			}
+
+			if !thiz.isColumnExists(tableName, plugin.StructModelColumn()) {
 				*statements = append(*statements, fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s varchar(255)", tableName, plugin.StructDefaultColumn))
 			}
 
 			alreadyExtends = true
 
-			err := migrateModelConstraints(rField.Type, statements, migrator)
+			thiz.modelStructAlreadyAdded[tableName] = true
+
+			err := thiz.migrateModelConstraints(rField.Type, statements, migrator)
 			if err != nil {
 				return err
 			}
@@ -125,13 +210,14 @@ func migrateModelConstraints(rModel reflect.Type, statements *[]string, migrator
 		}
 
 		if err := migrator.CreateConstraint(model, rField.Name); err != nil {
-			return err
+			panic(err)
 		}
+
 	}
 	return nil
 }
 
-func isColumnExists(tableName string, columnName string) bool {
+func (thiz DiffCommand) isColumnExists(tableName string, columnName string) bool {
 	var count int64
 	err := db.Builder().Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", &count, tableName, columnName)
 	if err != nil {

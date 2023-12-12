@@ -30,3 +30,13 @@ type IUserService interface {
 type AuthService interface {
 	CurrentUser(ctx context.Context) (Authenticable, error)
 }
+
+type Policy[T any] interface {
+	AddFilter(ctx context.Context, builder IOrm[T]) (bool, IOrm[T])
+	AddFilterForBuilder(ctx context.Context, builder IQueryBuilder) (bool, IQueryBuilder)
+	Create(ctx context.Context) bool
+	ShowAny(ctx context.Context) bool
+	Show(ctx context.Context, model any) bool
+	Update(ctx context.Context, model any) bool
+	Delete(ctx context.Context, model any) bool
+}
