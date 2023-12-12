@@ -1,6 +1,6 @@
 package gorgany
 
-const FrameworkVersion = "1.0.1"
+const FrameworkVersion = "1.0.2"
 
 type ExecType string
 
