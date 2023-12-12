@@ -2,6 +2,7 @@ package command
 
 import (
 	"fmt"
+	"git.qix.sx/gorgany/gorgany.git"
 )
 
 type VersionCommand struct {
