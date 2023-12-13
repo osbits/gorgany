@@ -12,6 +12,12 @@ type IDomainMeta interface {
 	SetDriver(driver DbType)
 	SetOriginal(original any)
 	SetDomain(domain any)
+
+	GetLoaded() bool
+	GetTable() string
+	GetDriver() DbType
+	GetOriginal() any
+	GetDomain() any
 }
 
 type IFile interface {

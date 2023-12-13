@@ -55,7 +55,7 @@ var (
 	NotAuthorizedHttpStatus HttpStatus = HttpStatus{Status: 401, Code: "NOT_AUTHORIZED"}
 	ForbiddenHttpStatus     HttpStatus = HttpStatus{Status: 403, Code: "FORBIDDEN"}
 	NotFoundHttpStatus      HttpStatus = HttpStatus{Status: 404, Code: "NOT_FOUND"}
-	ValidationHttpStatus    HttpStatus = HttpStatus{Status: 429, Code: "VALIDATION"}
+	ValidationHttpStatus    HttpStatus = HttpStatus{Status: 422, Code: "VALIDATION"}
 	InternalErrorHttpStatus HttpStatus = HttpStatus{Status: 500, Code: "INTERNAL_ERROR"}
 )
 

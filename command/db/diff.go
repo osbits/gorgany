@@ -26,6 +26,8 @@ import (
 
 const MigrationDir = "db/migration"
 
+var AllowedTypesToMigrate = []string{"gorm.io/gorm.DeletedAt"}
+
 type DiffCommand struct {
 	modelStructAlreadyAdded map[string]bool
 	pivotTables             map[string]bool
@@ -118,8 +120,12 @@ func (thiz DiffCommand) migrateModel(model any, tx *gorm.DB) error {
 				continue
 			}
 
-			if field.Anonymous || util.IndirectType(field.Type).Kind() == reflect.Struct ||
-				util.IndirectType(field.Type).Kind() == reflect.Slice || migrator.HasColumn(model, field.Name) {
+			if (field.Anonymous || util.IndirectType(field.Type).Kind() == reflect.Struct ||
+				util.IndirectType(field.Type).Kind() == reflect.Slice) && !util.InArray(field.Type.PkgPath()+"."+field.Type.Name(), AllowedTypesToMigrate) {
+				continue
+			}
+
+			if migrator.HasColumn(model, field.Name) {
 				continue
 			}
 

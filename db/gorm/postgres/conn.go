@@ -320,23 +320,25 @@ func (thiz *Builder) Get(dest any) error {
 		thiz.Relation(key)
 	}
 
-	thiz.buildGormQuery()
-	res := thiz.GetDriver().Find(dest)
+	res := thiz.buildGormQuery(thiz.GetDriver()).First(dest)
 
 	thiz.AddMetaToModel(dest, res.Statement)
 
 	thiz.clearQueryParams()
 
 	if res.Error != nil && res.Error.Error() == "record not found" {
+		domainMetaInstance, ok := dest.(core.IDomainMeta)
+		if ok {
+			domainMetaInstance.SetLoaded(false)
+		}
+
 		return nil
 	}
 	return res.Error
 }
 
 func (thiz *Builder) Count(dest *int64) error {
-	thiz.Select("count(*)")
-	query, args := thiz.ToQuery()
-	res := thiz.GetDriver().Raw(query, args...).Scan(dest)
+	res := thiz.buildGormQuery(thiz.GetDriver()).Count(dest)
 	thiz.clearQueryParams()
 	return res.Error
 }
@@ -364,8 +366,7 @@ func (thiz *Builder) List(dest any) error {
 		thiz.Relation(key)
 	}
 
-	thiz.buildGormQuery()
-	res := thiz.GetDriver().Find(dest)
+	res := thiz.buildGormQuery(thiz.GetDriver()).Find(dest)
 	thiz.clearQueryParams()
 
 	for _, d := range util.GetSliceFromAny(dest) {
@@ -644,32 +645,37 @@ func (thiz *Builder) walkNestedRelations(relations map[string]*schema.Relationsh
 	return keys
 }
 
-func (thiz *Builder) buildGormQuery() {
+func (thiz *Builder) buildGormQuery(gormInstance *gorm.DB) *gorm.DB {
 	if thiz.BuildSelect() != "*" {
-		thiz.GetDriver().Select(thiz.BuildSelect())
+		gormInstance = gormInstance.Select(thiz.BuildSelect())
+	}
+	if len(thiz.GetPostgresGORMFrom().fromItems) > 0 {
+		buildFrom, args := thiz.from.ToQuery()
+		gormInstance = gormInstance.Table(buildFrom, args...)
 	}
 	if len(thiz.GetPostgresGORMJoin().joinItems) > 0 {
 		builtJoin, args := thiz.join.ToQuery()
-		thiz.GetDriver().Joins(builtJoin, args...)
+		gormInstance = gormInstance.Joins(builtJoin, args...)
 	}
 	if len(thiz.GetPostgresGORMWhere().whereItems) > 0 {
 		builtWhere, args := thiz.where.ToQuery()
-		thiz.GetDriver().Where(builtWhere, args...)
+		gormInstance = gormInstance.Where(builtWhere, args...)
 	}
 	if len(thiz.GetPostgresGORMHaving().havingItems) > 0 {
 		builtHaving, args := thiz.having.ToQuery()
-		thiz.GetDriver().Having(builtHaving, args...)
+		gormInstance = gormInstance.Having(builtHaving, args...)
 	}
 	for _, groupBy := range thiz.groupBy {
-		thiz.GetDriver().Group(groupBy)
+		gormInstance = gormInstance.Group(groupBy)
 	}
 	if thiz.limit != nil {
-		thiz.GetDriver().Limit(*thiz.limit)
+		gormInstance = gormInstance.Limit(*thiz.limit)
 	}
 	if thiz.offset != nil {
-		thiz.GetDriver().Offset(*thiz.offset)
+		gormInstance = gormInstance.Offset(*thiz.offset)
 	}
 	for _, order := range thiz.order {
-		thiz.GetDriver().Order(order)
+		gormInstance = gormInstance.Order(order)
 	}
+	return gormInstance
 }

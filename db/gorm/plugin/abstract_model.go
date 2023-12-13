@@ -137,6 +137,10 @@ func (thiz ExtendedModelProcessor) value(value interface{}) string {
 }
 
 func (thiz ExtendedModelProcessor) findParentStruct(rModel reflect.Type) any {
+	if rModel.Kind() != reflect.Struct {
+		return nil
+	}
+
 	for i := 0; i < rModel.NumField(); i++ {
 		rField := rModel.Field(i)
 

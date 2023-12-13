@@ -20,6 +20,11 @@ func New() *goValidator.Validate {
 		panic(err)
 	}
 
+	err = v.RegisterValidation("unique", validateUnique)
+	if err != nil {
+		panic(err)
+	}
+
 	v.RegisterCustomTypeFunc(validateLocalizedString, model.LocalizedString{})
 	err = v.RegisterValidation("lsCompletelyRequired", validateRequiredLocalizedString) //all langs in LocalizedString must not be empty
 	if err != nil {

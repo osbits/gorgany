@@ -72,7 +72,7 @@ func processValidationErrors(error error, message core.HttpMessage) {
 	concreteError := error.(*error2.ValidationErrors)
 	req := message.GetRequest()
 	if message.GetHeader().Get("Content-Type") == core.ApplicationJson || message.IsApiNamespace() {
-		message.ResponseJSON(error, 429)
+		message.ResponseJSON(dto.ReturnObject(nil, core.ValidationHttpStatus, error), 200)
 		return
 	}
 	message.RedirectWithParams(req.Referer(), 301, map[string]any{"validation": concreteError.Errors})

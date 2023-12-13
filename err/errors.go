@@ -41,7 +41,7 @@ func HandleErrorWithStacktrace(err any) {
 
 // Validation
 type ValidationErrors struct {
-	Errors []ValidationError
+	Errors []ValidationError `json:"validation"`
 }
 
 func (thiz *ValidationErrors) Error() string {
