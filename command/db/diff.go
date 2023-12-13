@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"git.qix.sx/gorgany/gorgany.git"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/db"
 	"git.qix.sx/gorgany/gorgany.git/db/gorm/plugin"
@@ -257,7 +258,7 @@ func (thiz DiffCommand) generateMigration(statements []string) {
 	structName := "Migration" + now.Format("20060102150405")
 	fileName := now.Format("20060102150405") + "_migration.go"
 
-	err = tpl.Execute(writer, map[string]any{"Name": name, "StructName": structName, "Statements": ddls})
+	err = tpl.Execute(writer, map[string]any{"Name": name, "StructName": structName, "Statements": ddls, "FrameworkModuleName": gorgany.FrameworkGit})
 	if err != nil {
 		panic(err)
 	}
