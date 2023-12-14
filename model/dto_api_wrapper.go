@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/err"
+	"git.qix.sx/gorgany/gorgany.git/util"
+	"reflect"
+	"strings"
 )
 
 type ApiReturnObject struct {
@@ -22,7 +25,25 @@ func (thiz *ApiReturnObject) MarshalJSON() ([]byte, error) {
 
 	tmpStruct.Status = thiz.HttpStatus.Status
 	tmpStruct.Code = thiz.HttpStatus.Code
-	tmpStruct.Body = thiz.Body
+
+	var body any
+	var err error
+
+	rvBody := util.IndirectValue(reflect.ValueOf(thiz.Body))
+	if rvBody.Kind() == reflect.Slice {
+		body, err = thiz.buildBodySlice(rvBody)
+	} else if rvBody.Kind() == reflect.Struct {
+		body, err = thiz.buildBodyElement(rvBody)
+	} else {
+		body = thiz.Body
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	tmpStruct.Body = body
+
 	tmpStruct.Errors = thiz.Errors
 
 	return json.Marshal(tmpStruct)
@@ -50,4 +71,94 @@ func (thiz *ApiReturnObject) SetBody(body any) {
 
 func (thiz *ApiReturnObject) HasErrors() bool {
 	return len(thiz.Errors) > 0
+}
+
+func (thiz *ApiReturnObject) buildBodySlice(reflectSlice reflect.Value) ([]any, error) {
+	slice := make([]any, 0)
+	for i := 0; i < reflectSlice.Len(); i++ {
+
+		var sliceElement any
+		var err error
+
+		rElement := util.IndirectValue(reflectSlice.Index(i))
+		if rElement.Kind() == reflect.Slice {
+			sliceElement, err = thiz.buildBodySlice(rElement)
+		} else if rElement.Kind() == reflect.Struct {
+			sliceElement, err = thiz.buildBodyElement(rElement)
+		} else {
+			sliceElement = rElement.Interface()
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		slice = append(slice, sliceElement)
+	}
+	return slice, nil
+}
+
+func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (map[string]any, error) {
+	body := make(map[string]any)
+
+	allowedFields := []string{"*"}
+	if limitedFields, ok := element.Interface().(core.LimitedFieldsMarshaller); ok {
+		allowedFields = limitedFields.AllowedFields()
+	}
+
+	for i := 0; i < element.NumField(); i++ {
+		rvField := element.Field(i)
+		rtField := element.Type().Field(i)
+
+		if !rtField.IsExported() {
+			continue
+		}
+
+		if !util.InArray(rtField.Name, allowedFields) && (len(allowedFields) > 0 && allowedFields[0] != "*") {
+			continue
+		}
+
+		jsonFieldName := rtField.Name
+		jsonTag := rtField.Tag.Get("json")
+		splitJsonTag := strings.Split(jsonTag, ",")
+		if len(splitJsonTag) > 0 {
+			jsonFieldName = splitJsonTag[0]
+		}
+
+		if util.IndirectType(rtField.Type).Kind() == reflect.Slice {
+			nestedElement, err := thiz.buildBodySlice(util.IndirectValue(rvField))
+			if err != nil {
+				return nil, err
+			}
+			body[jsonFieldName] = nestedElement
+			continue
+		}
+
+		if util.IndirectType(rtField.Type).Kind() == reflect.Struct {
+			if _, ok := rvField.Interface().(core.LimitedFieldsMarshaller); ok {
+				nestedElement, err := thiz.buildBodyElement(util.IndirectValue(rvField))
+				if err != nil {
+					return nil, err
+				}
+				body[jsonFieldName] = nestedElement
+				continue
+			}
+
+			body[jsonFieldName] = rvField.Interface()
+			continue
+		}
+
+		if util.IndirectType(rtField.Type).Kind() == reflect.Bool {
+			body[jsonFieldName] = rvField.Interface()
+			continue
+		}
+
+		if rvField.IsZero() {
+			body[jsonFieldName] = nil
+			continue
+		}
+
+		body[jsonFieldName] = rvField.Interface()
+	}
+	return body, nil
 }

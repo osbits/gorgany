@@ -36,6 +36,11 @@ type ILocalizedString interface {
 	Map() map[string]string
 }
 
+type LimitedFieldsMarshaller interface {
+	AllowedProtectedFields() []string
+	AllowedFields() []string
+}
+
 type ProtectedFields interface {
 	GetProtectedFields() []string
 }

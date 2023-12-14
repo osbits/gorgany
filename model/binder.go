@@ -8,8 +8,7 @@ import (
 )
 
 type FieldBinder struct {
-	Fields                 []string
-	AllowedProtectedFields []string
+	Fields []string // if you pass `model` argument like core.LimitedFieldsMarshaller instance, the allowed fields will be obtained from instance. In another case you should to specify this field.
 }
 
 func (thiz FieldBinder) BindField(model any, field string, value any) error {
@@ -22,7 +21,32 @@ func (thiz FieldBinder) BindField(model any, field string, value any) error {
 		return fmt.Errorf("LimitedFieldsBinder: Model must be a struct")
 	}
 
-	if !thiz.isFieldAllowed(field, model) {
+	if !thiz.isPublicFieldAllowed(field, model) {
+		return nil
+	}
+
+	rvField := rvModel.FieldByName(field)
+	rvField.Set(reflect.ValueOf(value))
+
+	return nil
+}
+
+func (thiz FieldBinder) BindProtectedField(model any, field string, value any) error {
+	rvModel := reflect.ValueOf(model)
+	if rvModel.Kind() != reflect.Ptr {
+		return fmt.Errorf("LimitedFieldsBinder: Model must be a pointer")
+	}
+	rvModel = util.IndirectValue(rvModel)
+	if rvModel.Kind() != reflect.Struct {
+		return fmt.Errorf("LimitedFieldsBinder: Model must be a struct")
+	}
+
+	if protectedFieldsModel, ok := model.(core.LimitedFieldsMarshaller); ok {
+		isProtectedAllowed := util.InArray(field, protectedFieldsModel.AllowedProtectedFields())
+		if !isProtectedAllowed {
+			return nil
+		}
+	} else {
 		return nil
 	}
 
@@ -48,7 +72,7 @@ func (thiz FieldBinder) BindFieldClosure(model any, field string, closure any) e
 		return fmt.Errorf("LimitedFieldsBinder: Closure must be a function")
 	}
 
-	if !thiz.isFieldAllowed(field, model) {
+	if !thiz.isPublicFieldAllowed(field, model) {
 		return nil
 	}
 
@@ -86,19 +110,16 @@ func (thiz FieldBinder) BindFields(model any, donor any, fields []string) error 
 	return nil
 }
 
-func (thiz FieldBinder) isFieldAllowed(field string, model any) bool {
-	if protectedFieldsModel, ok := model.(core.ProtectedFields); ok {
-		isProtected := util.InArray(field, protectedFieldsModel.GetProtectedFields())
-		if isProtected {
-			isProtectedAllowed := util.InArray(field, thiz.AllowedProtectedFields)
-			if !isProtectedAllowed {
-				return false
-			}
-		}
+func (thiz FieldBinder) isPublicFieldAllowed(field string, model any) bool {
+	allowedFields := make([]string, 0)
+	if limitedFields, ok := model.(core.LimitedFieldsMarshaller); ok {
+		allowedFields = limitedFields.AllowedFields()
+	} else {
+		allowedFields = thiz.Fields
 	}
 
-	if len(thiz.Fields) == 1 && thiz.Fields[0] == "*" {
+	if len(allowedFields) == 1 && allowedFields[0] == "*" {
 		return true
 	}
-	return util.InArray(field, thiz.Fields)
+	return util.InArray(field, allowedFields)
 }
