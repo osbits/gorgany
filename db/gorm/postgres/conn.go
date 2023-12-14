@@ -534,6 +534,12 @@ func (thiz *Builder) LoadRelations(relations ...string) error {
 		}
 		thiz.AddMetaToModel(v, thiz.copyGorm.Statement)
 
+		if thiz.copyGorm.RowsAffected == 0 {
+			if meta, ok := v.(core.IDomainMeta); ok {
+				meta.SetLoaded(false)
+			}
+		}
+
 		if len(splitRelation) > 1 {
 			thiz.clearQueryParams()
 			err := thiz.FromModel(v).LoadRelations(strings.Join(splitRelation[1:], "."))

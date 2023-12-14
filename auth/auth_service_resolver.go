@@ -14,7 +14,7 @@ func ResolveAuthService(ctx context.Context) (core.AuthService, error) {
 		return nil, fmt.Errorf("ctx is not core.IMessageContext instance")
 	}
 
-	if messageContext.GetHeader().Get("Content-Type") == core.ApplicationJson {
+	if messageContext.GetHeader().Get("Content-Type") == core.ApplicationJson || messageContext.GetPathParam("namespace") == "api" {
 		return NewJwtService(), nil
 	}
 	return GetSessionStorage(), nil
