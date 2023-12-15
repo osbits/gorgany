@@ -11,7 +11,7 @@ type FormDateTimeLocal struct {
 	Time time.Time
 }
 
-func (c *FormDateTimeLocal) MarshalJSON() ([]byte, error) {
+func (c FormDateTimeLocal) MarshalJSON() ([]byte, error) {
 	if c.Time.IsZero() {
 		return []byte("null"), nil
 	}
