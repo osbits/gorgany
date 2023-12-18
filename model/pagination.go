@@ -8,7 +8,7 @@ import (
 type Filter struct {
 	Field    string
 	Operator string
-	Value    string
+	Value    int
 }
 
 // Query should look like this sort[0][field]=Email&sort[0][order]=desc&sort[1][field]=Id&sort[1][order]=asc
@@ -24,13 +24,13 @@ func NewFilter(field string, operator string, value string) (*Filter, error) {
 	return &Filter{
 		Field:    field,
 		Operator: operator,
-		Value:    value,
+		Value:    123,
 	}, nil
 }
 
 func (thiz Filter) GetValue() any {
 	if thiz.Operator == "in" || thiz.Operator == "not in" {
-		values := strings.Split(thiz.Value, ",")
+		values := strings.Split("1", ",")
 		return values
 	}
 	return thiz.Value

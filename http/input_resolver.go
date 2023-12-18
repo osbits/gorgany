@@ -51,9 +51,12 @@ func (thiz inputResolver) resolve() ([]reflect.Value, error) {
 			indexOfPrimitiveArguemnt++
 		default:
 			contentType := thiz.message.GetHeader().Get("Content-Type")
-			err := resolveBodyParser(contentType, thiz.message).parse(arg)
-			if err != nil {
-				return nil, err
+			bodyParers := resolveBodyParser(contentType, thiz.message)
+			for _, parser := range bodyParers {
+				err := parser.parse(arg)
+				if err != nil {
+					return nil, err
+				}
 			}
 
 			if err := gorganyValidator.ValidateStruct(arg); err != nil {
@@ -63,6 +66,8 @@ func (thiz inputResolver) resolve() ([]reflect.Value, error) {
 
 		args = append(args, reflect.Indirect(reflect.ValueOf(arg)))
 	}
+
+	thiz.message.args = args
 
 	return args, nil
 }
@@ -84,14 +89,19 @@ type bodyParser interface {
 	parse(arg interface{}) error
 }
 
-func resolveBodyParser(contentType string, message *Message) bodyParser {
+func resolveBodyParser(contentType string, message *Message) []bodyParser {
+	bodyParsers := make([]bodyParser, 0)
 	if contentType == core.ApplicationJson {
-		return jsonParser{message: message}
+		bodyParsers = append(bodyParsers, jsonParser{message: message})
 	} else if strings.Contains(contentType, core.MultipartFormData) {
-		return multipartParser{message: message}
-	} else {
-		return formParser{message: message}
+		bodyParsers = append(bodyParsers, multipartParser{message: message})
 	}
+
+	if message.GetQuery() != nil {
+		bodyParsers = append(bodyParsers, queryParser{message: message})
+	}
+
+	return bodyParsers
 }
 
 // json parser
@@ -156,13 +166,13 @@ func (thiz multipartParser) parse(arg interface{}) error {
 }
 
 // form parser
-type formParser struct {
+type queryParser struct {
 	message *Message
 }
 
-func (thiz formParser) parse(arg interface{}) error {
+func (thiz queryParser) parse(arg interface{}) error {
 	decoder := multipart.NewFormValuesDecoder()
-	values, err := url2.ParseQuery(thiz.message.GetBodyContent())
+	values, err := url2.ParseQuery(thiz.message.GetRawQuery())
 	if err != nil {
 		return &error2.ValidationErrors{Errors: []error2.ValidationError{{
 			Field: core.GeneralError,

@@ -5,6 +5,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"reflect"
 )
 
 type HttpMessage interface {
@@ -41,6 +42,8 @@ type HttpMessage interface {
 	GetFiles(key string) ([]IFile, error)
 	IsApiNamespace() bool
 	Context() context.Context
+	GetArgs() []reflect.Value
+	GetRawQuery() string
 }
 
 type IMessageContext interface {
@@ -54,4 +57,9 @@ type IMessageContext interface {
 	GetPathParam(name string) string
 
 	GetParent() context.Context
+}
+
+type HttpAccessCommand interface {
+	FilterBuilder(ctx context.Context) IQueryBuilder
+	IsAccessAllowed(ctx context.Context) bool
 }

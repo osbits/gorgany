@@ -30,14 +30,6 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, 
 		}
 	}()
 
-	for _, middleware := range internal.GetFrameworkRegistrar().GetMiddlewares() {
-		middlewares = util.Prepend[core.IMiddleware](middlewares, middleware)
-	}
-
-	if !preProcess(middlewares, message) {
-		return
-	}
-
 	if handler == nil {
 		return
 	}
@@ -51,6 +43,14 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, 
 	args, err := resolver.resolve()
 	if err != nil {
 		Catch(err, message)
+		return
+	}
+
+	for _, middleware := range internal.GetFrameworkRegistrar().GetMiddlewares() {
+		middlewares = util.Prepend[core.IMiddleware](middlewares, middleware)
+	}
+
+	if !preProcess(middlewares, message) {
 		return
 	}
 

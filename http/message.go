@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/auth"
+	"git.qix.sx/gorgany/gorgany.git/decoder"
+	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/log"
 	"git.qix.sx/gorgany/gorgany.git/model"
 	"git.qix.sx/gorgany/gorgany.git/util"
@@ -18,8 +20,6 @@ import (
 	"net/http"
 	url2 "net/url"
 	"reflect"
-	"regexp"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -28,7 +28,8 @@ type Message struct {
 	writer      http.ResponseWriter
 	request     *http.Request
 	renderer    *view2.EngineRenderer `container:"inject"`
-	cachedQuery *QueryParams
+	cachedQuery *decoder.QueryParams
+	args        []reflect.Value
 }
 
 func (thiz Message) Init() {
@@ -254,64 +255,9 @@ func (thiz *Message) parseQueryParams() error {
 		return err
 	}
 
-	processedParams := QueryParams{}
-	regExp := regexp.MustCompile("(.+)\\[(\\d)\\]\\[(.+)\\]")
-
-	elementsCount := make(map[string]int)
-	for key := range params {
-		if !regExp.MatchString(key) {
-			continue
-		}
-
-		parsed := regExp.FindStringSubmatch(key)
-		if len(parsed) != 4 {
-			continue
-		}
-
-		elementName := parsed[1]
-		index, err := strconv.Atoi(parsed[2])
-		if err != nil {
-			return err
-		}
-		if elementsCount[elementName] < index+1 {
-			elementsCount[elementName] = index + 1
-		}
-	}
-
-	for key, param := range params {
-		var value any
-		if len(param) == 1 {
-			value = param[0]
-		} else {
-			value = param
-		}
-
-		if !regExp.MatchString(key) {
-			processedParams[key] = value
-			continue
-		}
-
-		parsed := regExp.FindStringSubmatch(key)
-		if len(parsed) != 4 {
-			continue
-		}
-
-		elementName := parsed[1]
-		index, err := strconv.Atoi(parsed[2])
-		if err != nil {
-			return err
-		}
-
-		key := parsed[3]
-		if processedParams[elementName] == nil {
-			processedParams[elementName] = make([]map[string]string, elementsCount[elementName])
-		}
-
-		if processedParams[elementName].([]map[string]string)[index] == nil {
-			processedParams[elementName].([]map[string]string)[index] = make(map[string]string)
-		}
-
-		processedParams[elementName].([]map[string]string)[index][key] = value.(string)
+	processedParams, err := decoder.ParseUrlValues(params)
+	if err != nil {
+		return err
 	}
 
 	thiz.cachedQuery = &processedParams
@@ -340,6 +286,23 @@ func (thiz Message) GetQueryParamsMap(key string) []map[string]string {
 		return []map[string]string{}
 	}
 	return thiz.cachedQuery.GetArrayMap(key)
+}
+
+func (thiz Message) GetRawQuery() string {
+	return thiz.request.URL.RawQuery
+}
+
+func (thiz Message) GetQuery() decoder.QueryParams {
+	err := thiz.parseQueryParams()
+	if err != nil {
+		err2.HandleError(err)
+		return nil
+	}
+
+	if thiz.cachedQuery != nil {
+		return *thiz.cachedQuery
+	}
+	return nil
 }
 
 func (thiz Message) GetBodyParam(key string) any {
@@ -437,6 +400,10 @@ func (thiz Message) Context() context.Context {
 	messageContext.Parent = parentRequest
 
 	return context.WithValue(parentRequest, core.MessageContextKey, messageContext)
+}
+
+func (thiz Message) GetArgs() []reflect.Value {
+	return thiz.args
 }
 
 func (thiz Message) addOptionsToView(options map[string]any) map[string]any {

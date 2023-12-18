@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/db/orm"
+	"git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"git.qix.sx/gorgany/gorgany.git/validator"
 	"github.com/spf13/viper"
@@ -591,6 +592,24 @@ func (thiz *Builder) SetAlias(alias string) core.IQueryBuilder {
 
 func (thiz *Builder) GetAlias() string {
 	return thiz.alias
+}
+
+func (thiz *Builder) MergeBuilder(builder core.IQueryBuilder) core.IQueryBuilder {
+	if builder == nil {
+		return thiz
+	}
+
+	mergableBuilder, ok := builder.(*Builder)
+	if !ok {
+		err.HandleError("You must pass core.IQueryBuilder as *postgres.Builder")
+		return thiz
+	}
+
+	thiz.GetPostgresGORMFrom().fromItems = append(thiz.GetPostgresGORMFrom().fromItems, mergableBuilder.GetPostgresGORMFrom().fromItems...)
+	thiz.GetPostgresGORMJoin().joinItems = util.MergeMaps[[]JoinItems](thiz.GetPostgresGORMJoin().joinItems, mergableBuilder.GetPostgresGORMJoin().joinItems)
+	thiz.GetPostgresGORMWhere().whereItems = append(thiz.GetPostgresGORMWhere().whereItems, mergableBuilder.GetPostgresGORMWhere().whereItems...)
+
+	return thiz
 }
 
 func (thiz *Builder) GetPostgresGORMFrom() *From {

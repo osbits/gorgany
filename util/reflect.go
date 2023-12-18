@@ -42,13 +42,17 @@ func IndirectType(v reflect.Type) reflect.Type {
 }
 
 func GetElementOfSlice(slice any) any {
+	return GetReflectElementOfSlice(slice).Interface()
+}
+
+func GetReflectElementOfSlice(slice any) reflect.Value {
 	rtSlice := reflect.TypeOf(slice)
 	if rtSlice.Kind() != reflect.Slice {
 		panic("")
 	}
 	model := reflect.MakeSlice(rtSlice, 1, 1).Index(0).Interface()
 	rType := IndirectType(reflect.TypeOf(model))
-	return reflect.New(rType).Elem().Interface()
+	return reflect.New(rType).Elem()
 }
 
 func GetSliceFromAny(slice any) []any {

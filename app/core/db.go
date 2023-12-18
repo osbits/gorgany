@@ -69,6 +69,7 @@ type IQueryBuilder interface {
 	AddMetaToModel(dest any, statement *gorm.Statement)
 	SetAlias(alias string) IQueryBuilder
 	GetAlias() string
+	MergeBuilder(builder IQueryBuilder) IQueryBuilder
 }
 
 type GormAssociation interface {
@@ -104,6 +105,7 @@ type IOrm[T any] interface {
 	ClearRelation(relation string) error
 	AppendRelation(relation string, values ...any) error
 	LoadRelations(relations ...string) error
+	MergeBuilder(builder IQueryBuilder) IOrm[T]
 	Delete() error
 	ToQuery() string
 }
