@@ -47,7 +47,7 @@ func NewFormValuesDecoder() *ValuesDecoder {
 func (thiz ValuesDecoder) Decode(dst interface{}, src map[string][]string) error {
 	reflectedValue := reflect.ValueOf(dst)
 
-	// todo: redo this implementation on front for LocalizedString after it can be removed
+	// todo: redo this implementation on front for LocalizedString, after it can be removed
 	mapValues := make(map[string]map[string]string)
 	for key, values := range src {
 		splitKey := strings.Split(key, ".")
@@ -96,17 +96,23 @@ func (thiz ValuesDecoder) Decode(dst interface{}, src map[string][]string) error
 						continue
 					}
 
-					field.Set(reflect.ValueOf(value))
+					resolvedValue, err := util.ResolvePrimitive(field.Kind(), value)
+					if err != nil {
+						return err
+					}
+					field.Set(reflect.ValueOf(resolvedValue))
 				}
 				reflectedField.Set(reflect.Append(reflectedField, reflectedNestedStruct))
 			}
 		}
 	}
 
+	// todo: redo this implementation on front for LocalizedString, after it can be removed
 	for key, values := range mapValues {
 		reflectedField := reflectedValue.Elem().FieldByName(key)
 		reflectedField.Set(reflect.ValueOf(values))
 	}
+	//
 
 	return thiz.formSchemaDecoder.Decode(dst, src)
 }
