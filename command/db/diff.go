@@ -10,6 +10,7 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/db/gorm/plugin"
 	"git.qix.sx/gorgany/gorgany.git/db/orm"
 	"git.qix.sx/gorgany/gorgany.git/internal"
+	model2 "git.qix.sx/gorgany/gorgany.git/service/cache"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
@@ -19,7 +20,6 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
-	"sync"
 	"text/template"
 	"time"
 )
@@ -145,8 +145,7 @@ func (thiz DiffCommand) migrateModel(model any, tx *gorm.DB) error {
 }
 
 func (thiz DiffCommand) migratePivatTable(model any, tx *gorm.DB) error {
-	namer := schema.NamingStrategy{}
-	parseScheme, _ := schema.Parse(model, &sync.Map{}, namer)
+	parseScheme := model2.GetDomainSchemeCache().ParseDomain(model)
 	many2manies := parseScheme.Relationships.Many2Many
 
 	for _, relation := range many2manies {

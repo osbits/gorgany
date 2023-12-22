@@ -2,36 +2,97 @@ package model
 
 import (
 	"fmt"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/service/cache"
+	"gorm.io/gorm/schema"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type Filter struct {
 	Field    string
 	Operator string
-	Value    int
+	Value    any
 }
 
 // Query should look like this sort[0][field]=Email&sort[0][order]=desc&sort[1][field]=Id&sort[1][order]=asc
-func NewFilter(field string, operator string, value string) (*Filter, error) {
+func NewFilter(field string, operator string, value string, domain any) (*Filter, error) {
 	if field == "" {
 		return nil, fmt.Errorf("Filter: Field is required")
 	}
 
-	if operator == "" || (operator != "=" && operator != "!=" && operator != "like" && operator != "not like" && operator != "in" && operator != "not in") {
+	if operator == "" || (operator != "=" && operator != "!=" && operator != "like" && operator != "not like" &&
+		operator != "in" && operator != "not in" && operator != ">" && operator != ">=" && operator != "<" && operator != "<=") {
 		operator = "="
+	}
+
+	sc := cache.GetDomainSchemeCache().ParseDomain(domain)
+	if sc == nil {
+		return nil, nil
+	}
+
+	var filterValue any
+
+	f := sc.LookUpField(field)
+	if f == nil {
+		return nil, fmt.Errorf("Filter: Field %s does not exist", field)
+	}
+
+	switch f.DataType {
+	case schema.Time:
+		if v, err := time.Parse(core.GlobalDateFormat, value); err == nil {
+			filterValue = v
+			break
+		}
+		if v, err := time.Parse(core.GlobalDateTimeFormat, value); err == nil {
+			filterValue = v
+			break
+		}
+		return nil, fmt.Errorf("Filter: Field(%s) is date format, but value not in %s or %s formats", field, core.GlobalDateFormat, core.GlobalDateTimeFormat)
+	case schema.Int:
+		v, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("Filter: Fjeld(%s) is integer, but value(%s) is not integer", field, value)
+		}
+		filterValue = v
+	case schema.Bool:
+		v, err := strconv.ParseBool(value)
+		if err != nil {
+			return nil, fmt.Errorf("Filter: Field(%s) is bool, but value(%s) is not bool", field, value)
+		}
+		filterValue = v
+	case schema.Float:
+		v, err := strconv.ParseFloat(value, 64)
+		if err != nil {
+			return nil, fmt.Errorf("Filter: Field(%s) is float, but value(%s) is not float", field, value)
+		}
+		filterValue = v
+	case schema.Uint:
+		v, err := strconv.ParseUint(value, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("Filter: Field(%s) is uint, but value(%s) is not uint", field, value)
+		}
+		filterValue = v
+	default:
+		filterValue = value
 	}
 
 	return &Filter{
 		Field:    field,
 		Operator: operator,
-		Value:    123,
+		Value:    filterValue,
 	}, nil
 }
 
 func (thiz Filter) GetValue() any {
 	if thiz.Operator == "in" || thiz.Operator == "not in" {
-		values := strings.Split("1", ",")
-		return values
+		if values, ok := thiz.Value.(string); ok {
+			values := strings.Split(values, ",")
+			return values
+		} else {
+			return nil
+		}
 	}
 	return thiz.Value
 }
