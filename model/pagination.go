@@ -74,6 +74,8 @@ func NewFilter(field string, operator string, value string, domain any) (*Filter
 			return nil, fmt.Errorf("Filter: Field(%s) is uint, but value(%s) is not uint", field, value)
 		}
 		filterValue = v
+	default:
+		filterValue = value
 	}
 
 	return &Filter{
