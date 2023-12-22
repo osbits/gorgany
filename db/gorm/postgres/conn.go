@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/db/orm"
+	model2 "git.qix.sx/gorgany/gorgany.git/service/cache"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"git.qix.sx/gorgany/gorgany.git/validator"
 	"github.com/spf13/viper"
@@ -11,7 +12,6 @@ import (
 	"gorm.io/gorm/schema"
 	"reflect"
 	"strings"
-	"sync"
 )
 
 const RecursiveRelationMaxDeep = 2
@@ -306,9 +306,9 @@ func (thiz *Builder) Get(dest any) error {
 		return fmt.Errorf("Dest must be pointer")
 	}
 
-	sc, err := schema.Parse(dest, &sync.Map{}, schema.NamingStrategy{})
-	if err != nil {
-		return err
+	sc := model2.GetDomainSchemeCache().ParseDomain(dest)
+	if sc == nil {
+		return fmt.Errorf("DomainSchemeCache has return an empty domain scheme")
 	}
 
 	if len(thiz.GetPostgresGORMFrom().fromItems) == 0 {
@@ -356,9 +356,9 @@ func (thiz *Builder) List(dest any) error {
 	model := util.GetElementOfSlice(rvDestSlice.Interface())
 	thiz.FromModel(model)
 
-	sc, err := schema.Parse(model, &sync.Map{}, schema.NamingStrategy{})
-	if err != nil {
-		return err
+	sc := model2.GetDomainSchemeCache().ParseDomain(model)
+	if sc == nil {
+		return fmt.Errorf("DomainSchemeCache has return an empty domain scheme")
 	}
 
 	keys := thiz.walkNestedRelations(sc.Relationships.Relations, "", 0)

@@ -5,11 +5,11 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/db"
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
+	"git.qix.sx/gorgany/gorgany.git/service/cache"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	goValidator "github.com/go-playground/validator/v10"
 	"gorm.io/gorm/schema"
 	"reflect"
-	"sync"
 	"unsafe"
 )
 
@@ -28,9 +28,9 @@ func validateUnique(fieldLevel goValidator.FieldLevel) bool {
 			return true
 		}
 
-		parsedDomain, err := schema.Parse(parent, &sync.Map{}, ns)
-		if err != nil {
-			err2.HandleError(err)
+		parsedDomain := cache.GetDomainSchemeCache().ParseDomain(parent)
+		if parent == nil {
+			err2.HandleError("DomainSchemeCache has return an empty parsed domain")
 			return false
 		}
 
@@ -50,7 +50,7 @@ func validateUnique(fieldLevel goValidator.FieldLevel) bool {
 		}
 
 		count := int64(0)
-		err = builder.WhereOr(primaryCondition).Count(&count)
+		err := builder.WhereOr(primaryCondition).Count(&count)
 		if err != nil {
 			err2.HandleError(err)
 			return false
