@@ -14,22 +14,22 @@ type HttpMessage interface {
 	GetBody() []byte
 	GetBodyContent() string
 	GetHeader() http.Header
-	GetCookie(key string) (*http.Cookie, error)
+	GetCookie(key string) *http.Cookie
 	Render(template string, options map[string]any)
 	ResponseHeader() http.Header
 	Response(responseBody string, statusCode int)
 	ResponseJSON(responseBody any, statusCode int)
 	ResponseBytes(responseBody []byte, statusCode int)
-	SetCookie(key string, value string, expiresIn int)
+	SetCookie(cookie *http.Cookie)
 	RedirectWithParams(url string, redirectCode int, params map[string]any)
 	Redirect(url string, redirectCode int)
 	OneTimeParams() map[string][]string
 	GetOneTimeParam(key string) string
 	ClearOneTimeParams()
-	Login(user Authenticable)
-	Logout()
-	IsLoggedIn() bool
-	CurrentUser() (Authenticable, error)
+	Login(user Authenticable, authStrategy ...string) string
+	Logout(authStrategy ...string)
+	IsLoggedIn(authStrategy ...string) bool
+	CurrentUser(authStrategy ...string) (Authenticable, error)
 	GetBearerToken() string
 	GetQueryParam(key string) string
 	GetQueryParams(key string) []string
@@ -41,17 +41,31 @@ type HttpMessage interface {
 	GetFiles(key string) ([]IFile, error)
 	IsApiNamespace() bool
 	Context() context.Context
+	GetSession() ISession
+	CurrentAuthStrategy() IAuthStrategy
 }
 
 type IMessageContext interface {
 	GetURL() *url.URL
 	GetRequestURL() string
-	GetCookies() []*http.Cookie
-	GetCookie(name string) *http.Cookie
+	GetCookieManager() ICookieManager
 	GetHeader() http.Header
-	GetSessionToken() string
 	GetBearerToken() string
 	GetPathParam(name string) string
+	GetSession() ISession
+	GetRequest() *http.Request
+	GetAuthStrategy() IAuthStrategy
 
 	GetParent() context.Context
+}
+
+type ISimpleStorage interface {
+	GetItem(key string) string
+	SetItem(key string, value string)
+}
+
+type ICookieManager interface {
+	SetCookie(cookie *http.Cookie)
+	GetCookie(key string) *http.Cookie
+	GetCookies() []*http.Cookie
 }
