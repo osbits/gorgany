@@ -208,11 +208,13 @@ func (thiz *Builder) Having(rawStatement string, operator string, value any) cor
 }
 
 func (thiz *Builder) DeleteQuery() (string, []any) {
-	where, args := thiz.BuildWhere()
+	from, args := thiz.BuildFrom()
+	where, whereArgs := thiz.BuildWhere()
+	args = append(args, whereArgs...)
 	if viper.GetBool("databases.postgres_gorm.log") == true {
-		fmt.Printf("DELETE FROM %s %s\n", thiz.from, where)
+		fmt.Printf("DELETE FROM %s %s\n", from, where)
 	}
-	return fmt.Sprintf("DELETE FROM %s %s", thiz.from, where), args
+	return fmt.Sprintf("DELETE FROM %s %s", from, where), args
 }
 
 func (thiz *Builder) ToQuery() (string, []any) {
@@ -407,7 +409,7 @@ func (thiz *Builder) Save(model any) error {
 
 func (thiz *Builder) Delete() error {
 	query, args := thiz.DeleteQuery()
-	res := thiz.GetDriver().Raw(query, args...)
+	res := thiz.GetDriver().Exec(query, args...)
 	thiz.clearQueryParams()
 	return res.Error
 }
@@ -525,7 +527,14 @@ func (thiz *Builder) LoadRelations(relations ...string) error {
 		rvField := rv.Elem().FieldByName(r)
 
 		fieldType := util.IndirectType(rvField.Type())
-		fieldValue := reflect.New(fieldType)
+
+		var fieldValue reflect.Value
+		if fieldType.Kind() == reflect.Slice {
+			fieldValue = util.IndirectValue(reflect.New(fieldType))
+		} else {
+			fieldValue = reflect.New(fieldType)
+		}
+
 		v := fieldValue.Interface()
 
 		err := thiz.copyGorm.Association(r).Find(&v)

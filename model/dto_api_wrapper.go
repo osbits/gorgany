@@ -136,11 +136,20 @@ func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (map[string
 
 		if util.IndirectType(rtField.Type).Kind() == reflect.Struct {
 			if _, ok := rvField.Interface().(core.LimitedFieldsMarshaller); ok {
-				nestedElement, err := thiz.buildBodyElement(util.IndirectValue(rvField))
-				if err != nil {
-					return nil, err
+				if rtField.Anonymous {
+					nestedElement, err := thiz.buildBodyElement(util.IndirectValue(rvField))
+					if err != nil {
+						return nil, err
+					}
+					body = util.MergeMaps(body, nestedElement)
+				} else {
+					nestedElement, err := thiz.buildBodyElement(util.IndirectValue(rvField))
+					if err != nil {
+						return nil, err
+					}
+					body[jsonFieldName] = nestedElement
 				}
-				body[jsonFieldName] = nestedElement
+
 				continue
 			}
 
