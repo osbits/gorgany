@@ -258,6 +258,10 @@ func (thiz Message) IsLoggedIn(authStrategy ...string) bool {
 		strategy = auth.GetAuthStrategy(authStrategy...)
 	}
 
+	if strategy == nil {
+		return false
+	}
+
 	return strategy.IsLoggedIn(thiz.Context())
 }
 
