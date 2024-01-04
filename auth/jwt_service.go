@@ -17,15 +17,15 @@ func NewJwtService() *JwtService {
 type JwtService struct {
 }
 
-func (thiz JwtService) GenerateJwt(user core.Authenticable) (string, error) {
+func (thiz JwtService) GenerateJwt(user core.Authenticable, secret string) (string, error) {
 	token := jwt.New(jwt.SigningMethodHS256)
 	claims := token.Claims.(jwt.MapClaims)
 
 	jwtLifeTime := viper.GetInt("auth.jwt.lifeTime")
 	claims["exp"] = time.Now().Add(time.Duration(jwtLifeTime) * time.Second).Unix()
-	claims["user"] = user.GetUsername()
+	claims["username"] = user.GetUsername()
 
-	tokenString, err := token.SignedString([]byte(viper.GetString("auth.jwt.secret")))
+	tokenString, err := token.SignedString([]byte(secret))
 	if err != nil {
 		return "", err
 	}
@@ -60,7 +60,7 @@ func (thiz JwtService) GetUser(token string) (core.Authenticable, error) {
 		return nil, err
 	}
 
-	return GetAuthEntityService().GetByUsername(claims["user"].(string))
+	return GetAuthEntityService().GetByUsername(claims["username"].(string))
 }
 
 // CurrentUser

@@ -8,6 +8,7 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/http/router"
 	"git.qix.sx/gorgany/gorgany.git/internal"
 	"git.qix.sx/gorgany/gorgany.git/util"
+	"net/http"
 	"net/url"
 )
 
@@ -53,7 +54,7 @@ func (thiz LoginController) Login(message core.HttpMessage) {
 
 func (thiz LoginController) Logout(message core.HttpMessage) {
 	message.Logout()
-	message.Redirect(router.GetRouter().UrlByNameSequence("cp.login.show"), 301)
+	message.Redirect(router.GetRouter().UrlByNameSequence("cp.login.show"), http.StatusTemporaryRedirect)
 }
 
 func (thiz LoginController) GetRoutes() []core.IRouteConfig {

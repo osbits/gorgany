@@ -22,6 +22,7 @@ func init() {
 		domains:             make(map[string]interface{}),
 		migrations:          make([]core.IMigration, 0),
 		seeders:             make([]core.ISeeder, 0),
+		authStrategies:      make(map[string]core.IAuthStrategy),
 	}
 }
 
@@ -44,6 +45,7 @@ type Registrar struct {
 	migrations          []core.IMigration
 	seeders             []core.ISeeder
 	sessionStorage      core.ISessionStorage
+	authStrategies      map[string]core.IAuthStrategy
 	i18nManager         core.Ii18nManager
 	viewEngine          core.IViewEngine
 	router              core.Router
@@ -184,6 +186,28 @@ func (thiz *Registrar) SetSessionStorage(sessionStorage core.ISessionStorage) {
 
 func (thiz *Registrar) GetSessionStorage() core.ISessionStorage {
 	return thiz.sessionStorage
+}
+
+func (thiz *Registrar) SetAuthStrategy(authProvider core.IAuthStrategy, strategyName ...string) {
+	name := core.DefaultKeyInRegistrar
+	if len(strategyName) > 0 {
+		name = strategyName[0]
+	}
+
+	thiz.authStrategies[name] = authProvider
+}
+
+func (thiz *Registrar) GetAuthStrategy(strategyName ...string) core.IAuthStrategy {
+	name := core.DefaultKeyInRegistrar
+	if len(strategyName) > 0 {
+		name = strategyName[0]
+	}
+
+	return thiz.authStrategies[name]
+}
+
+func (thiz *Registrar) GetAuthStrategies() map[string]core.IAuthStrategy {
+	return thiz.authStrategies
 }
 
 func (thiz *Registrar) SetI18nManager(manager core.Ii18nManager) {

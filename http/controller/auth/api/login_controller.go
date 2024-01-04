@@ -41,10 +41,10 @@ func (thiz LoginController) Login(message core.HttpMessage) {
 		return
 	}
 
-	jwtService := auth.NewJwtService()
-	token, err := jwtService.GenerateJwt(user)
-	if err != nil {
-		panic(err)
+	token := message.Login(user, "jwt")
+	if token == "" {
+		message.ResponseJSON(dto.ReturnObject(nil, core.ForbiddenHttpStatus, "Token has not been generated!"), 200)
+		return
 	}
 
 	responseBodyMap := make(map[string]string)
