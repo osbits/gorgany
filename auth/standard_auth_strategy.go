@@ -9,6 +9,7 @@ import (
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/internal"
 	"github.com/google/uuid"
+	"math/rand"
 	"net/http"
 	"time"
 )
@@ -25,7 +26,9 @@ func (thiz *StandardAuthStrategy) NewSessionWithoutUser(ctx context.Context) (st
 	uid := uuid.NewString()
 	now := time.Now()
 
-	rawToken := fmt.Sprintf("%s%v", uid, now.UnixNano())
+	rand.Seed(now.UnixNano())
+
+	rawToken := fmt.Sprintf("%s%v%d", uid, now.UnixNano(), rand.Intn(10000000))
 	hashedTokenBytes := md5.Sum([]byte(rawToken))
 	hashedToken := hex.EncodeToString(hashedTokenBytes[:])
 

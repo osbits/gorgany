@@ -235,9 +235,15 @@ func (thiz *Message) SetSession() {
 }
 
 func (thiz *Message) Login(user core.Authenticable, authStrategy ...string) string {
+	strategy := auth.GetAuthStrategy(authStrategy...)
+	if strategy == nil {
+		err2.HandleErrorWithStacktrace("Auth strategy is nil!")
+		return ""
+	}
+
 	token, err := auth.GetAuthStrategy(authStrategy...).Login(user, thiz.Context())
 	if err != nil {
-		err2.HandleError(err)
+		err2.HandleErrorWithStacktrace(err)
 		return ""
 	}
 	thiz.currentSession = thiz.sessionStorage.GetSessionById(token)
