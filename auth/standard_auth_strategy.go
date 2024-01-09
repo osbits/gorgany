@@ -73,6 +73,7 @@ func (thiz *StandardAuthStrategy) Login(user core.Authenticable, ctx context.Con
 			MaxAge:   0,
 			Secure:   true,
 			HttpOnly: true,
+			SameSite: http.SameSiteNoneMode,
 		}
 
 		messageContext.GetCookieManager().SetCookie(cookie)
@@ -119,6 +120,7 @@ func (thiz *StandardAuthStrategy) Logout(ctx context.Context) {
 		MaxAge:   -1,
 		Secure:   true,
 		HttpOnly: true,
+		SameSite: http.SameSiteNoneMode,
 	})
 }
 
@@ -170,6 +172,7 @@ func (thiz *StandardAuthStrategy) GetCurrentOrCreateSession(ctx context.Context)
 		MaxAge:   0,
 		Secure:   true,
 		HttpOnly: true,
+		SameSite: http.SameSiteNoneMode,
 	})
 
 	return session
