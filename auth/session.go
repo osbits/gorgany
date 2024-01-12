@@ -1,10 +1,7 @@
 package auth
 
 import (
-	"context"
-	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
-	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/internal"
 	"sync"
 	"time"
@@ -100,39 +97,8 @@ func (thiz *MemorySession) DeleteSessionById(id string) {
 	thiz.mu.Unlock()
 }
 
-func (thiz *MemorySession) DeleteCurrentSession(ctx context.Context) {
-	currentSession, err := thiz.CurrentSession(ctx)
-	if err != nil {
-		err2.HandleError(err)
-		return
-	}
-
-	thiz.mu.Lock()
-	delete(thiz.sessions, currentSession.GetId())
-	thiz.mu.Unlock()
-}
-
 func (thiz *MemorySession) GetSessionById(id string) core.ISession {
 	return thiz.sessions[id]
-}
-
-func (thiz *MemorySession) CurrentSession(ctx context.Context) (core.ISession, error) {
-	messageContext, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext)
-	if !ok {
-		return nil, fmt.Errorf("Ctx is not core.IMessageContext instance")
-	}
-
-	sessionCookie := messageContext.GetCookieManager().GetCookie(core.SessionCookieName)
-	if sessionCookie == nil {
-		return nil, nil
-	}
-
-	session := thiz.GetSessionById(sessionCookie.Value)
-	if session == nil {
-		return nil, nil
-	}
-
-	return session, nil
 }
 
 // DbSession, not implemented yet

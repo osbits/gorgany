@@ -19,46 +19,38 @@ import (
 func NewEngineRenderer(ctx context.Context) *EngineRenderer {
 	return &EngineRenderer{
 		Engine: internal.GetFrameworkRegistrar().GetViewEngine(),
-		Ctx:    ctx,
 	}
 }
 
 type EngineRenderer struct {
 	Engine core.IViewEngine `container:"inject"`
-	Ctx    context.Context
 }
 
-func (thiz *EngineRenderer) Init() {
-	if thiz.Ctx == nil {
-		thiz.Ctx = context.Background()
-	}
-}
-
-func (thiz EngineRenderer) DoRender(w io.Writer, templateName string, opts map[string]any) error {
+func (thiz EngineRenderer) DoRender(ctx context.Context, w io.Writer, templateName string, opts map[string]any) error {
 	if opts == nil {
 		opts = make(map[string]any)
 	}
 
-	opts = thiz.registerDefaultOptions(opts)
+	opts = thiz.registerDefaultOptions(ctx, opts)
 	opts = thiz.registerFunctions(opts)
 
 	return thiz.Engine.Render(w, templateName, opts)
 }
 
-func (thiz EngineRenderer) CreateLink(url string) string {
-	return util.AddLocaleToURL(thiz.Locale(), url)
+func (thiz EngineRenderer) CreateLink(ctx context.Context, url string) string {
+	return util.AddLocaleToURL(thiz.Locale(ctx), url)
 }
 
-func (thiz EngineRenderer) CreateLinkWithNamespace(url string, namespace string) string {
-	return util.AddLocaleToURL(thiz.Locale(), fmt.Sprintf("/%s%s", namespace, url))
+func (thiz EngineRenderer) CreateLinkWithNamespace(ctx context.Context, url string, namespace string) string {
+	return util.AddLocaleToURL(thiz.Locale(ctx), fmt.Sprintf("/%s%s", namespace, url))
 }
 
-func (thiz EngineRenderer) __(code string, opts ...any) string {
-	return i18n.TranslationWithSequence(code, thiz.Locale(), opts)
+func (thiz EngineRenderer) __(ctx context.Context, code string, opts ...any) string {
+	return i18n.TranslationWithSequence(code, thiz.Locale(ctx), opts)
 }
 
-func (thiz EngineRenderer) Locale() string {
-	locale := chi.URLParamFromCtx(thiz.Ctx, "lang")
+func (thiz EngineRenderer) Locale(ctx context.Context) string {
+	locale := chi.URLParamFromCtx(ctx, "lang")
 	if locale == "" {
 		locale = viper.GetString("i18n.lang.default")
 	}
@@ -66,11 +58,11 @@ func (thiz EngineRenderer) Locale() string {
 }
 
 // return slice of langs exclude current one if i18n is enabled
-func (thiz EngineRenderer) AvailableLocalesOnFront() []string {
+func (thiz EngineRenderer) AvailableLocalesOnFront(ctx context.Context) []string {
 	availableLangsOnFront := make([]string, 0)
 	availableLocales := i18n.AvailableLocales()
 	for _, lang := range availableLocales {
-		if lang == thiz.Locale() {
+		if lang == thiz.Locale(ctx) {
 			continue
 		}
 		availableLangsOnFront = append(availableLangsOnFront, lang)
@@ -78,9 +70,9 @@ func (thiz EngineRenderer) AvailableLocalesOnFront() []string {
 	return availableLangsOnFront
 }
 
-func (thiz EngineRenderer) ChangeLanguageLink(locale string) string {
+func (thiz EngineRenderer) ChangeLanguageLink(ctx context.Context, locale string) string {
 	path := ""
-	if ctx, ok := thiz.Ctx.Value(core.MessageContextKey).(core.IMessageContext); ok {
+	if ctx, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext); ok {
 		path = ctx.GetURL().Path
 	}
 
@@ -104,8 +96,8 @@ func (thiz EngineRenderer) ChangeLanguageLink(locale string) string {
 	return processedPath
 }
 
-func (thiz EngineRenderer) CurrentUrl() string {
-	if ctx, ok := thiz.Ctx.Value(core.MessageContextKey).(core.IMessageContext); ok {
+func (thiz EngineRenderer) CurrentUrl(ctx context.Context) string {
+	if ctx, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext); ok {
 		return ctx.GetRequestURL()
 	}
 	return ""
@@ -126,16 +118,17 @@ func (thiz EngineRenderer) registerFunctions(opts map[string]any) map[string]any
 	return opts
 }
 
-func (thiz EngineRenderer) registerDefaultOptions(opts map[string]any) map[string]any {
+func (thiz EngineRenderer) registerDefaultOptions(ctx context.Context, opts map[string]any) map[string]any {
 	appName := os.Getenv("APP_NAME")
 	if appName == "" {
 		appName = "Gorgany"
 	}
 
 	opts["AppName"] = appName
-	opts["CurrentLocale"] = thiz.Locale()
-	opts["AvailableLocales"] = thiz.AvailableLocalesOnFront()
+	opts["CurrentLocale"] = thiz.Locale(ctx)
+	opts["AvailableLocales"] = thiz.AvailableLocalesOnFront(ctx)
 	opts["AllLocales"] = i18n.AllLocales()
+	opts["Ctx"] = ctx
 
 	return opts
 }

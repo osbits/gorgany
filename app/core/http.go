@@ -26,10 +26,6 @@ type HttpMessage interface {
 	OneTimeParams() map[string][]string
 	GetOneTimeParam(key string) string
 	ClearOneTimeParams()
-	Login(user Authenticable, authStrategy ...string) string
-	Logout(authStrategy ...string)
-	IsLoggedIn(authStrategy ...string) bool
-	CurrentUser(authStrategy ...string) (Authenticable, error)
 	GetBearerToken() string
 	GetQueryParam(key string) string
 	GetQueryParams(key string) []string
@@ -42,7 +38,7 @@ type HttpMessage interface {
 	IsApiNamespace() bool
 	Context() context.Context
 	GetSession() ISession
-	CurrentAuthStrategy() IAuthStrategy
+	GetCookieManager() ICookieManager
 }
 
 type IMessageContext interface {
@@ -54,7 +50,6 @@ type IMessageContext interface {
 	GetPathParam(name string) string
 	GetSession() ISession
 	GetRequest() *http.Request
-	GetAuthStrategy() IAuthStrategy
 
 	GetParent() context.Context
 }

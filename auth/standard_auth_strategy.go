@@ -14,15 +14,11 @@ import (
 	"time"
 )
 
-func GetAuthStrategy(strategyName ...string) core.IAuthStrategy {
-	return internal.GetFrameworkRegistrar().GetAuthStrategy(strategyName...)
-}
-
 type StandardAuthStrategy struct {
 	sessionManager core.ISessionStorage `container:"inject"`
 }
 
-func (thiz *StandardAuthStrategy) NewSessionWithoutUser(ctx context.Context) (string, error) {
+func (thiz *StandardAuthStrategy) NewSessionWithoutUser(ctx context.Context) (core.ISession, error) {
 	uid := uuid.NewString()
 	now := time.Now()
 
@@ -34,7 +30,7 @@ func (thiz *StandardAuthStrategy) NewSessionWithoutUser(ctx context.Context) (st
 
 	session := thiz.sessionManager.GetSessionById(hashedToken)
 	if session != nil {
-		return "", fmt.Errorf("Session %s already exists", hashedToken)
+		return nil, fmt.Errorf("session %s already exists", hashedToken)
 	}
 
 	session = &Session{
@@ -43,19 +39,34 @@ func (thiz *StandardAuthStrategy) NewSessionWithoutUser(ctx context.Context) (st
 	}
 	thiz.sessionManager.AddSession(session)
 
-	return session.GetId(), nil
+	messageContext, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext)
+	if !ok {
+		return nil, fmt.Errorf("Ctx is not core.IMessageContext instance")
+	}
+	messageContext.GetCookieManager().SetCookie(&http.Cookie{
+		Name:     core.SessionCookieName,
+		Value:    session.GetId(),
+		Path:     "/",
+		MaxAge:   0,
+		Secure:   true,
+		HttpOnly: true,
+		SameSite: http.SameSiteNoneMode,
+	})
+
+	return session, nil
 }
 
-func (thiz *StandardAuthStrategy) Login(user core.Authenticable, ctx context.Context) (string, error) {
+func (thiz *StandardAuthStrategy) Login(user core.Authenticable, ctx context.Context) (core.ISession, error) {
 	session := thiz.CurrentSession(ctx)
 
 	sessionKey := session.GetId()
 	if session == nil || (session.GetUsername() != "" && !session.IsExpired()) {
 		var err error
-		sessionKey, err = thiz.NewSessionWithoutUser(ctx)
+		session, err = thiz.NewSessionWithoutUser(ctx)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
+
 		session = thiz.sessionManager.GetSessionById(sessionKey)
 	}
 
@@ -63,7 +74,7 @@ func (thiz *StandardAuthStrategy) Login(user core.Authenticable, ctx context.Con
 
 	messageContext, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext)
 	if !ok {
-		return "", fmt.Errorf("Ctx is not core.IMessageContext instance")
+		return nil, fmt.Errorf("Ctx is not core.IMessageContext instance")
 	}
 	if cookie := messageContext.GetCookieManager().GetCookie(core.SessionCookieName); cookie == nil {
 		cookie = &http.Cookie{
@@ -79,7 +90,7 @@ func (thiz *StandardAuthStrategy) Login(user core.Authenticable, ctx context.Con
 		messageContext.GetCookieManager().SetCookie(cookie)
 	}
 
-	return sessionKey, nil
+	return session, nil
 }
 
 // IsLoggedIn
@@ -111,7 +122,7 @@ func (thiz *StandardAuthStrategy) Logout(ctx context.Context) {
 		return
 	}
 
-	thiz.sessionManager.DeleteSessionById(thiz.GetSessionId(ctx))
+	thiz.sessionManager.DeleteSessionById(thiz.ResolveSessionId(ctx))
 
 	messageContext.GetCookieManager().SetCookie(&http.Cookie{
 		Name:     core.SessionCookieName,
@@ -127,7 +138,7 @@ func (thiz *StandardAuthStrategy) Logout(ctx context.Context) {
 // CurrentUser
 // ctx - instance of core.IMessageContext
 func (thiz *StandardAuthStrategy) CurrentUser(ctx context.Context) (core.Authenticable, error) {
-	session := thiz.sessionManager.GetSessionById(thiz.GetSessionId(ctx))
+	session := thiz.sessionManager.GetSessionById(thiz.ResolveSessionId(ctx))
 	if session == nil {
 		return nil, nil
 	}
@@ -139,46 +150,7 @@ func (thiz *StandardAuthStrategy) CurrentUser(ctx context.Context) (core.Authent
 	return GetAuthEntityService().GetByUsername(session.GetUsername())
 }
 
-func (thiz *StandardAuthStrategy) GetCurrentOrCreateSession(ctx context.Context) core.ISession {
-	messageContext, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext)
-	if !ok {
-		err2.HandleError("Ctx is not core.IMessageContext instance")
-		return nil
-	}
-
-	session := thiz.CurrentSession(ctx)
-
-	if session != nil && !session.IsExpired() {
-		session.SetExpiry(session.GetExpiry().Add(time.Duration(internal.GetFrameworkRegistrar().GetSessionLifetime()) * time.Second))
-		return session
-	}
-
-	if session != nil && session.IsExpired() {
-		thiz.sessionManager.DeleteSession(session)
-	}
-
-	sessionKey, err := thiz.NewSessionWithoutUser(ctx)
-	if err != nil {
-		err2.HandleError(err)
-		return nil
-	}
-
-	session = thiz.sessionManager.GetSessionById(sessionKey)
-
-	messageContext.GetCookieManager().SetCookie(&http.Cookie{
-		Name:     core.SessionCookieName,
-		Value:    sessionKey,
-		Path:     "/",
-		MaxAge:   0,
-		Secure:   true,
-		HttpOnly: true,
-		SameSite: http.SameSiteNoneMode,
-	})
-
-	return session
-}
-
-func (thiz *StandardAuthStrategy) GetSessionId(ctx context.Context) string {
+func (thiz *StandardAuthStrategy) ResolveSessionId(ctx context.Context) string {
 	messageContext, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext)
 	if !ok {
 		err2.HandleError("Ctx is not core.IMessageContext instance")
@@ -194,9 +166,9 @@ func (thiz *StandardAuthStrategy) GetSessionId(ctx context.Context) string {
 }
 
 func (thiz *StandardAuthStrategy) CurrentSession(ctx context.Context) core.ISession {
-	return thiz.sessionManager.GetSessionById(thiz.GetSessionId(ctx))
+	return thiz.sessionManager.GetSessionById(thiz.ResolveSessionId(ctx))
 }
 
 func (thiz *StandardAuthStrategy) IsRequestMadeWithStrategy(ctx context.Context) bool {
-	return thiz.GetSessionId(ctx) != ""
+	return thiz.ResolveSessionId(ctx) != ""
 }

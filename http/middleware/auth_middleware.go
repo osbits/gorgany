@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/auth"
 	"git.qix.sx/gorgany/gorgany.git/http/router"
 	"git.qix.sx/gorgany/gorgany.git/service/dto"
 )
@@ -17,14 +18,14 @@ func (thiz AuthMiddleware) Handle(message core.HttpMessage) bool {
 	}
 
 	for _, strategy := range thiz.AuthStrategies {
-		if !message.IsLoggedIn(strategy) {
+		if !auth.Strategy(strategy).IsLoggedIn(message.Context()) {
 			continue
 		}
 		if thiz.Roles == nil || len(thiz.Roles) == 0 {
 			return true
 		}
 
-		user, err := message.CurrentUser(strategy)
+		user, err := auth.Strategy(strategy).CurrentUser(message.Context())
 		if err != nil {
 			panic(err) //todo
 		}

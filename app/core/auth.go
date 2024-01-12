@@ -6,13 +6,12 @@ import (
 )
 
 type IAuthStrategy interface {
-	NewSessionWithoutUser(ctx context.Context) (string, error)
-	Login(user Authenticable, ctx context.Context) (string, error)
+	NewSessionWithoutUser(ctx context.Context) (ISession, error)
+	Login(user Authenticable, ctx context.Context) (ISession, error)
 	IsLoggedIn(ctx context.Context) bool
 	Logout(ctx context.Context)
 	CurrentUser(ctx context.Context) (Authenticable, error)
-	GetCurrentOrCreateSession(ctx context.Context) ISession
-	GetSessionId(ctx context.Context) string
+	ResolveSessionId(ctx context.Context) string
 	IsRequestMadeWithStrategy(ctx context.Context) bool
 	CurrentSession(ctx context.Context) ISession
 }
@@ -22,7 +21,6 @@ type ISessionStorage interface {
 	AddSession(session ISession)
 	DeleteSession(session ISession)
 	DeleteSessionById(id string)
-	DeleteCurrentSession(ctx context.Context)
 	GetSessionById(id string) ISession
 }
 

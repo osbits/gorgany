@@ -9,55 +9,50 @@ import (
 	"net/url"
 )
 
-type MessageContext struct {
-	URL           *url.URL
-	RequestURI    string
-	CookieManager core.ICookieManager
-	Headers       http.Header
-	Session       core.ISession
-	Request       *http.Request
-	AuthStrategy  core.IAuthStrategy
+type messageContext struct {
+	url           *url.URL
+	requestURI    string
+	cookieManager core.ICookieManager
+	headers       http.Header
+	session       core.ISession
+	request       *http.Request
 
-	Parent context.Context
+	parentCtx context.Context
 }
 
-func (thiz MessageContext) GetURL() *url.URL {
-	return thiz.URL
+func (thiz *messageContext) GetURL() *url.URL {
+	return thiz.url
 }
 
-func (thiz MessageContext) GetRequestURL() string {
-	return thiz.RequestURI
+func (thiz *messageContext) GetRequestURL() string {
+	return thiz.requestURI
 }
 
-func (thiz MessageContext) GetCookieManager() core.ICookieManager {
-	return thiz.CookieManager
+func (thiz *messageContext) GetCookieManager() core.ICookieManager {
+	return thiz.cookieManager
 }
 
-func (thiz MessageContext) GetHeader() http.Header {
-	return thiz.Headers
+func (thiz *messageContext) GetHeader() http.Header {
+	return thiz.headers
 }
 
-func (thiz MessageContext) GetBearerToken() string {
+func (thiz *messageContext) GetBearerToken() string {
 	bearerToken := thiz.GetHeader().Get("Authorization")
 	return util.ParseBearerToken(bearerToken)
 }
 
-func (thiz MessageContext) GetPathParam(name string) string {
-	return chi.URLParamFromCtx(thiz.Parent, name)
+func (thiz *messageContext) GetPathParam(name string) string {
+	return chi.URLParamFromCtx(thiz.parentCtx, name)
 }
 
-func (thiz MessageContext) GetParent() context.Context {
-	return thiz.Parent
+func (thiz *messageContext) GetSession() core.ISession {
+	return thiz.session
 }
 
-func (thiz MessageContext) GetSession() core.ISession {
-	return thiz.Session
+func (thiz *messageContext) GetRequest() *http.Request {
+	return thiz.request
 }
 
-func (thiz MessageContext) GetRequest() *http.Request {
-	return thiz.Request
-}
-
-func (thiz MessageContext) GetAuthStrategy() core.IAuthStrategy {
-	return thiz.AuthStrategy
+func (thiz *messageContext) GetParent() context.Context {
+	return thiz.parentCtx
 }

@@ -19,7 +19,7 @@ func NewLoginController() *LoginController {
 type LoginController struct{}
 
 func (thiz LoginController) ShowLogin(message core.HttpMessage) {
-	if message.IsLoggedIn() {
+	if auth.Strategy().IsLoggedIn(message.Context()) {
 		message.Redirect(internal.GetFrameworkRegistrar().GetHomeUrl(), 301)
 	}
 
@@ -27,7 +27,7 @@ func (thiz LoginController) ShowLogin(message core.HttpMessage) {
 }
 
 func (thiz LoginController) Login(message core.HttpMessage) {
-	if message.IsLoggedIn() {
+	if auth.Strategy().IsLoggedIn(message.Context()) {
 		message.Redirect(internal.GetFrameworkRegistrar().GetHomeUrl(), 301)
 	}
 
@@ -47,13 +47,18 @@ func (thiz LoginController) Login(message core.HttpMessage) {
 		return
 	}
 
-	message.Login(user)
+	_, err = auth.Strategy().Login(user, message.Context())
+	if err != nil {
+		err2.HandleError(err)
+		message.RedirectWithParams(router.GetRouter().UrlByNameSequence("cp.login.show"), 301, map[string]any{"error": fmt.Sprintf("Unexpected error during find user %s in our storage", username)})
+		return
+	}
 
 	message.Redirect(internal.GetFrameworkRegistrar().GetHomeUrl(), 301)
 }
 
 func (thiz LoginController) Logout(message core.HttpMessage) {
-	message.Logout()
+	auth.Strategy().Logout(message.Context())
 	message.Redirect(router.GetRouter().UrlByNameSequence("cp.login.show"), http.StatusTemporaryRedirect)
 }
 
