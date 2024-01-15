@@ -75,7 +75,7 @@ func processValidationErrors(error error, message core.HttpMessage) {
 		message.ResponseJSON(dto.ReturnObject(nil, core.ValidationHttpStatus, error), 200)
 		return
 	}
-	message.RedirectWithParams(req.Referer(), 301, map[string]any{"validation": concreteError.Errors})
+	message.RedirectWithParams(req.Referer(), 301, map[string]any{"validation": concreteError})
 }
 
 func processInputParsingError(error error, message core.HttpMessage) {

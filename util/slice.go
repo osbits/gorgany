@@ -35,7 +35,7 @@ func Pluck(slice any, key string) []any {
 }
 
 func InterfaceSlice(slice interface{}) []interface{} {
-	s := reflect.ValueOf(slice)
+	s := IndirectValue(reflect.ValueOf(slice))
 	if s.Kind() != reflect.Slice {
 		panic("InterfaceSlice() given a non-slice type")
 	}

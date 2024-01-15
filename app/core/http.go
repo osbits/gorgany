@@ -2,12 +2,14 @@ package core
 
 import (
 	"context"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/url"
 )
 
 type HttpMessage interface {
+	io.Closer
 	GetRequest() *http.Request
 	GetWriter() http.ResponseWriter
 	GetPathParam(key string) string
@@ -23,9 +25,7 @@ type HttpMessage interface {
 	SetCookie(cookie *http.Cookie)
 	RedirectWithParams(url string, redirectCode int, params map[string]any)
 	Redirect(url string, redirectCode int)
-	OneTimeParams() map[string][]string
-	GetOneTimeParam(key string) string
-	ClearOneTimeParams()
+	OneTimeParams() map[string]any
 	GetBearerToken() string
 	GetQueryParam(key string) string
 	GetQueryParams(key string) []string
@@ -57,6 +57,8 @@ type IMessageContext interface {
 type ISimpleStorage interface {
 	GetItem(key string) string
 	SetItem(key string, value string)
+	ClearItem(attribute string)
+	ClearItems()
 }
 
 type ICookieManager interface {

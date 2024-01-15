@@ -144,40 +144,46 @@ func (thiz *Message) SetCookie(cookie *http.Cookie) {
 }
 
 func (thiz *Message) RedirectWithParams(url string, redirectCode int, params map[string]any) {
-	oneTimeParams := url2.Values{}
-
-	addToValues := func(key string, value any, otParams *url2.Values) {
-		var val string
-
-		str, ok := value.(fmt.Stringer)
-		if ok {
-			val = str.String()
-		} else {
-			val = fmt.Sprintf("%v", value)
-		}
-
-		oneTimeParams.Add(key, fmt.Sprintf("%v", val))
+	oneTimeParams := model.OneTimeParams{
+		Values: make(map[string]any),
+		Start:  true,
 	}
 
 	for key, value := range params {
-		kind := reflect.TypeOf(value)
-		if kind.Kind() == reflect.Slice {
+		rType := util.IndirectType(reflect.TypeOf(value))
+		if rType.Kind() == reflect.Slice {
 			slice := util.InterfaceSlice(value)
+			if oneTimeParams.Values[key] == nil {
+				oneTimeParams.Values[key] = make([]any, 0)
+			}
 			for _, sliceValue := range slice {
-				addToValues(key, sliceValue, &oneTimeParams)
+				val := value
+
+				str, ok := sliceValue.(fmt.Stringer)
+				if ok {
+					val = str.String()
+				}
+
+				oneTimeParams.Values[key] = append(oneTimeParams.Values[key].([]any), val)
 			}
 		} else {
-			addToValues(key, value, &oneTimeParams)
+			val := value
+
+			str, ok := value.(fmt.Stringer)
+			if ok {
+				val = str.String()
+			}
+
+			oneTimeParams.Values[key] = val
 		}
 	}
-	thiz.SetCookie(&http.Cookie{
-		Name:     core.OneTimeParamsCookieName,
-		Value:    oneTimeParams.Encode(),
-		Path:     "/",
-		Expires:  time.Now().Add(time.Duration(1) * time.Second),
-		Secure:   true,
-		HttpOnly: true,
-	})
+
+	buf, err := json.Marshal(oneTimeParams)
+	if err != nil {
+		err2.HandleError(err)
+	} else {
+		thiz.GetSession().SetItem(core.OneTimeSessionAttributeKey, string(buf))
+	}
 
 	url = util.AddLocaleToURL(thiz.Locale(), url)
 	http.Redirect(thiz.writer, thiz.request, url, redirectCode)
@@ -188,42 +194,22 @@ func (thiz *Message) Redirect(url string, redirectCode int) {
 	http.Redirect(thiz.writer, thiz.request, url, redirectCode)
 }
 
-func (thiz *Message) OneTimeParams() map[string][]string {
-	oneTimeParams := url2.Values{}
+func (thiz *Message) OneTimeParams() map[string]any {
+	params := thiz.GetSession().GetItem(core.OneTimeSessionAttributeKey)
 
-	cookie, err := thiz.request.Cookie(core.OneTimeParamsCookieName)
+	if params == "" {
+		return nil
+	}
+
+	oneTimeParams := model.OneTimeParams{}
+
+	err := json.Unmarshal([]byte(params), &oneTimeParams)
 	if err != nil {
-		if strings.Contains(err.Error(), "named cookie not present") {
-			return oneTimeParams
-		}
-		panic(err)
+		err2.HandleError(err)
+		return nil
 	}
 
-	oneTimeParams, err = url2.ParseQuery(cookie.Value)
-	if err != nil {
-		panic(err) //todo
-	}
-	return oneTimeParams
-}
-
-func (thiz *Message) GetOneTimeParam(key string) string {
-	oneTimeParams := thiz.OneTimeParams()
-	val, ok := oneTimeParams[key]
-	if !ok {
-		return ""
-	}
-	return val[0]
-}
-
-func (thiz *Message) ClearOneTimeParams() {
-	thiz.SetCookie(&http.Cookie{
-		Name:     core.OneTimeParamsCookieName,
-		Value:    "",
-		Path:     "/",
-		Expires:  time.Now().Add(time.Duration(1) * time.Second),
-		Secure:   true,
-		HttpOnly: true,
-	})
+	return oneTimeParams.Values
 }
 
 func (thiz *Message) GetBearerToken() string {
@@ -459,6 +445,11 @@ func (thiz *Message) GetCookieManager() core.ICookieManager {
 	return thiz.cookieManager
 }
 
+func (thiz *Message) Close() error {
+	thiz.clearOneTimeParams()
+	return nil
+}
+
 func (thiz *Message) addOptionsToView(options map[string]any) map[string]any {
 	authUser, _ := auth.ResolveAuthStrategyByContext(thiz.Context()).CurrentUser(thiz.Context())
 
@@ -484,6 +475,7 @@ func (thiz *Message) setSession() {
 	if session != nil && !session.IsExpired() {
 		session.SetExpiry(session.GetExpiry().Add(time.Duration(internal.GetFrameworkRegistrar().GetSessionLifetime()) * time.Second))
 		thiz.currentSession = session
+		thiz.makeOneTimeParamsUsed()
 		return
 	}
 
@@ -508,4 +500,46 @@ func (thiz *Message) setSession() {
 	})
 
 	thiz.currentSession = session
+}
+
+func (thiz *Message) makeOneTimeParamsUsed() {
+	item := thiz.GetSession().GetItem(core.OneTimeSessionAttributeKey)
+	if item == "" {
+		return
+	}
+	oneTimeParams := model.OneTimeParams{}
+	err := json.Unmarshal([]byte(item), &oneTimeParams)
+	if err != nil {
+		err2.HandleError(err)
+		return
+	}
+
+	oneTimeParams.Start = false
+
+	buf, err := json.Marshal(oneTimeParams)
+	if err != nil {
+		err2.HandleError(err)
+		return
+	}
+
+	thiz.GetSession().SetItem(core.OneTimeSessionAttributeKey, string(buf))
+}
+
+func (thiz *Message) clearOneTimeParams() {
+	item := thiz.GetSession().GetItem(core.OneTimeSessionAttributeKey)
+	if item == "" {
+		return
+	}
+	oneTimeParams := model.OneTimeParams{}
+	err := json.Unmarshal([]byte(item), &oneTimeParams)
+	if err != nil {
+		err2.HandleError(err)
+		return
+	}
+
+	if oneTimeParams.Start {
+		return
+	}
+
+	thiz.GetSession().ClearItem(core.OneTimeSessionAttributeKey)
 }

@@ -13,27 +13,32 @@ func GetSessionStorage() core.ISessionStorage {
 
 // concrete session
 type Session struct {
-	id       string
-	expiry   time.Time
-	username string
-	extra    map[string]string
+	id         string
+	expiry     time.Time
+	username   string
+	attributes map[string]string
+	mu         sync.Mutex
 }
 
 func (thiz *Session) GetId() string {
 	return thiz.id
 }
 
-// SetItem is used to set extra item in session
+// SetItem is used to set attributes item in session
 func (thiz *Session) SetItem(key string, value string) {
-	if thiz.extra == nil {
-		thiz.extra = make(map[string]string)
+	thiz.mu.Lock()
+	if thiz.attributes == nil {
+		thiz.attributes = make(map[string]string)
 	}
-	thiz.extra[key] = value
+	thiz.attributes[key] = value
+	thiz.mu.Unlock()
 }
 
-// GetItem is used to get extra item in session
+// GetItem is used to get attributes item in session
 func (thiz *Session) GetItem(key string) string {
-	if value, ok := thiz.extra[key]; ok {
+	thiz.mu.Lock()
+	defer thiz.mu.Unlock()
+	if value, ok := thiz.attributes[key]; ok {
 		return value
 	}
 	return ""
@@ -57,6 +62,18 @@ func (thiz *Session) SetExpiry(t time.Time) {
 
 func (thiz *Session) GetExpiry() time.Time {
 	return thiz.expiry
+}
+
+func (thiz *Session) ClearItem(attribute string) {
+	thiz.mu.Lock()
+	delete(thiz.attributes, attribute)
+	thiz.mu.Unlock()
+}
+
+func (thiz *Session) ClearItems() {
+	thiz.mu.Lock()
+	thiz.attributes = make(map[string]string)
+	thiz.mu.Unlock()
 }
 
 // MemorySession memory-bases session manager

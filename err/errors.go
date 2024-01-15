@@ -40,20 +40,18 @@ func HandleErrorWithStacktrace(err any) {
 }
 
 // Validation
-type ValidationErrors struct {
-	Errors []ValidationError `json:"validation"`
-}
+type ValidationErrors []ValidationError
 
-func (thiz *ValidationErrors) Error() string {
+func (thiz ValidationErrors) Error() string {
 	errs := make([]string, 0)
-	for _, err := range thiz.Errors {
+	for _, err := range thiz {
 		errs = append(errs, err.Error())
 	}
 	return strings.Join(errs, "\n")
 }
 
 func (thiz *ValidationErrors) AddValidationError(validationError ValidationError) {
-	thiz.Errors = append(thiz.Errors, validationError)
+	*thiz = append(*thiz, validationError)
 }
 
 type ValidationError struct {
@@ -61,8 +59,12 @@ type ValidationError struct {
 	Err   string `json:"err"`
 }
 
-func (thiz ValidationError) Error() string {
+func (thiz ValidationError) String() string {
 	return fmt.Sprintf("Field: %s, Error: %v", thiz.Field, thiz.Err)
+}
+
+func (thiz ValidationError) Error() string {
+	return thiz.String()
 }
 
 // InputParamParseError

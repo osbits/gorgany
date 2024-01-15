@@ -13,6 +13,13 @@ import (
 
 func Dispatch(w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, middlewares []core.IMiddleware) {
 	message := &Message{}
+	defer func() {
+		err := message.Close()
+		if err != nil {
+			err2.HandleError(err)
+		}
+	}()
+
 	err := service.GetContainer().Make(message, map[string]any{"writer": w, "request": r})
 	if err != nil {
 		err2.HandleErrorWithStacktrace(err)
