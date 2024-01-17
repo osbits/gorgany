@@ -489,16 +489,6 @@ func (thiz *Message) setSession() {
 		return
 	}
 
-	thiz.SetCookie(&http.Cookie{
-		Name:     core.SessionCookieName,
-		Value:    session.GetId(),
-		Path:     "/",
-		MaxAge:   0,
-		Secure:   true,
-		HttpOnly: true,
-		SameSite: http.SameSiteNoneMode,
-	})
-
 	thiz.currentSession = session
 }
 
