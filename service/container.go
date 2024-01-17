@@ -261,13 +261,30 @@ func (thiz Container) fill(structure interface{}, chainOfDependencies map[string
 	}
 
 	if receiverType.Kind() == reflect.Ptr {
-		elem := receiverType.Elem()
-		if elem.Kind() == reflect.Struct {
+		indirectReceiverType := receiverType.Elem()
+		if indirectReceiverType.Kind() == reflect.Struct {
 			s := reflect.ValueOf(structure).Elem()
 			rtStruct := s.Type()
 
 			for i := 0; i < s.NumField(); i++ {
 				f := s.Field(i)
+
+				structField := indirectReceiverType.Field(i)
+				if structField.Anonymous {
+					fType := structField.Type
+					if fType.Kind() == reflect.Ptr {
+						if err := thiz.fill(f.Interface(), chainOfDependencies); err != nil {
+							return err
+						}
+					} else if fType.Kind() == reflect.Struct {
+						ptr := reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr()))
+						if err := thiz.fill(ptr.Interface(), chainOfDependencies); err != nil {
+							return err
+						}
+					}
+
+					continue
+				}
 
 				if t, exist := s.Type().Field(i).Tag.Lookup("container"); exist {
 					name := s.Type().Field(i).Name

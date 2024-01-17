@@ -35,6 +35,11 @@ func (thiz *RouteProvider) RegisterRouter(router core.Router) {
 }
 
 func (thiz *RouteProvider) RegisterController(controller core.IController) {
+	if err := service.GetContainer().Make(controller); err != nil {
+		err2.HandleError(err)
+		return
+	}
+
 	availableLangsRegex := thiz.buildLangRegex()
 	routerEngine := thiz.router.Engine().(chi.Router)
 

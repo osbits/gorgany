@@ -9,6 +9,7 @@ import (
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/internal"
 	"github.com/google/uuid"
+	"github.com/spf13/viper"
 	"math/rand"
 	"net/http"
 	"time"
@@ -51,6 +52,7 @@ func (thiz *StandardAuthStrategy) NewSessionWithoutUser(ctx context.Context) (co
 		Secure:   true,
 		HttpOnly: true,
 		SameSite: http.SameSiteNoneMode,
+		Domain:   viper.GetString("auth.session.cookie.domain"),
 	})
 
 	return session, nil
@@ -85,6 +87,7 @@ func (thiz *StandardAuthStrategy) Login(user core.Authenticable, ctx context.Con
 			Secure:   true,
 			HttpOnly: true,
 			SameSite: http.SameSiteNoneMode,
+			Domain:   viper.GetString("auth.session.cookie.domain"),
 		}
 
 		messageContext.GetCookieManager().SetCookie(cookie)
@@ -132,6 +135,7 @@ func (thiz *StandardAuthStrategy) Logout(ctx context.Context) {
 		Secure:   true,
 		HttpOnly: true,
 		SameSite: http.SameSiteNoneMode,
+		Domain:   viper.GetString("auth.session.cookie.domain"),
 	})
 }
 

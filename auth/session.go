@@ -12,6 +12,10 @@ func GetSessionStorage() core.ISessionStorage {
 }
 
 // concrete session
+func NewSession(id string, expiry time.Time) *Session {
+	return &Session{}
+}
+
 type Session struct {
 	id         string
 	expiry     time.Time

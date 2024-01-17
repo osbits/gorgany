@@ -174,7 +174,7 @@ func (thiz *GorganyOrm[T]) CountRelation(relation string) (int64, error) {
 	return thiz.builder.CountRelation(relation)
 }
 
-func (thiz *GorganyOrm[T]) ReplaceRelation(relation string) error {
+func (thiz *GorganyOrm[T]) ReplaceRelation(relation string, values ...any) error {
 	thiz.setBuilder()
 	return thiz.builder.ReplaceRelation(relation)
 }
