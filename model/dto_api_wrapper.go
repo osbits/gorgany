@@ -5,6 +5,7 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/iancoleman/strcase"
 	"reflect"
 	"strings"
 )
@@ -109,12 +110,30 @@ func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (map[string
 	for i := 0; i < element.NumField(); i++ {
 		rvField := element.Field(i)
 		rtField := element.Type().Field(i)
+		isStruct := true
 
 		if !rtField.IsExported() {
 			continue
 		}
 
-		if !util.InArray(rtField.Name, allowedFields) && (len(allowedFields) > 0 && allowedFields[0] != "*") {
+		if util.IndirectType(rtField.Type).Kind() == reflect.Struct {
+			if _, ok := rvField.Interface().(core.LimitedFieldsMarshaller); ok {
+				if rtField.Anonymous {
+					nestedElement, err := thiz.buildBodyElement(util.IndirectValue(rvField))
+					if err != nil {
+						return nil, err
+					}
+					body = util.MergeMaps(body, nestedElement)
+				}
+				continue
+			}
+			isStruct = true
+		}
+
+		allowField := util.InArrayFunc(allowedFields, func(el string) bool {
+			return strings.ToLower(strcase.ToLowerCamel(strings.ToLower(el))) == strings.ToLower(strcase.ToLowerCamel(rtField.Name))
+		})
+		if !allowField && (len(allowedFields) > 0 && allowedFields[0] != "*") {
 			continue
 		}
 
@@ -134,22 +153,13 @@ func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (map[string
 			continue
 		}
 
-		if util.IndirectType(rtField.Type).Kind() == reflect.Struct {
+		if isStruct {
 			if _, ok := rvField.Interface().(core.LimitedFieldsMarshaller); ok {
-				if rtField.Anonymous {
-					nestedElement, err := thiz.buildBodyElement(util.IndirectValue(rvField))
-					if err != nil {
-						return nil, err
-					}
-					body = util.MergeMaps(body, nestedElement)
-				} else {
-					nestedElement, err := thiz.buildBodyElement(util.IndirectValue(rvField))
-					if err != nil {
-						return nil, err
-					}
-					body[jsonFieldName] = nestedElement
+				nestedElement, err := thiz.buildBodyElement(util.IndirectValue(rvField))
+				if err != nil {
+					return nil, err
 				}
-
+				body[jsonFieldName] = nestedElement
 				continue
 			}
 

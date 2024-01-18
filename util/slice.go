@@ -16,6 +16,16 @@ func InArray(value any, slice any) bool {
 	return false
 }
 
+func InArrayFunc[T any](slice []T, callback func(element T) bool) bool {
+	for i := range slice {
+		el := slice[i]
+		if callback(el) {
+			return true
+		}
+	}
+	return false
+}
+
 func Pluck(slice any, key string) []any {
 	keySlice := make([]any, 0)
 
