@@ -29,7 +29,8 @@ type Message struct {
 	request     *http.Request
 	renderer    *view2.EngineRenderer `container:"inject"`
 	cachedQuery *decoder.QueryParams
-	args        []reflect.Value
+
+	inputParameters []reflect.Value
 }
 
 func (thiz Message) Init() {
@@ -402,8 +403,8 @@ func (thiz Message) Context() context.Context {
 	return context.WithValue(parentRequest, core.MessageContextKey, messageContext)
 }
 
-func (thiz Message) GetArgs() []reflect.Value {
-	return thiz.args
+func (thiz Message) GetInputParameters() []reflect.Value {
+	return thiz.inputParameters
 }
 
 func (thiz Message) addOptionsToView(options map[string]any) map[string]any {

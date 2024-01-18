@@ -13,7 +13,7 @@ type AccessCheckerMiddleware struct {
 func (thiz AccessCheckerMiddleware) Handle(message core.HttpMessage) bool {
 	var accessCheckerCommand core.HttpAccessCommand
 
-	args := message.GetArgs()
+	args := message.GetInputParameters()
 	for _, arg := range args {
 		if !util.IndirectType(arg.Type()).Implements(reflect.TypeOf((*core.HttpAccessCommand)(nil)).Elem()) {
 			continue

@@ -66,7 +66,7 @@ func (thiz inputResolver) resolve() ([]reflect.Value, error) {
 		args = append(args, reflect.Indirect(reflect.ValueOf(arg)))
 	}
 
-	thiz.message.args = args
+	thiz.message.inputParameters = args
 
 	return args, nil
 }
@@ -109,6 +109,10 @@ type jsonParser struct {
 }
 
 func (thiz jsonParser) parse(arg interface{}) error {
+	if len(thiz.message.GetBody()) == 0 { // todo: check it
+		return nil
+	}
+
 	err := json.Unmarshal(thiz.message.GetBody(), arg)
 	if err != nil {
 		validationErrors := error2.ValidationErrors{make([]error2.ValidationError, 0)}
@@ -119,10 +123,7 @@ func (thiz jsonParser) parse(arg interface{}) error {
 				Err:   typeError.Error(),
 			})
 		} else {
-			validationErrors.AddValidationError(error2.ValidationError{
-				Field: core.GeneralError,
-				Err:   err.Error(),
-			})
+			checkAndAddIfValidationError(err, &validationErrors)
 		}
 		return &validationErrors
 	}
@@ -146,10 +147,7 @@ func (thiz multipartParser) parse(arg interface{}) error {
 				validationErrors.AddValidationError(error2.ValidationError{Field: key, Err: err.Error()})
 			}
 		} else {
-			validationErrors.AddValidationError(error2.ValidationError{
-				Field: core.GeneralError,
-				Err:   err.Error(),
-			})
+			checkAndAddIfValidationError(err, &validationErrors)
 		}
 		return &validationErrors
 	}
@@ -187,13 +185,21 @@ func (thiz queryParser) parse(arg interface{}) error {
 				validationErrors.AddValidationError(error2.ValidationError{Field: key, Err: err.Error()})
 			}
 		} else {
-			validationErrors.AddValidationError(error2.ValidationError{
-				Field: core.GeneralError,
-				Err:   err.Error(),
-			})
+			checkAndAddIfValidationError(err, &validationErrors)
 		}
 		return &validationErrors
 	}
 
 	return nil
+}
+
+func checkAndAddIfValidationError(err error, validationErrors *error2.ValidationErrors) {
+	if errors.Is(err, &error2.ValidationError{}) {
+		validationErrors.AddValidationError(err.(error2.ValidationError))
+		return
+	}
+	validationErrors.AddValidationError(error2.ValidationError{
+		Field: core.GeneralError,
+		Err:   err.Error(),
+	})
 }

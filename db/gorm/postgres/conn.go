@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/db/orm"
-	model2 "git.qix.sx/gorgany/gorgany.git/service/cache"
 	"git.qix.sx/gorgany/gorgany.git/err"
+	model2 "git.qix.sx/gorgany/gorgany.git/service/cache"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"git.qix.sx/gorgany/gorgany.git/validator"
 	"github.com/spf13/viper"
@@ -13,7 +13,6 @@ import (
 	"gorm.io/gorm/schema"
 	"reflect"
 	"strings"
-	"sync"
 )
 
 const RecursiveRelationMaxDeep = 2

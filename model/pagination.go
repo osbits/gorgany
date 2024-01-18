@@ -3,12 +3,43 @@ package model
 import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
+	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/service/cache"
 	"gorm.io/gorm/schema"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// DomainFilters is used to domain`s filter, it`s validated according fields in domain
+type DomainFilters[T any] []*DomainFilter[T]
+
+func (thiz DomainFilters[T]) GetFilters() []Filter {
+	filters := make([]Filter, 0)
+	for _, filter := range thiz {
+		filters = append(filters, *filter.Filter)
+	}
+	return filters
+}
+
+type DomainFilter[T any] struct {
+	Filter *Filter
+}
+
+func (thiz *DomainFilter[T]) FromMap(params map[string]string) error {
+	var domain T
+	filter, err := NewFilter(params["field"], params["operator"], params["value"], domain)
+	if err != nil {
+		return err
+	}
+
+	thiz.Filter = filter
+	return nil
+}
+
+func (thiz *DomainFilter[T]) GetValue() any {
+	return thiz.Filter.GetValue()
+}
 
 type Filter struct {
 	Field    string
@@ -53,7 +84,10 @@ func NewFilter(field string, operator string, value string, domain any) (*Filter
 	case schema.Int:
 		v, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("Filter: Fjeld(%s) is integer, but value(%s) is not integer", field, value)
+			return nil, err2.ValidationError{
+				Field: "filter." + field,
+				Err:   "Field is integer, but value(%s) is not integer",
+			}
 		}
 		filterValue = v
 	case schema.Bool:
@@ -119,6 +153,9 @@ func NewSortParam(field string, order string) (*SortParam, error) {
 }
 
 func NewPaginationParams(page int, pageSize int, sort []SortParam, filters []Filter) *PaginationParams {
+	if pageSize == 0 {
+		pageSize = 50 //todo
+	}
 	return &PaginationParams{
 		Page:     page,
 		PageSize: pageSize,
