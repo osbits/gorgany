@@ -6,7 +6,6 @@ import (
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/spf13/viper"
-	"os"
 )
 
 type JwtAuthStrategy struct {
@@ -34,14 +33,14 @@ func (thiz *JwtAuthStrategy) IsLoggedIn(ctx context.Context) bool {
 	}
 
 	bearerToken := messageContext.GetBearerToken()
-	return thiz.jwtService.ValidateJwt(bearerToken)
+	return thiz.jwtService.ValidateJwt(bearerToken, viper.GetString("auth.jwt.secret"))
 }
 
 func (thiz *JwtAuthStrategy) Logout(ctx context.Context) {
 }
 
 func (thiz *JwtAuthStrategy) CurrentUser(ctx context.Context) (core.Authenticable, error) {
-	return thiz.jwtService.CurrentUser(ctx)
+	return thiz.jwtService.CurrentUser(ctx, viper.GetString("auth.jwt.secret"))
 }
 
 func (thiz *JwtAuthStrategy) ResolveSessionId(ctx context.Context) string {
@@ -65,7 +64,7 @@ func (thiz *JwtAuthStrategy) IsRequestMadeWithStrategy(ctx context.Context) bool
 	}
 
 	_, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
-		return []byte(os.Getenv("JWT_SECRET_KEY")), nil
+		return []byte(viper.GetString("auth.jwt.secret")), nil
 	})
 	if err != nil {
 		return false
