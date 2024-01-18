@@ -27,7 +27,7 @@ func validateMimeType(fl goValidator.FieldLevel) bool {
 		return false
 	}
 
-	if string(fileJson) == "{}" {
+	if string(fileJson) == "null" {
 		return true
 	}
 
