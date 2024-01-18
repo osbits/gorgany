@@ -37,7 +37,7 @@ func (thiz LoginController) Login(message core.HttpMessage) {
 	password := values.Get("password")
 	user, err := auth.GetAuthEntityService().GetByUsername(username)
 	if err != nil {
-		err2.HandleErrorWithStacktrace(err)
+		err2.HandleError(err)
 		message.RedirectWithParams(router.GetRouter().UrlByNameSequence("cp.login.show"), 301, map[string]any{"error": fmt.Sprintf("Unexpected error during find user %s in our storage", username)})
 		return
 	}

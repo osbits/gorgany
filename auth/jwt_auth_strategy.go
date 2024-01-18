@@ -2,7 +2,6 @@ package auth
 
 import (
 	"context"
-	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"github.com/golang-jwt/jwt/v5"
@@ -14,12 +13,17 @@ type JwtAuthStrategy struct {
 	jwtService *JwtService `container:"inject"`
 }
 
-func (thiz *JwtAuthStrategy) NewSessionWithoutUser(ctx context.Context) (string, error) {
-	return "", nil
+func (thiz *JwtAuthStrategy) NewSessionWithoutUser(ctx context.Context) (core.ISession, error) {
+	return nil, nil
 }
 
-func (thiz *JwtAuthStrategy) Login(user core.Authenticable, ctx context.Context) (string, error) {
-	return thiz.jwtService.GenerateJwt(user, viper.GetString("auth.jwt.secret"))
+func (thiz *JwtAuthStrategy) Login(user core.Authenticable, ctx context.Context) (core.ISession, error) {
+	jwt, err := thiz.jwtService.GenerateJwt(user, viper.GetString("auth.jwt.secret"))
+	if err != nil {
+		return nil, err
+	}
+
+	return &Session{id: jwt}, nil
 }
 
 func (thiz *JwtAuthStrategy) IsLoggedIn(ctx context.Context) bool {
@@ -40,11 +44,7 @@ func (thiz *JwtAuthStrategy) CurrentUser(ctx context.Context) (core.Authenticabl
 	return thiz.jwtService.CurrentUser(ctx)
 }
 
-func (thiz *JwtAuthStrategy) GetCurrentOrCreateSession(ctx context.Context) core.ISession {
-	return nil
-}
-
-func (thiz *JwtAuthStrategy) GetSessionId(ctx context.Context) string {
+func (thiz *JwtAuthStrategy) ResolveSessionId(ctx context.Context) string {
 	return ""
 }
 
@@ -60,11 +60,14 @@ func (thiz *JwtAuthStrategy) IsRequestMadeWithStrategy(ctx context.Context) bool
 	}
 
 	token := messageContext.GetBearerToken()
+	if token == "" {
+		return false
+	}
+
 	_, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
 		return []byte(os.Getenv("JWT_SECRET_KEY")), nil
 	})
 	if err != nil {
-		fmt.Println(err)
 		return false
 	}
 

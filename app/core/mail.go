@@ -1,8 +1,10 @@
 package core
 
+import "context"
+
 type IMail interface {
 	GetRecipients() []string
-	GetBody() ([]byte, error)
+	GetBody(ctx context.Context) ([]byte, error)
 	GetSubject() string
 	GetAttachments() ([]IAttachment, error)
 }

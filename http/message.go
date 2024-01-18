@@ -195,7 +195,12 @@ func (thiz *Message) Redirect(url string, redirectCode int) {
 }
 
 func (thiz *Message) OneTimeParams() map[string]any {
-	params := thiz.GetSession().GetItem(core.OneTimeSessionAttributeKey)
+	session := thiz.GetSession()
+	if session == nil {
+		return nil
+	}
+
+	params := session.GetItem(core.OneTimeSessionAttributeKey)
 
 	if params == "" {
 		return nil
@@ -451,6 +456,11 @@ func (thiz *Message) Close() error {
 }
 
 func (thiz *Message) addOptionsToView(options map[string]any) map[string]any {
+	authStrategy := auth.ResolveAuthStrategyByContext(thiz.Context())
+	if authStrategy == nil {
+		return nil
+	}
+
 	authUser, _ := auth.ResolveAuthStrategyByContext(thiz.Context()).CurrentUser(thiz.Context())
 
 	if authUser != nil {
@@ -516,7 +526,12 @@ func (thiz *Message) makeOneTimeParamsUsed() {
 }
 
 func (thiz *Message) clearOneTimeParams() {
-	item := thiz.GetSession().GetItem(core.OneTimeSessionAttributeKey)
+	session := thiz.GetSession()
+	if session == nil {
+		return
+	}
+
+	item := session.GetItem(core.OneTimeSessionAttributeKey)
 	if item == "" {
 		return
 	}
