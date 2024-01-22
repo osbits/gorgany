@@ -34,6 +34,19 @@ func (m MySQL) Connect() bool {
 	return true
 }
 
+type FigureService struct{}
+
+type Figure struct {
+	service *FigureService `container:"inject"`
+}
+
+type RectangleService struct{}
+
+type Rectangle struct {
+	Figure
+	rectService *RectangleService `container:"inject"`
+}
+
 var instance = NewContainer()
 
 func TestContainer_Singleton(t *testing.T) {
@@ -535,4 +548,15 @@ func TestContainer_Fill_With_Dependency_Missing_In_Chain(t *testing.T) {
 
 	err = instance.Make(&myApp)
 	assert.EqualError(t, err, "container: no concrete found for: service.Shape")
+}
+
+func TestContainer_Fill_With_Embedded_Struct(t *testing.T) {
+	var instance = NewContainer()
+
+	rect := &Rectangle{}
+	err := instance.Make(rect)
+	assert.NoError(t, err)
+
+	assert.NotNil(t, rect.rectService)
+	assert.NotNil(t, rect.service)
 }
