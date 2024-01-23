@@ -500,6 +500,13 @@ func (thiz *Message) setSession() {
 	}
 
 	thiz.currentSession = session
+
+	ctx := thiz.Context()
+	if msgCtx, ok := ctx.Value(core.MessageContextKey).(*messageContext); ok {
+		if msgCtx.session == nil {
+			msgCtx.session = session
+		}
+	}
 }
 
 func (thiz *Message) makeOneTimeParamsUsed() {

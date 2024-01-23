@@ -61,15 +61,12 @@ func (thiz *StandardAuthStrategy) NewSessionWithoutUser(ctx context.Context) (co
 func (thiz *StandardAuthStrategy) Login(user core.Authenticable, ctx context.Context) (core.ISession, error) {
 	session := thiz.CurrentSession(ctx)
 
-	sessionKey := session.GetId()
 	if session == nil || (session.GetUsername() != "" && !session.IsExpired()) {
 		var err error
 		session, err = thiz.NewSessionWithoutUser(ctx)
 		if err != nil {
 			return nil, err
 		}
-
-		session = thiz.sessionManager.GetSessionById(sessionKey)
 	}
 
 	session.SetUsername(user.GetUsername())
@@ -81,7 +78,7 @@ func (thiz *StandardAuthStrategy) Login(user core.Authenticable, ctx context.Con
 	if cookie := messageContext.GetCookieManager().GetCookie(core.SessionCookieName); cookie == nil {
 		cookie = &http.Cookie{
 			Name:     core.SessionCookieName,
-			Value:    sessionKey,
+			Value:    session.GetId(),
 			Path:     "/",
 			MaxAge:   0,
 			Secure:   true,

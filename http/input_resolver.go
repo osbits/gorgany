@@ -89,7 +89,7 @@ type bodyParser interface {
 }
 
 func resolveBodyParser(contentType string, message *Message) bodyParser {
-	if contentType == core.ApplicationJson {
+	if contentType == core.ApplicationJson || message.IsApiNamespace() {
 		return jsonParser{message: message}
 	} else if strings.Contains(contentType, core.MultipartFormData) {
 		return multipartParser{message: message}
