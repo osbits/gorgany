@@ -7,7 +7,6 @@ import (
 	model2 "git.qix.sx/gorgany/gorgany.git/service/cache"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"git.qix.sx/gorgany/gorgany.git/validator"
-	"github.com/spf13/viper"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 	"reflect"
@@ -211,9 +210,6 @@ func (thiz *Builder) DeleteQuery() (string, []any) {
 	from, args := thiz.BuildFrom()
 	where, whereArgs := thiz.BuildWhere()
 	args = append(args, whereArgs...)
-	if viper.GetBool("databases.postgres_gorm.log") == true {
-		fmt.Printf("DELETE FROM %s %s\n", from, where)
-	}
 	return fmt.Sprintf("DELETE FROM %s %s", from, where), args
 }
 
@@ -460,7 +456,7 @@ func (thiz *Builder) Raw(sql string, scan any, values ...any) error {
 	res := thiz.GetDriver().Raw(sql, values...)
 
 	rvScan := reflect.ValueOf(scan)
-	if rvScan.Kind() != reflect.Ptr { //nil ??
+	if rvScan.Kind() != reflect.Ptr && scan != nil {
 		return fmt.Errorf("Scan must be pointer")
 	}
 

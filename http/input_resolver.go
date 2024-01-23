@@ -46,6 +46,10 @@ func (thiz inputResolver) resolve() ([]reflect.Value, error) {
 			var err error
 			arg, err = resolvePrimitive(in.Kind(), param)
 			if err != nil {
+				parseError := &error2.InputParamParseError{}
+				if errors.As(err, &parseError) {
+					return nil, &error2.ValidationErrors{{Field: core.GeneralError, Err: parseError.Error()}}
+				}
 				return nil, err
 			}
 			indexOfPrimitiveArguemnt++
