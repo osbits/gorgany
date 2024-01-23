@@ -158,6 +158,10 @@ func (thiz *StandardAuthStrategy) ResolveSessionId(ctx context.Context) string {
 		return ""
 	}
 
+	if messageContext.GetSession() != nil {
+		return messageContext.GetSession().GetId()
+	}
+
 	cookie := messageContext.GetCookieManager().GetCookie(core.SessionCookieName)
 	if cookie == nil {
 		return ""

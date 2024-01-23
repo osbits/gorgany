@@ -14,7 +14,7 @@ func ReturnObject(payload any, status core.HttpStatus, errors any) *model.ApiRet
 
 	if errors != nil {
 		e := reflect.ValueOf(errors)
-		if e.Kind() != reflect.Slice {
+		if util.IndirectValue(e).Kind() != reflect.Slice {
 			dto.Errors = []any{errors}
 		} else {
 			dto.Errors = util.InterfaceSlice(errors)
