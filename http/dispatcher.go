@@ -38,6 +38,18 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, 
 	}()
 
 	for _, middleware := range internal.GetFrameworkRegistrar().GetMiddlewares() {
+		rtC := reflect.TypeOf(middleware)
+		corsMiddlewareName := util.IndirectType(rtC).Name()
+
+		overridden := util.InArrayFunc(middlewares, func(el core.IMiddleware) bool {
+			middlewareName := util.IndirectType(reflect.TypeOf(el)).Name()
+			return corsMiddlewareName == middlewareName
+		})
+
+		if overridden {
+			continue
+		}
+
 		middlewares = util.Prepend[core.IMiddleware](middlewares, middleware)
 	}
 

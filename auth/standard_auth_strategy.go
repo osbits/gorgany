@@ -158,6 +158,8 @@ func (thiz *StandardAuthStrategy) ResolveSessionId(ctx context.Context) string {
 		return ""
 	}
 
+	// in cases where we make the first request and the cookie is not yet set, to avoid creating many empty sessions,
+	// we can take the session id from the message context since we already have a session instance in the message.
 	if messageContext.GetSession() != nil {
 		return messageContext.GetSession().GetId()
 	}
