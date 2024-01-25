@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/auth"
-	"git.qix.sx/gorgany/gorgany.git/decoder"
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
+	"git.qix.sx/gorgany/gorgany.git/internal"
+	"git.qix.sx/gorgany/gorgany.git/decoder"
 	"git.qix.sx/gorgany/gorgany.git/log"
 	"git.qix.sx/gorgany/gorgany.git/model"
 	"git.qix.sx/gorgany/gorgany.git/util"
@@ -25,32 +26,41 @@ import (
 )
 
 type Message struct {
-	writer      http.ResponseWriter
-	request     *http.Request
-	renderer    *view2.EngineRenderer `container:"inject"`
-	cachedQuery *decoder.QueryParams
+	writer  http.ResponseWriter
+	request *http.Request
+
+	renderer *view2.EngineRenderer `container:"inject"`
+
+	cachedQuery    *decoder.QueryParams
+	currentSession core.ISession
+
+	sessionStorage core.ISessionStorage `container:"inject"`
+	cookieManager  *CookieManager
+
+	ctx context.Context
 
 	inputParameters []reflect.Value
 }
 
-func (thiz Message) Init() {
-	thiz.renderer.Ctx = thiz.Context()
+func (thiz *Message) Init() {
+	thiz.cookieManager = NewCookieManager(thiz.writer, thiz.request)
+	thiz.setSession()
 }
 
-func (thiz Message) GetRequest() *http.Request {
+func (thiz *Message) GetRequest() *http.Request {
 	return thiz.request
 }
 
-func (thiz Message) GetWriter() http.ResponseWriter {
+func (thiz *Message) GetWriter() http.ResponseWriter {
 	return thiz.writer
 }
 
-func (thiz Message) GetPathParam(key string) string {
+func (thiz *Message) GetPathParam(key string) string {
 	return chi.URLParam(thiz.request, key)
 }
 
 // GetBody returns body in bytes
-func (thiz Message) GetBody() []byte {
+func (thiz *Message) GetBody() []byte {
 	bodyCloser := thiz.request.Body
 	body, err := io.ReadAll(bodyCloser)
 	if err != nil {
@@ -63,24 +73,20 @@ func (thiz Message) GetBody() []byte {
 }
 
 // GetBodyContent returns body in string
-func (thiz Message) GetBodyContent() string {
+func (thiz *Message) GetBodyContent() string {
 	body := thiz.GetBody()
 	return string(body)
 }
 
-func (thiz Message) GetHeader() http.Header {
+func (thiz *Message) GetHeader() http.Header {
 	return thiz.request.Header
 }
 
-func (thiz Message) GetCookie(key string) (*http.Cookie, error) {
-	cookie, err := thiz.request.Cookie(key)
-	if err != nil {
-		return nil, err
-	}
-	return cookie, nil
+func (thiz *Message) GetCookie(key string) *http.Cookie {
+	return thiz.cookieManager.GetCookie(key)
 }
 
-func (thiz Message) Render(template string, options map[string]any) {
+func (thiz *Message) Render(template string, options map[string]any) {
 	if options == nil {
 		options = make(map[string]any)
 	}
@@ -90,17 +96,17 @@ func (thiz Message) Render(template string, options map[string]any) {
 	}
 
 	options = thiz.addOptionsToView(options)
-	err := thiz.renderer.DoRender(thiz.writer, template, options)
+	err := thiz.renderer.DoRender(thiz.Context(), thiz.writer, template, options)
 	if err != nil {
 		panic(fmt.Errorf("Error during render template '%s', %v", template, err))
 	}
 }
 
-func (thiz Message) ResponseHeader() http.Header {
+func (thiz *Message) ResponseHeader() http.Header {
 	return thiz.writer.Header()
 }
 
-func (thiz Message) Response(responseBody string, statusCode int) {
+func (thiz *Message) Response(responseBody string, statusCode int) {
 	thiz.writer.WriteHeader(statusCode)
 	_, err := thiz.writer.Write([]byte(responseBody))
 	if err != nil {
@@ -109,7 +115,7 @@ func (thiz Message) Response(responseBody string, statusCode int) {
 	}
 }
 
-func (thiz Message) ResponseJSON(responseBody any, statusCode int) {
+func (thiz *Message) ResponseJSON(responseBody any, statusCode int) {
 	var respBody string
 	switch responseBody.(type) {
 	case string:
@@ -125,7 +131,7 @@ func (thiz Message) ResponseJSON(responseBody any, statusCode int) {
 	thiz.Response(respBody, statusCode)
 }
 
-func (thiz Message) ResponseBytes(responseBody []byte, statusCode int) {
+func (thiz *Message) ResponseBytes(responseBody []byte, statusCode int) {
 	thiz.writer.WriteHeader(statusCode)
 	_, err := thiz.writer.Write(responseBody)
 	if err != nil {
@@ -134,114 +140,85 @@ func (thiz Message) ResponseBytes(responseBody []byte, statusCode int) {
 	}
 }
 
-func (thiz Message) SetCookie(key string, value string, expiresIn int) {
-	cookie := &http.Cookie{
-		Name:     key,
-		Value:    value,
-		Path:     "/",
-		Expires:  time.Now().Add(time.Duration(expiresIn) * time.Second),
-		Secure:   false,
-		HttpOnly: true,
-	}
+func (thiz *Message) SetCookie(cookie *http.Cookie) {
 	http.SetCookie(thiz.writer, cookie)
 }
 
-func (thiz Message) RedirectWithParams(url string, redirectCode int, params map[string]any) {
-	oneTimeParams := url2.Values{}
-
-	addToValues := func(key string, value any, otParams *url2.Values) {
-		var val string
-
-		str, ok := value.(fmt.Stringer)
-		if ok {
-			val = str.String()
-		} else {
-			val = fmt.Sprintf("%v", value)
-		}
-
-		oneTimeParams.Add(key, fmt.Sprintf("%v", val))
+func (thiz *Message) RedirectWithParams(url string, redirectCode int, params map[string]any) {
+	oneTimeParams := model.OneTimeParams{
+		Values: make(map[string]any),
+		Start:  true,
 	}
 
 	for key, value := range params {
-		kind := reflect.TypeOf(value)
-		if kind.Kind() == reflect.Slice {
+		rType := util.IndirectType(reflect.TypeOf(value))
+		if rType.Kind() == reflect.Slice {
 			slice := util.InterfaceSlice(value)
+			if oneTimeParams.Values[key] == nil {
+				oneTimeParams.Values[key] = make([]any, 0)
+			}
 			for _, sliceValue := range slice {
-				addToValues(key, sliceValue, &oneTimeParams)
+				val := value
+
+				str, ok := sliceValue.(fmt.Stringer)
+				if ok {
+					val = str.String()
+				}
+
+				oneTimeParams.Values[key] = append(oneTimeParams.Values[key].([]any), val)
 			}
 		} else {
-			addToValues(key, value, &oneTimeParams)
+			val := value
+
+			str, ok := value.(fmt.Stringer)
+			if ok {
+				val = str.String()
+			}
+
+			oneTimeParams.Values[key] = val
 		}
 	}
-	thiz.SetCookie(core.OneTimeParamsCookieName, oneTimeParams.Encode(), 1)
+
+	buf, err := json.Marshal(oneTimeParams)
+	if err != nil {
+		err2.HandleError(err)
+	} else {
+		thiz.GetSession().SetItem(core.OneTimeSessionAttributeKey, string(buf))
+	}
 
 	url = util.AddLocaleToURL(thiz.Locale(), url)
 	http.Redirect(thiz.writer, thiz.request, url, redirectCode)
 }
 
-func (thiz Message) Redirect(url string, redirectCode int) {
+func (thiz *Message) Redirect(url string, redirectCode int) {
 	url = util.AddLocaleToURL(thiz.Locale(), url)
 	http.Redirect(thiz.writer, thiz.request, url, redirectCode)
 }
 
-func (thiz Message) OneTimeParams() map[string][]string {
-	oneTimeParams := url2.Values{}
+func (thiz *Message) OneTimeParams() map[string]any {
+	session := thiz.GetSession()
+	if session == nil {
+		return nil
+	}
 
-	cookie, err := thiz.request.Cookie(core.OneTimeParamsCookieName)
+	params := session.GetItem(core.OneTimeSessionAttributeKey)
+
+	if params == "" {
+		return nil
+	}
+
+	oneTimeParams := model.OneTimeParams{}
+
+	err := json.Unmarshal([]byte(params), &oneTimeParams)
 	if err != nil {
-		if strings.Contains(err.Error(), "named cookie not present") {
-			return oneTimeParams
-		}
-		panic(err)
+		err2.HandleError(err)
+		return nil
 	}
 
-	oneTimeParams, err = url2.ParseQuery(cookie.Value)
-	if err != nil {
-		panic(err) //todo
-	}
-	return oneTimeParams
+	return oneTimeParams.Values
 }
 
-func (thiz Message) GetOneTimeParam(key string) string {
-	oneTimeParams := thiz.OneTimeParams()
-	val, ok := oneTimeParams[key]
-	if !ok {
-		return ""
-	}
-	return val[0]
-}
-
-func (thiz Message) ClearOneTimeParams() {
-	thiz.SetCookie(core.OneTimeParamsCookieName, "", 1)
-}
-
-func (thiz Message) Login(user core.Authenticable) {
-	sessionStorage := auth.GetSessionStorage()
-	sessionToken, expiresAt, err := sessionStorage.NewSession(user)
-	if err != nil {
-		panic(err) //todo
-	}
-	thiz.SetCookie(core.SessionCookieName, sessionToken, int(expiresAt.Sub(time.Now()).Seconds()))
-}
-
-func (thiz Message) Logout() {
-	sessionStorage := auth.GetSessionStorage()
-	sessionStorage.Logout(thiz.Context())
-	thiz.SetCookie(core.SessionCookieName, "", 10)
-}
-
-func (thiz Message) IsLoggedIn() bool {
-	sessionStorage := auth.GetSessionStorage()
-	return sessionStorage.IsLoggedIn(thiz.Context())
-}
-
-func (thiz Message) CurrentUser() (core.Authenticable, error) {
-	authService, err := auth.ResolveAuthService(thiz.Context())
-	authUser, err := authService.CurrentUser(thiz.Context())
-	return authUser, err
-}
-
-func (thiz Message) GetBearerToken() string {
+func (thiz *Message) GetBearerToken() string {
 	bearerToken := thiz.GetHeader().Get("Authorization")
 	return util.ParseBearerToken(bearerToken)
 }
@@ -265,7 +242,7 @@ func (thiz *Message) parseQueryParams() error {
 	return nil
 }
 
-func (thiz Message) GetQueryParam(key string) string {
+func (thiz *Message) GetQueryParam(key string) string {
 	err := thiz.parseQueryParams()
 	if err != nil {
 		return ""
@@ -273,7 +250,7 @@ func (thiz Message) GetQueryParam(key string) string {
 	return thiz.cachedQuery.GetString(key)
 }
 
-func (thiz Message) GetQueryParams(key string) []string {
+func (thiz *Message) GetQueryParams(key string) []string {
 	err := thiz.parseQueryParams()
 	if err != nil {
 		return []string{}
@@ -281,7 +258,7 @@ func (thiz Message) GetQueryParams(key string) []string {
 	return thiz.cachedQuery.GetArray(key)
 }
 
-func (thiz Message) GetQueryParamsMap(key string) []map[string]string {
+func (thiz *Message) GetQueryParamsMap(key string) []map[string]string {
 	err := thiz.parseQueryParams()
 	if err != nil {
 		return []map[string]string{}
@@ -312,7 +289,7 @@ func (thiz Message) GetBodyParam(key string) any {
 	if contentType == "application/json" {
 		err := json.Unmarshal(thiz.GetBody(), &parsedBody)
 		if err != nil {
-			return "" //todo log
+			return ""
 		}
 		return parsedBody[key]
 	}
@@ -320,7 +297,7 @@ func (thiz Message) GetBodyParam(key string) any {
 	return ""
 }
 
-func (thiz Message) GetMultipartFormValues() *multipart.Form {
+func (thiz *Message) GetMultipartFormValues() *multipart.Form {
 	err := thiz.request.ParseMultipartForm(10000) //todo
 	if err != nil {
 		return nil
@@ -328,7 +305,7 @@ func (thiz Message) GetMultipartFormValues() *multipart.Form {
 	return thiz.request.MultipartForm
 }
 
-func (thiz Message) Locale() string {
+func (thiz *Message) Locale() string {
 	lang := chi.URLParam(thiz.request, "lang")
 	if lang == "" {
 		lang = viper.GetString("i18n.lang.default")
@@ -336,7 +313,7 @@ func (thiz Message) Locale() string {
 	return lang
 }
 
-func (thiz Message) GetFile(key string) (core.IFile, error) {
+func (thiz *Message) GetFile(key string) (core.IFile, error) {
 	thiz.GetMultipartFormValues()
 	fileRequest, header, err := thiz.request.FormFile(key)
 	if err != nil {
@@ -358,7 +335,7 @@ func (thiz Message) GetFile(key string) (core.IFile, error) {
 	}, nil
 }
 
-func (thiz Message) GetFiles(key string) ([]core.IFile, error) {
+func (thiz *Message) GetFiles(key string) ([]core.IFile, error) {
 	files := make([]core.IFile, 0)
 
 	multipartForm := thiz.GetMultipartFormValues()
@@ -382,7 +359,7 @@ func (thiz Message) GetFiles(key string) ([]core.IFile, error) {
 	return files, nil
 }
 
-func (thiz Message) IsApiNamespace() bool {
+func (thiz *Message) IsApiNamespace() bool {
 	namespace := thiz.GetPathParam("namespace")
 	if namespace == string(core.Api) {
 		return true
@@ -390,29 +367,158 @@ func (thiz Message) IsApiNamespace() bool {
 	return false
 }
 
-func (thiz Message) Context() context.Context {
-	messageContext := MessageContext{}
-	messageContext.URL = thiz.GetRequest().URL
-	messageContext.RequestURI = thiz.GetRequest().RequestURI
-	messageContext.Cookies = thiz.GetRequest().Cookies()
-	messageContext.Headers = thiz.GetHeader()
+func (thiz *Message) Context() context.Context {
+	if thiz.ctx != nil {
+		return thiz.ctx
+	}
 
-	parentRequest := thiz.GetRequest().Context()
-	messageContext.Parent = parentRequest
+	mCtx := &messageContext{}
+	mCtx.url = thiz.GetRequest().URL
+	mCtx.requestURI = thiz.GetRequest().RequestURI
+	mCtx.cookieManager = thiz.cookieManager
+	mCtx.headers = thiz.GetHeader()
+	mCtx.request = thiz.GetRequest()
 
-	return context.WithValue(parentRequest, core.MessageContextKey, messageContext)
+	parentCtx := thiz.GetRequest().Context()
+	mCtx.parentCtx = parentCtx
+
+	thiz.ctx = context.WithValue(parentCtx, core.MessageContextKey, mCtx)
+
+	mCtx.session = thiz.GetSession()
+
+	return thiz.ctx
+}
+
+func (thiz *Message) GetSession() core.ISession {
+	if thiz.currentSession != nil {
+		return thiz.currentSession
+	}
+
+	authStrategy := auth.ResolveAuthStrategyByContext(thiz.Context())
+	if authStrategy == nil {
+		return nil
+	}
+
+	sessionId := authStrategy.ResolveSessionId(thiz.Context())
+	if sessionId == "" {
+		return nil
+	}
+
+	thiz.currentSession = thiz.sessionStorage.GetSessionById(sessionId)
+
+	return thiz.currentSession
+}
+
+func (thiz *Message) GetCookieManager() core.ICookieManager {
+	return thiz.cookieManager
+}
+
+func (thiz *Message) Close() error {
+	thiz.clearOneTimeParams()
+	return nil
 }
 
 func (thiz Message) GetInputParameters() []reflect.Value {
 	return thiz.inputParameters
 }
 
-func (thiz Message) addOptionsToView(options map[string]any) map[string]any {
-	authUser, _ := thiz.CurrentUser()
+func (thiz *Message) addOptionsToView(options map[string]any) map[string]any {
+	authStrategy := auth.ResolveAuthStrategyByContext(thiz.Context())
+	if authStrategy == nil {
+		return nil
+	}
+
+	authUser, _ := auth.ResolveAuthStrategyByContext(thiz.Context()).CurrentUser(thiz.Context())
 
 	if authUser != nil {
 		options["currentUsername"] = authUser.GetUsername()
 	}
 
 	return options
+}
+
+func (thiz *Message) setSession() {
+	if thiz.GetRequest().Method == "OPTIONS" {
+		return
+	}
+
+	currentAuthStrategy := auth.ResolveAuthStrategyByContext(thiz.Context())
+	if currentAuthStrategy == nil {
+		return
+	}
+
+	session := currentAuthStrategy.CurrentSession(thiz.Context())
+
+	if session != nil && !session.IsExpired() {
+		session.SetExpiry(session.GetExpiry().Add(time.Duration(internal.GetFrameworkRegistrar().GetSessionLifetime()) * time.Second))
+		thiz.currentSession = session
+		thiz.makeOneTimeParamsUsed()
+		return
+	}
+
+	if session != nil && session.IsExpired() {
+		thiz.sessionStorage.DeleteSession(session)
+	}
+
+	session, err := currentAuthStrategy.NewSessionWithoutUser(thiz.Context())
+	if err != nil {
+		err2.HandleError(err)
+		return
+	}
+
+	thiz.currentSession = session
+
+	ctx := thiz.Context()
+	if msgCtx, ok := ctx.Value(core.MessageContextKey).(*messageContext); ok {
+		if msgCtx.session == nil {
+			msgCtx.session = session
+		}
+	}
+}
+
+func (thiz *Message) makeOneTimeParamsUsed() {
+	item := thiz.GetSession().GetItem(core.OneTimeSessionAttributeKey)
+	if item == "" {
+		return
+	}
+	oneTimeParams := model.OneTimeParams{}
+	err := json.Unmarshal([]byte(item), &oneTimeParams)
+	if err != nil {
+		err2.HandleError(err)
+		return
+	}
+
+	oneTimeParams.Start = false
+
+	buf, err := json.Marshal(oneTimeParams)
+	if err != nil {
+		err2.HandleError(err)
+		return
+	}
+
+	thiz.GetSession().SetItem(core.OneTimeSessionAttributeKey, string(buf))
+}
+
+func (thiz *Message) clearOneTimeParams() {
+	session := thiz.GetSession()
+	if session == nil {
+		return
+	}
+
+	item := session.GetItem(core.OneTimeSessionAttributeKey)
+	if item == "" {
+		return
+	}
+	oneTimeParams := model.OneTimeParams{}
+	err := json.Unmarshal([]byte(item), &oneTimeParams)
+	if err != nil {
+		err2.HandleError(err)
+		return
+	}
+
+	if oneTimeParams.Start {
+		return
+	}
+
+	thiz.GetSession().ClearItem(core.OneTimeSessionAttributeKey)
 }

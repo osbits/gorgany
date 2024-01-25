@@ -24,6 +24,14 @@ func (thiz *AppProvider) InitProvider() {
 	err.HandleErrorWithStacktrace(thiz.AppRegistrar.GetContainer().Bind(func() core.IViewEngine {
 		return thiz.AppRegistrar.GetViewEngine()
 	}))
+
+	err.HandleErrorWithStacktrace(thiz.AppRegistrar.GetContainer().Singleton(func() core.ISessionStorage {
+		return thiz.AppRegistrar.GetSessionStorage()
+	}))
+
+	err.HandleErrorWithStacktrace(thiz.AppRegistrar.GetContainer().Singleton(func() core.IAuthStrategy {
+		return thiz.AppRegistrar.GetAuthStrategy()
+	}))
 }
 
 func (thiz *AppProvider) RegisterProvider(provider core.IProvider) {

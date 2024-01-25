@@ -100,7 +100,7 @@ type IOrm[T any] interface {
 	List() ([]*T, error)
 	Save() error
 	CountRelation(relation string) (int64, error)
-	ReplaceRelation(relation string) error
+	ReplaceRelation(relation string, values ...any) error
 	DeleteRelation(relation string, values ...any) error
 	ClearRelation(relation string) error
 	AppendRelation(relation string, values ...any) error

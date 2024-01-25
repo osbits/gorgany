@@ -3,9 +3,12 @@ package provider
 import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
+	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/http"
+	middleware2 "git.qix.sx/gorgany/gorgany.git/http/middleware"
 	"git.qix.sx/gorgany/gorgany.git/http/router"
 	"git.qix.sx/gorgany/gorgany.git/internal"
+	"git.qix.sx/gorgany/gorgany.git/service"
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
 	http2 "net/http"
@@ -32,6 +35,11 @@ func (thiz *RouteProvider) RegisterRouter(router core.Router) {
 }
 
 func (thiz *RouteProvider) RegisterController(controller core.IController) {
+	if err := service.GetContainer().Make(controller); err != nil {
+		err2.HandleError(err)
+		return
+	}
+
 	availableLangsRegex := thiz.buildLangRegex()
 	routerEngine := thiz.router.Engine().(chi.Router)
 
@@ -70,9 +78,7 @@ func (thiz *RouteProvider) RegisterController(controller core.IController) {
 				pattern = pattern[:len(pattern)-1]
 			}
 
-			routerEngine.Options(pattern, func(w http2.ResponseWriter, r *http2.Request) {
-				http.Dispatch(w, r, nil, middlewares)
-			})
+			thiz.addOptionsMethodToCheckPreflightCORS(pattern, handler, middlewares)
 
 			switch routeConfig.Method {
 			case core.GET:
@@ -127,4 +133,29 @@ func (thiz *RouteProvider) caseSensitiveRoutes() {
 			return http2.HandlerFunc(fn)
 		})
 	}
+}
+
+func (thiz *RouteProvider) addOptionsMethodToCheckPreflightCORS(pattern string, handler any, middlewares []core.IMiddleware) {
+	routerEngine := thiz.router.Engine().(chi.Router)
+	var corsMiddleware core.IMiddleware
+	for _, middleware := range middlewares {
+		corsMiddlewareEmpty := &middleware2.Cors{}
+		rtM := reflect.TypeOf(middleware)
+		if rtM.AssignableTo(reflect.TypeOf(corsMiddlewareEmpty)) {
+			corsMiddleware = middleware
+			break
+		}
+	}
+
+	routerEngine.Options(pattern, func(w http2.ResponseWriter, r *http2.Request) {
+		message := &http.Message{}
+		err := service.GetContainer().Make(message, map[string]any{"writer": w, "request": r})
+		if err != nil {
+			err2.HandleErrorWithStacktrace(err)
+			w.WriteHeader(500)
+			return
+		}
+
+		corsMiddleware.Handle(message)
+	})
 }

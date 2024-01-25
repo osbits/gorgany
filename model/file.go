@@ -141,13 +141,13 @@ func (thiz File) Value() (driver.Value, error) {
 
 func (thiz File) MarshalJSON() ([]byte, error) {
 	if thiz.Name == "" {
-		return []byte("{}"), nil
+		return []byte("null"), nil
 	}
 
 	fileMap := make(map[string]any)
 	fileMap["Name"] = thiz.Name
 	fileMap["Path"] = thiz.Path
-	fileMap["Size"] = thiz.Size
+	//fileMap["Size"] = thiz.Size todo: fix it
 
 	jsonFile, err := json.Marshal(fileMap)
 	if err != nil {

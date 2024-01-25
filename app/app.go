@@ -67,7 +67,7 @@ func (s *app) ServerTimezone() *time.Location {
 }
 
 func (s *app) validate() error {
-	s.log("").Infof("ValidationHttpStatus of the generated files is performed")
+	s.log("").Infof("Validation of the generated files is performed")
 	lock, err := s.parseLock()
 	if err != nil {
 		return err
@@ -157,23 +157,23 @@ type ServerApp struct {
 func (s *ServerApp) Run() {
 	s.app.Run()
 
-	port := os.Getenv("SERVER_PORT")
-	if port == "" {
+	port := viper.GetInt("app.server.port")
+	if port == 0 {
 		log.Log("").Panicf("Please specify SERVER_PORT in .env")
 	}
 
 	go func() {
 		s.httpServer = &http.Server{
-			Addr:           ":" + port,
+			Addr:           fmt.Sprintf(":%d", port),
 			Handler:        router.GetRouter().Engine(),
 			MaxHeaderBytes: 1 << 20,
 			ReadTimeout:    10 * time.Second,
 			WriteTimeout:   10 * time.Second,
 		}
 
-		log.Log("").Info("Server is doing to be up right now")
+		log.Log().Infof("Server is running on port\u001B[0;32m :%d \u001B[0m", port)
 		if err := s.httpServer.ListenAndServe(); err != nil {
-			log.Log("").Panicf("Error when starting the http server: %s", err.Error())
+			log.Log().Panicf("Error while the http server is running: %s", err.Error())
 		}
 	}()
 

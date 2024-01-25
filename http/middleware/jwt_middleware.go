@@ -5,6 +5,7 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/auth"
 	error2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/service/dto"
+	"github.com/spf13/viper"
 )
 
 type JwtMiddleware struct {
@@ -19,7 +20,7 @@ func (thiz JwtMiddleware) Handle(message core.HttpMessage) bool {
 		panic(error2.NewJwtAuthError())
 	}
 
-	if !jwtService.ValidateJwt(token) {
+	if !jwtService.ValidateJwt(token, viper.GetString("auth.jwt.secret")) {
 		panic(error2.NewJwtAuthError())
 	}
 
@@ -27,7 +28,7 @@ func (thiz JwtMiddleware) Handle(message core.HttpMessage) bool {
 		return true
 	}
 
-	user, err := jwtService.GetUser(token)
+	user, err := jwtService.GetUser(token, viper.GetString("auth.jwt.secret"))
 	if err != nil {
 		panic(error2.NewJwtAuthError())
 	}

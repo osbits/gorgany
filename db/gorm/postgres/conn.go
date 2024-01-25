@@ -8,7 +8,6 @@ import (
 	model2 "git.qix.sx/gorgany/gorgany.git/service/cache"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"git.qix.sx/gorgany/gorgany.git/validator"
-	"github.com/spf13/viper"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 	"reflect"
@@ -209,11 +208,10 @@ func (thiz *Builder) Having(rawStatement string, operator string, value any) cor
 }
 
 func (thiz *Builder) DeleteQuery() (string, []any) {
-	where, args := thiz.BuildWhere()
-	if viper.GetBool("databases.postgres_gorm.log") == true {
-		fmt.Printf("DELETE FROM %s %s\n", thiz.from, where)
-	}
-	return fmt.Sprintf("DELETE FROM %s %s", thiz.from, where), args
+	from, args := thiz.BuildFrom()
+	where, whereArgs := thiz.BuildWhere()
+	args = append(args, whereArgs...)
+	return fmt.Sprintf("DELETE FROM %s %s", from, where), args
 }
 
 func (thiz *Builder) ToQuery() (string, []any) {
@@ -408,7 +406,7 @@ func (thiz *Builder) Save(model any) error {
 
 func (thiz *Builder) Delete() error {
 	query, args := thiz.DeleteQuery()
-	res := thiz.GetDriver().Raw(query, args...)
+	res := thiz.GetDriver().Exec(query, args...)
 	thiz.clearQueryParams()
 	return res.Error
 }
@@ -459,7 +457,7 @@ func (thiz *Builder) Raw(sql string, scan any, values ...any) error {
 	res := thiz.GetDriver().Raw(sql, values...)
 
 	rvScan := reflect.ValueOf(scan)
-	if rvScan.Kind() != reflect.Ptr { //nil ??
+	if rvScan.Kind() != reflect.Ptr && scan != nil {
 		return fmt.Errorf("Scan must be pointer")
 	}
 
@@ -526,7 +524,14 @@ func (thiz *Builder) LoadRelations(relations ...string) error {
 		rvField := rv.Elem().FieldByName(r)
 
 		fieldType := util.IndirectType(rvField.Type())
-		fieldValue := reflect.New(fieldType)
+
+		var fieldValue reflect.Value
+		if fieldType.Kind() == reflect.Slice {
+			fieldValue = util.IndirectValue(reflect.New(fieldType))
+		} else {
+			fieldValue = reflect.New(fieldType)
+		}
+
 		v := fieldValue.Interface()
 
 		err := thiz.copyGorm.Association(r).Find(&v)

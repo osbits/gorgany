@@ -9,59 +9,50 @@ import (
 	"net/url"
 )
 
-type MessageContext struct {
-	URL        *url.URL
-	RequestURI string
-	Cookies    []*http.Cookie
-	Headers    http.Header
+type messageContext struct {
+	url           *url.URL
+	requestURI    string
+	cookieManager core.ICookieManager
+	headers       http.Header
+	session       core.ISession
+	request       *http.Request
 
-	Parent context.Context
+	parentCtx context.Context
 }
 
-func (thiz MessageContext) GetURL() *url.URL {
-	return thiz.URL
+func (thiz *messageContext) GetURL() *url.URL {
+	return thiz.url
 }
 
-func (thiz MessageContext) GetRequestURL() string {
-	return thiz.RequestURI
+func (thiz *messageContext) GetRequestURL() string {
+	return thiz.requestURI
 }
 
-func (thiz MessageContext) GetCookies() []*http.Cookie {
-	return thiz.Cookies
+func (thiz *messageContext) GetCookieManager() core.ICookieManager {
+	return thiz.cookieManager
 }
 
-func (thiz MessageContext) GetCookie(name string) *http.Cookie {
-	for i := range thiz.Cookies {
-		if thiz.Cookies[i].Name == name {
-			return thiz.Cookies[i]
-		}
-	}
-
-	return nil
+func (thiz *messageContext) GetHeader() http.Header {
+	return thiz.headers
 }
 
-func (thiz MessageContext) GetHeader() http.Header {
-	return thiz.Headers
-}
-
-func (thiz MessageContext) GetSessionToken() string {
-	sessionTokenCookie := thiz.GetCookie(core.SessionCookieName)
-	if sessionTokenCookie == nil {
-		return ""
-	}
-
-	return sessionTokenCookie.Value
-}
-
-func (thiz MessageContext) GetBearerToken() string {
+func (thiz *messageContext) GetBearerToken() string {
 	bearerToken := thiz.GetHeader().Get("Authorization")
 	return util.ParseBearerToken(bearerToken)
 }
 
-func (thiz MessageContext) GetPathParam(name string) string {
-	return chi.URLParamFromCtx(thiz.Parent, name)
+func (thiz *messageContext) GetPathParam(name string) string {
+	return chi.URLParamFromCtx(thiz.parentCtx, name)
 }
 
-func (thiz MessageContext) GetParent() context.Context {
-	return thiz.Parent
+func (thiz *messageContext) GetSession() core.ISession {
+	return thiz.session
+}
+
+func (thiz *messageContext) GetRequest() *http.Request {
+	return thiz.request
+}
+
+func (thiz *messageContext) GetParent() context.Context {
+	return thiz.parentCtx
 }

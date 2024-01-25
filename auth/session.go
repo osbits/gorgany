@@ -1,13 +1,9 @@
 package auth
 
 import (
-	"context"
-	"crypto/md5"
-	"encoding/hex"
-	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/internal"
-	"github.com/google/uuid"
+	"sync"
 	"time"
 )
 
@@ -16,109 +12,114 @@ func GetSessionStorage() core.ISessionStorage {
 }
 
 // concrete session
-type Session struct {
-	username string
-	expiry   time.Time
+func NewSession(id string, expiry time.Time) *Session {
+	return &Session{}
 }
 
-func (thiz Session) isExpired() bool {
+type Session struct {
+	id         string
+	expiry     time.Time
+	username   string
+	attributes map[string]string
+	mu         sync.Mutex
+}
+
+func (thiz *Session) GetId() string {
+	return thiz.id
+}
+
+// SetItem is used to set attributes item in session
+func (thiz *Session) SetItem(key string, value string) {
+	thiz.mu.Lock()
+	if thiz.attributes == nil {
+		thiz.attributes = make(map[string]string)
+	}
+	thiz.attributes[key] = value
+	thiz.mu.Unlock()
+}
+
+// GetItem is used to get attributes item in session
+func (thiz *Session) GetItem(key string) string {
+	thiz.mu.Lock()
+	defer thiz.mu.Unlock()
+	if value, ok := thiz.attributes[key]; ok {
+		return value
+	}
+	return ""
+}
+
+func (thiz *Session) GetUsername() string {
+	return thiz.username
+}
+
+func (thiz *Session) SetUsername(username string) {
+	thiz.username = username
+}
+
+func (thiz *Session) IsExpired() bool {
 	return thiz.expiry.Before(time.Now())
 }
 
-// MemorySession saves sessions in memory
+func (thiz *Session) SetExpiry(t time.Time) {
+	thiz.expiry = t
+}
+
+func (thiz *Session) GetExpiry() time.Time {
+	return thiz.expiry
+}
+
+func (thiz *Session) ClearItem(attribute string) {
+	thiz.mu.Lock()
+	delete(thiz.attributes, attribute)
+	thiz.mu.Unlock()
+}
+
+func (thiz *Session) ClearItems() {
+	thiz.mu.Lock()
+	thiz.attributes = make(map[string]string)
+	thiz.mu.Unlock()
+}
+
+// MemorySession memory-bases session manager
 type MemorySession struct {
-	sessions        map[string]*Session
-	sessionLifetime int
+	sessions map[string]core.ISession
+	mu       sync.Mutex
 }
 
 func NewMemorySession() *MemorySession {
-	return &MemorySession{sessions: make(map[string]*Session), sessionLifetime: internal.GetFrameworkRegistrar().GetSessionLifetime()}
-}
-
-// NewSession returns generated session token
-func (thiz *MemorySession) NewSession(user core.Authenticable) (string, time.Time, error) {
-	uid := uuid.NewString()
-	now := time.Now()
-
-	rawToken := fmt.Sprintf("%s%s%v", user.GetUsername(), uid, now)
-	hashedTokenBytes := md5.Sum([]byte(rawToken))
-	hashedToken := hex.EncodeToString(hashedTokenBytes[:])
-
-	_, ok := thiz.sessions[hashedToken]
-	if ok {
-		return "", time.Time{}, fmt.Errorf("Session %s already exists", hashedToken)
-	}
-
-	session := &Session{
-		username: user.GetUsername(),
-		expiry:   now.Add(time.Second * time.Duration(thiz.sessionLifetime)),
-	}
-	thiz.sessions[hashedToken] = session
-
-	return hashedToken, session.expiry, nil
-}
-
-// IsLoggedIn
-// ctx - instance of core.IMessageContext
-func (thiz *MemorySession) IsLoggedIn(ctx context.Context) bool {
-	messageContext, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext)
-	if !ok {
-		return false
-	}
-
-	sessionToken := messageContext.GetSessionToken()
-	session, ok := thiz.sessions[sessionToken]
-	if !ok {
-		return false
-	}
-
-	if session.isExpired() {
-		delete(thiz.sessions, sessionToken)
-		return false
-	}
-
-	return true
-}
-
-// Logout
-// ctx - instance of core.IMessageContext
-func (thiz *MemorySession) Logout(ctx context.Context) {
-	messageContext, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext)
-	if !ok {
-		return
-	}
-
-	sessionToken := messageContext.GetSessionToken()
-	delete(thiz.sessions, sessionToken)
+	return &MemorySession{sessions: make(map[string]core.ISession)}
 }
 
 func (thiz *MemorySession) ClearExpiredSessions() {
 	for key, session := range thiz.sessions {
-		if session.isExpired() {
+		if session.IsExpired() {
+			thiz.mu.Lock()
 			delete(thiz.sessions, key)
+			thiz.mu.Unlock()
 		}
 	}
 }
 
-// CurrentUser
-// ctx - instance of core.IMessageContext
-func (thiz *MemorySession) CurrentUser(ctx context.Context) (core.Authenticable, error) {
-	messageContext, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext)
-	if !ok {
-		return nil, fmt.Errorf("Ctx is not core.IMessageContext instance")
-	}
+func (thiz *MemorySession) AddSession(session core.ISession) {
+	thiz.mu.Lock()
+	thiz.sessions[session.GetId()] = session
+	thiz.mu.Unlock()
+}
 
-	sessionToken := messageContext.GetSessionToken()
-	session, ok := thiz.sessions[sessionToken]
-	if !ok {
-		return nil, nil
-	}
+func (thiz *MemorySession) DeleteSession(session core.ISession) {
+	thiz.mu.Lock()
+	delete(thiz.sessions, session.GetId())
+	thiz.mu.Unlock()
+}
 
-	if session.isExpired() {
-		return nil, nil
-	}
+func (thiz *MemorySession) DeleteSessionById(id string) {
+	thiz.mu.Lock()
+	delete(thiz.sessions, id)
+	thiz.mu.Unlock()
+}
 
-	return GetAuthEntityService().GetByUsername(session.username)
+func (thiz *MemorySession) GetSessionById(id string) core.ISession {
+	return thiz.sessions[id]
 }
 
 // DbSession, not implemented yet

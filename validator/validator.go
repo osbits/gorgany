@@ -48,15 +48,15 @@ func ValidateStruct(s any) error {
 			return err
 		}
 
-		validationErrors := error2.ValidationErrors{Errors: make([]error2.ValidationError, 0)}
+		validationErrors := make(error2.ValidationErrors, 0)
 		for _, err := range err.(goValidator.ValidationErrors) {
-			validationErrors.Errors = append(validationErrors.Errors, error2.ValidationError{
+			validationErrors.AddValidationError(error2.ValidationError{
 				Field: err.Field(),
 				Err:   err.Error(),
 			})
 		}
 
-		if len(validationErrors.Errors) > 0 {
+		if len(validationErrors) > 0 {
 			return &validationErrors
 		}
 	}

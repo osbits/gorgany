@@ -43,6 +43,9 @@ type IRegistrar interface {
 	GetSeeders() []ISeeder
 	SetSessionStorage(sessionStorage ISessionStorage)
 	GetSessionStorage() ISessionStorage
+	SetAuthStrategy(authProvider IAuthStrategy, strategyName ...string)
+	GetAuthStrategy(strategyName ...string) IAuthStrategy
+	GetAuthStrategies() map[string]IAuthStrategy
 	SetI18nManager(manager Ii18nManager)
 	GetI18nManager() Ii18nManager
 	RegisterViewEngine(engine IViewEngine)

@@ -13,6 +13,13 @@ import (
 
 func Dispatch(w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, middlewares []core.IMiddleware) {
 	message := &Message{}
+	defer func() {
+		err := message.Close()
+		if err != nil {
+			err2.HandleError(err)
+		}
+	}()
+
 	err := service.GetContainer().Make(message, map[string]any{"writer": w, "request": r})
 	if err != nil {
 		err2.HandleErrorWithStacktrace(err)
@@ -30,6 +37,26 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, 
 		}
 	}()
 
+	for _, middleware := range internal.GetFrameworkRegistrar().GetMiddlewares() {
+		rtC := reflect.TypeOf(middleware)
+		corsMiddlewareName := util.IndirectType(rtC).Name()
+
+		overridden := util.InArrayFunc(middlewares, func(el core.IMiddleware) bool {
+			middlewareName := util.IndirectType(reflect.TypeOf(el)).Name()
+			return corsMiddlewareName == middlewareName
+		})
+
+		if overridden {
+			continue
+		}
+
+		middlewares = util.Prepend[core.IMiddleware](middlewares, middleware)
+	}
+
+	if !preProcess(middlewares, message) {
+		return
+	}
+
 	if handler == nil {
 		return
 	}
@@ -43,14 +70,6 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, 
 	args, err := resolver.resolve()
 	if err != nil {
 		Catch(err, message)
-		return
-	}
-
-	for _, middleware := range internal.GetFrameworkRegistrar().GetMiddlewares() {
-		middlewares = util.Prepend[core.IMiddleware](middlewares, middleware)
-	}
-
-	if !preProcess(middlewares, message) {
 		return
 	}
 

@@ -41,15 +41,15 @@ func (thiz LoginController) Login(message core.HttpMessage) {
 		return
 	}
 
-	jwtService := auth.NewJwtService()
-	token, err := jwtService.GenerateJwt(user)
-	if err != nil {
-		panic(err)
+	session, err := auth.Strategy("jwt").Login(user, message.Context())
+	if session.GetId() == "" {
+		message.ResponseJSON(dto.ReturnObject(nil, core.ForbiddenHttpStatus, "Token has not been generated!"), 200)
+		return
 	}
 
 	responseBodyMap := make(map[string]string)
 
-	responseBodyMap["access_token"] = token
+	responseBodyMap["access_token"] = session.GetId()
 	message.ResponseJSON(dto.ReturnObject(responseBodyMap, core.SuccessHttpStatus, nil), 200)
 }
 

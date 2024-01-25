@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/iancoleman/strcase"
 	"reflect"
+	"strings"
 )
 
 type FieldBinder struct {
@@ -25,7 +27,9 @@ func (thiz FieldBinder) BindField(model any, field string, value any) error {
 		return nil
 	}
 
-	rvField := rvModel.FieldByName(field)
+	rvField := rvModel.FieldByNameFunc(func(name string) bool {
+		return strings.ToLower(strcase.ToLowerCamel(strings.ToLower(name))) == strings.ToLower(strcase.ToLowerCamel(field))
+	})
 	rvField.Set(reflect.ValueOf(value))
 
 	return nil
@@ -50,7 +54,9 @@ func (thiz FieldBinder) BindProtectedField(model any, field string, value any) e
 		return nil
 	}
 
-	rvField := rvModel.FieldByName(field)
+	rvField := rvModel.FieldByNameFunc(func(name string) bool {
+		return strings.ToLower(strcase.ToLowerCamel(strings.ToLower(name))) == strings.ToLower(strcase.ToLowerCamel(field))
+	})
 	rvField.Set(reflect.ValueOf(value))
 
 	return nil
@@ -81,7 +87,9 @@ func (thiz FieldBinder) BindFieldClosure(model any, field string, closure any) e
 		return fmt.Errorf("LimitedFieldsBinder: Closure must return value")
 	}
 
-	rvField := rvModel.FieldByName(field)
+	rvField := rvModel.FieldByNameFunc(func(name string) bool {
+		return strings.ToLower(strcase.ToLowerCamel(strings.ToLower(name))) == strings.ToLower(strcase.ToLowerCamel(field))
+	})
 	rvField.Set(returnedValues[0])
 
 	return nil
@@ -101,7 +109,10 @@ func (thiz FieldBinder) BindFields(model any, donor any, fields []string) error 
 	}
 
 	for _, field := range fields {
-		donorField := rvDonor.FieldByName(field)
+		donorField := rvDonor.FieldByNameFunc(func(name string) bool {
+			return strings.ToLower(strcase.ToLowerCamel(strings.ToLower(name))) == strings.ToLower(strcase.ToLowerCamel(field))
+		})
+
 		err := thiz.BindField(model, field, donorField.Interface())
 		if err != nil {
 			return err
@@ -121,5 +132,7 @@ func (thiz FieldBinder) isPublicFieldAllowed(field string, model any) bool {
 	if len(allowedFields) == 1 && allowedFields[0] == "*" {
 		return true
 	}
-	return util.InArray(field, allowedFields)
+	return util.InArrayFunc(allowedFields, func(el string) bool {
+		return strings.ToLower(strcase.ToLowerCamel(strings.ToLower(el))) == strings.ToLower(strcase.ToLowerCamel(field))
+	})
 }

@@ -2,6 +2,7 @@ package mail
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
@@ -48,8 +49,8 @@ type MailService struct {
 	port     string
 }
 
-func (thiz MailService) Send(mail core.IMail) error {
-	body, err := thiz.buildBody(mail)
+func (thiz MailService) Send(ctx context.Context, mail core.IMail) error {
+	body, err := thiz.buildBody(ctx, mail)
 	if err != nil {
 		return err
 	}
@@ -57,7 +58,7 @@ func (thiz MailService) Send(mail core.IMail) error {
 	return smtp.SendMail(thiz.buildSmtpAddress(), thiz.buildAuth(), thiz.sender, mail.GetRecipients(), body)
 }
 
-func (thiz MailService) buildBody(mail core.IMail) ([]byte, error) {
+func (thiz MailService) buildBody(ctx context.Context, mail core.IMail) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
 	buf.WriteString(fmt.Sprintf("Subject: %s\n", mail.GetSubject()))
@@ -77,7 +78,7 @@ func (thiz MailService) buildBody(mail core.IMail) ([]byte, error) {
 		buf.WriteString(fmt.Sprintf("--%s\n", boundary))
 	}
 
-	mailBody, err := mail.GetBody()
+	mailBody, err := mail.GetBody(ctx)
 	if err != nil {
 		return nil, err
 	}

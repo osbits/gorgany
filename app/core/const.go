@@ -20,7 +20,10 @@ const GorganyORMExtends = "extends"
 const MessageContextKey = "messageContext"
 
 const OneTimeParamsCookieName = "oneTimeParams"
-const SessionCookieName = "sessionToken"
+const SessionCookieName = "GRG_SESSION_ID"
+const OneTimeSessionAttributeKey = "_GORGANY_ONE_TIME_PARAMS"
+
+const DefaultKeyInRegistrar = "default"
 
 // Error
 

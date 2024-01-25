@@ -8,6 +8,7 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/http/router"
 	"git.qix.sx/gorgany/gorgany.git/internal"
 	"git.qix.sx/gorgany/gorgany.git/util"
+	"net/http"
 	"net/url"
 )
 
@@ -18,7 +19,7 @@ func NewLoginController() *LoginController {
 type LoginController struct{}
 
 func (thiz LoginController) ShowLogin(message core.HttpMessage) {
-	if message.IsLoggedIn() {
+	if auth.Strategy().IsLoggedIn(message.Context()) {
 		message.Redirect(internal.GetFrameworkRegistrar().GetHomeUrl(), 301)
 	}
 
@@ -26,7 +27,7 @@ func (thiz LoginController) ShowLogin(message core.HttpMessage) {
 }
 
 func (thiz LoginController) Login(message core.HttpMessage) {
-	if message.IsLoggedIn() {
+	if auth.Strategy().IsLoggedIn(message.Context()) {
 		message.Redirect(internal.GetFrameworkRegistrar().GetHomeUrl(), 301)
 	}
 
@@ -36,7 +37,7 @@ func (thiz LoginController) Login(message core.HttpMessage) {
 	password := values.Get("password")
 	user, err := auth.GetAuthEntityService().GetByUsername(username)
 	if err != nil {
-		err2.HandleErrorWithStacktrace(err)
+		err2.HandleError(err)
 		message.RedirectWithParams(router.GetRouter().UrlByNameSequence("cp.login.show"), 301, map[string]any{"error": fmt.Sprintf("Unexpected error during find user %s in our storage", username)})
 		return
 	}
@@ -46,14 +47,19 @@ func (thiz LoginController) Login(message core.HttpMessage) {
 		return
 	}
 
-	message.Login(user)
+	_, err = auth.Strategy().Login(user, message.Context())
+	if err != nil {
+		err2.HandleError(err)
+		message.RedirectWithParams(router.GetRouter().UrlByNameSequence("cp.login.show"), 301, map[string]any{"error": fmt.Sprintf("Unexpected error during find user %s in our storage", username)})
+		return
+	}
 
 	message.Redirect(internal.GetFrameworkRegistrar().GetHomeUrl(), 301)
 }
 
 func (thiz LoginController) Logout(message core.HttpMessage) {
-	message.Logout()
-	message.Redirect(router.GetRouter().UrlByNameSequence("cp.login.show"), 301)
+	auth.Strategy().Logout(message.Context())
+	message.Redirect(router.GetRouter().UrlByNameSequence("cp.login.show"), http.StatusTemporaryRedirect)
 }
 
 func (thiz LoginController) GetRoutes() []core.IRouteConfig {

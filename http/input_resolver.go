@@ -45,6 +45,10 @@ func (thiz inputResolver) resolve() ([]reflect.Value, error) {
 			var err error
 			arg, err = util.ResolvePrimitive(in.Kind(), param)
 			if err != nil {
+				parseError := &error2.InputParamParseError{}
+				if errors.As(err, &parseError) {
+					return nil, &error2.ValidationErrors{{Field: core.GeneralError, Err: parseError.Error()}}
+				}
 				return nil, err
 			}
 			indexOfPrimitiveArguemnt++
@@ -115,7 +119,7 @@ func (thiz jsonParser) parse(arg interface{}) error {
 
 	err := json.Unmarshal(thiz.message.GetBody(), arg)
 	if err != nil {
-		validationErrors := error2.ValidationErrors{make([]error2.ValidationError, 0)}
+		validationErrors := make(error2.ValidationErrors, 0)
 		if errors.Is(err, &json.UnmarshalTypeError{}) {
 			typeError := err.(*json.UnmarshalTypeError)
 			validationErrors.AddValidationError(error2.ValidationError{
@@ -140,7 +144,7 @@ func (thiz multipartParser) parse(arg interface{}) error {
 	decoder := multipart.NewFormValuesDecoder()
 	err := decoder.Decode(arg, multipartForm.Value)
 	if err != nil {
-		validationErrors := error2.ValidationErrors{Errors: make([]error2.ValidationError, 0)}
+		validationErrors := make(error2.ValidationErrors, 0)
 		if errors.As(err, &schema.MultiError{}) {
 			multiError := err.(schema.MultiError)
 			for key, err := range multiError {
@@ -153,7 +157,7 @@ func (thiz multipartParser) parse(arg interface{}) error {
 	}
 	err = multipart.DecodeFiles(multipartForm.File, arg)
 	if err != nil {
-		validationErrors := error2.ValidationErrors{Errors: make([]error2.ValidationError, 0)}
+		validationErrors := make(error2.ValidationErrors, 0)
 		for key, _ := range multipartForm.File {
 			validationErrors.AddValidationError(error2.ValidationError{Field: key, Err: "Incorrect files"})
 		}
@@ -171,14 +175,14 @@ func (thiz queryParser) parse(arg interface{}) error {
 	decoder := multipart.NewFormValuesDecoder()
 	values, err := url2.ParseQuery(thiz.message.GetRawQuery())
 	if err != nil {
-		return &error2.ValidationErrors{Errors: []error2.ValidationError{{
+		return &error2.ValidationErrors{error2.ValidationError{
 			Field: core.GeneralError,
 			Err:   err.Error(),
-		}}}
+		}}
 	}
 	err = decoder.Decode(arg, values)
 	if err != nil {
-		validationErrors := error2.ValidationErrors{Errors: make([]error2.ValidationError, 0)}
+		validationErrors := make(error2.ValidationErrors, 0)
 		if errors.As(err, &schema.MultiError{}) {
 			multiError := err.(schema.MultiError)
 			for key, err := range multiError {
