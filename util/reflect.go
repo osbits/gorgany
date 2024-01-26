@@ -1,6 +1,8 @@
 package util
 
-import "reflect"
+import (
+	"reflect"
+)
 
 func ConvertReflectedValue(vf reflect.Value) any {
 	switch vf.Kind() {
@@ -47,7 +49,7 @@ func GetElementOfSlice(slice any) any {
 		panic("")
 	}
 	model := reflect.MakeSlice(rtSlice, 1, 1).Index(0).Interface()
-	rType := IndirectType(reflect.TypeOf(model))
+	rType := reflect.TypeOf(model)
 	return reflect.New(rType).Elem().Interface()
 }
 
