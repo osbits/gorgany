@@ -138,13 +138,25 @@ func (thiz *RouteProvider) caseSensitiveRoutes() {
 func (thiz *RouteProvider) addOptionsMethodToCheckPreflightCORS(pattern string, handler any, middlewares []core.IMiddleware) {
 	routerEngine := thiz.router.Engine().(chi.Router)
 	var corsMiddleware core.IMiddleware
-	for _, middleware := range middlewares {
-		corsMiddlewareEmpty := &middleware2.Cors{}
-		rtM := reflect.TypeOf(middleware)
-		if rtM.AssignableTo(reflect.TypeOf(corsMiddlewareEmpty)) {
-			corsMiddleware = middleware
-			break
+
+	findInMiddlewares := func(middlewares []core.IMiddleware) core.IMiddleware {
+		for _, middleware := range middlewares {
+			corsMiddlewareEmpty := &middleware2.Cors{}
+			rtM := reflect.TypeOf(middleware)
+			if rtM.AssignableTo(reflect.TypeOf(corsMiddlewareEmpty)) {
+				return middleware
+			}
 		}
+		return nil
+	}
+
+	corsMiddleware = findInMiddlewares(middlewares)
+	if corsMiddleware == nil {
+		corsMiddleware = findInMiddlewares(internal.GetFrameworkRegistrar().GetMiddlewares())
+	}
+
+	if corsMiddleware == nil {
+		return
 	}
 
 	routerEngine.Options(pattern, func(w http2.ResponseWriter, r *http2.Request) {
