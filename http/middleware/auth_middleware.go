@@ -3,8 +3,8 @@ package middleware
 import (
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/auth"
-	"git.qix.sx/gorgany/gorgany.git/http/router"
 	"git.qix.sx/gorgany/gorgany.git/service/dto"
+	"github.com/spf13/viper"
 )
 
 type AuthMiddleware struct {
@@ -40,6 +40,6 @@ func (thiz AuthMiddleware) Handle(message core.HttpMessage) bool {
 		message.ResponseJSON(dto.ReturnObject(nil, core.NotAuthorizedHttpStatus, nil), 200)
 		return false
 	}
-	message.Redirect(router.GetRouter().UrlByNameSequence("cp.login.show"), 302)
+	message.Redirect(viper.GetString("auth.login.formUrl"), 302)
 	return false
 }

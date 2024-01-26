@@ -40,7 +40,7 @@ func (thiz GorganyRouter) RegisterRoute(route core.IRouteConfig) {
 func (thiz GorganyRouter) UrlByName(name string, params map[string]any) string {
 	route := GetRouter().RouteByName(name)
 	if route == nil {
-		return ""
+		return "/"
 	}
 
 	return thiz.replaceRouteSegments(route.Pattern(), params)
@@ -49,7 +49,7 @@ func (thiz GorganyRouter) UrlByName(name string, params map[string]any) string {
 func (thiz GorganyRouter) UrlByNameSequence(name string, params ...any) string {
 	route := GetRouter().RouteByName(name)
 	if route == nil {
-		return ""
+		return "/"
 	}
 
 	return thiz.replaceRouteSegmentsSequence(route.Pattern(), params...)
