@@ -51,13 +51,12 @@ func (thiz *Join) ToQuery() (string, []any) {
 	allArgs := make([]any, 0)
 
 	for joinType, items := range thiz.joinItems {
-		joins := make([]string, 0)
 		for _, item := range items {
 			sql, args := item.PrepareForSQL()
-			joins = append(joins, sql)
+			sql = fmt.Sprintf("%s %s", joinType, sql)
+			allJoins = append(allJoins, sql)
 			allArgs = append(allArgs, args...)
 		}
-		allJoins = append(allJoins, fmt.Sprintf("%s %s", joinType, strings.Join(joins, ", ")))
 	}
 	return strings.Join(allJoins, " "), allArgs
 }
