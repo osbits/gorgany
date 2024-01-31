@@ -68,9 +68,17 @@ type ICookieManager interface {
 	GetCookies() []*http.Cookie
 }
 
+type HttpCommand interface {
+	ContentType() ContentType
+}
+
+type HttpFilterCommand interface {
+	AllowFilterFields(ctx context.Context) []string
+}
+
 type HttpAccessCommand interface {
-	AddFilterToBuilder(ctx context.Context) IQueryBuilder
 	IsAccessAllowed(ctx context.Context) bool
+	FilterBuilder(ctx context.Context) IQueryBuilder
 }
 
 type MapInitiator interface {

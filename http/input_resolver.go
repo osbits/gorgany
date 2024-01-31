@@ -6,13 +6,13 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/decoder/multipart"
 	error2 "git.qix.sx/gorgany/gorgany.git/err"
+	"git.qix.sx/gorgany/gorgany.git/log"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	gorganyValidator "git.qix.sx/gorgany/gorgany.git/validator"
 	"github.com/go-chi/chi"
 	"github.com/gorilla/schema"
 	url2 "net/url"
 	"reflect"
-	"strings"
 )
 
 type inputResolver struct {
@@ -53,13 +53,20 @@ func (thiz inputResolver) resolve() ([]reflect.Value, error) {
 			}
 			indexOfPrimitiveArguemnt++
 		default:
-			contentType := thiz.message.GetHeader().Get("Content-Type")
-			bodyParers := resolveBodyParser(contentType, thiz.message)
-			for _, parser := range bodyParers {
-				err := parser.parse(arg)
-				if err != nil {
-					return nil, err
-				}
+			httpCommand, ok := arg.(core.HttpCommand)
+			if !ok {
+				log.Log().Warnf("Argument of %s handler is not core.HttpCommand instance", thiz.reflectedHandler.Type().String())
+				continue
+			}
+			parser := resolveBodyParser(httpCommand, thiz.message)
+
+			if parser == nil {
+				log.Log().Warnf("Body parser could not be resolved!")
+			}
+
+			err := parser.parse(arg)
+			if err != nil {
+				return nil, err
 			}
 
 			if err := gorganyValidator.ValidateStruct(arg); err != nil {
@@ -92,19 +99,16 @@ type bodyParser interface {
 	parse(arg interface{}) error
 }
 
-func resolveBodyParser(contentType string, message *Message) []bodyParser {
-	bodyParsers := make([]bodyParser, 0)
-	if contentType == core.ApplicationJson {
-		bodyParsers = append(bodyParsers, jsonParser{message: message})
-	} else if strings.Contains(contentType, core.MultipartFormData) {
-		bodyParsers = append(bodyParsers, multipartParser{message: message})
+func resolveBodyParser(command core.HttpCommand, message *Message) bodyParser {
+	if command.ContentType() == core.ApplicationJson {
+		return jsonParser{message: message}
+	} else if command.ContentType() == core.MultipartFormData {
+		return multipartParser{message: message}
+	} else if command.ContentType() == core.Query {
+		return queryParser{message: message}
 	}
 
-	if message.GetQuery() != nil {
-		bodyParsers = append(bodyParsers, queryParser{message: message})
-	}
-
-	return bodyParsers
+	return nil
 }
 
 // json parser

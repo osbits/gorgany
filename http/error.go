@@ -57,7 +57,7 @@ func Catch(err error, message core.HttpMessage) {
 func processDefaultError(err error, message core.HttpMessage) {
 	error2.PrintError(err)
 	if app.GetRunMode() == gorgany.Dev {
-		if message.GetHeader().Get("Content-Type") == core.ApplicationJson || message.IsApiNamespace() {
+		if message.GetHeader().Get("Content-Type") == core.ApplicationJson.String() || message.IsApiNamespace() {
 			message.ResponseJSON(dto.ReturnObject(nil, core.InternalErrorHttpStatus, err.Error()), 200)
 			return
 		}
@@ -71,7 +71,7 @@ func processDefaultError(err error, message core.HttpMessage) {
 func processValidationErrors(error error, message core.HttpMessage) {
 	concreteError := error.(*error2.ValidationErrors)
 	req := message.GetRequest()
-	if message.GetHeader().Get("Content-Type") == core.ApplicationJson || message.IsApiNamespace() {
+	if message.GetHeader().Get("Content-Type") == core.ApplicationJson.String() || message.IsApiNamespace() {
 		message.ResponseJSON(dto.ReturnObject(nil, core.ValidationHttpStatus, error), 200)
 		return
 	}
@@ -91,7 +91,7 @@ func processBodyParsingError(error error, message core.HttpMessage) {
 }
 
 func processJwtAuthError(err error, message core.HttpMessage) {
-	if message.GetHeader().Get("Content-Type") == core.ApplicationJson || message.IsApiNamespace() {
+	if message.GetHeader().Get("Content-Type") == core.ApplicationJson.String() || message.IsApiNamespace() {
 		message.ResponseJSON(dto.ReturnObject(nil, core.NotAuthorizedHttpStatus, "Invalid JWT"), 401)
 		return
 	}
