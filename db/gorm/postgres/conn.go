@@ -452,20 +452,37 @@ func (thiz *Builder) RollbackTransaction() core.IQueryBuilder {
 	return thiz
 }
 
-func (thiz *Builder) Raw(sql string, scan any, values ...any) error {
+func (thiz *Builder) Raw(sql string, values ...any) core.IQueryBuilder {
 	res := thiz.GetDriver().Raw(sql, values...)
 
-	rvScan := reflect.ValueOf(scan)
-	if rvScan.Kind() != reflect.Ptr && scan != nil {
-		return fmt.Errorf("Scan must be pointer")
+	if res.Error != nil {
+		panic(res.Error)
 	}
 
-	if scan != nil {
-		res.Scan(scan)
+	thiz.copyGorm = res
+
+	return thiz
+}
+
+func (thiz *Builder) Exec() error {
+	if thiz.copyGorm == nil {
+		return fmt.Errorf("You must call Raw method before")
+	}
+
+	var res *gorm.DB
+
+	sql := thiz.copyGorm.Statement.SQL.String()
+	if sql != "" {
+		res = thiz.copyGorm.Exec(thiz.copyGorm.Statement.SQL.String())
+	}
+
+	if res.Error != nil {
+		return res.Error
 	}
 
 	thiz.clearQueryParams()
-	return res.Error
+
+	return nil
 }
 
 func (thiz *Builder) Association(association string) *gorm.Association {

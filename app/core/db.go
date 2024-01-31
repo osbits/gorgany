@@ -57,7 +57,8 @@ type IQueryBuilder interface {
 	CommitTransaction() IQueryBuilder
 	RollbackTransaction() IQueryBuilder
 	Relation(relation string) IQueryBuilder
-	Raw(sql string, scan any, values ...any) error
+	Raw(sql string, values ...any) IQueryBuilder
+	Exec() error
 	GetConnection() IConnection
 	CountRelation(relation string) (int64, error)
 	ReplaceRelation(relation string, values ...any) error
