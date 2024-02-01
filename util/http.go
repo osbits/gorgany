@@ -6,6 +6,17 @@ import (
 	"strings"
 )
 
+func CreateLink(url string, locale string, absolute bool) string {
+	link := AddLocaleToURL(locale, url)
+	if absolute {
+		if link[0] == '/' {
+			return viper.GetString("app.server.url") + link
+		}
+		return viper.GetString("app.server.url") + "/" + link
+	}
+	return link
+}
+
 func AddLocaleToURL(locale string, url string) string {
 	if locale == viper.GetString("i18n.lang.default") {
 		return url
@@ -21,6 +32,10 @@ func AddLocaleToURL(locale string, url string) string {
 
 	if url[len(url)-1] == '/' && len(url) > 1 {
 		url = url[:len(url)-1]
+	}
+
+	if url[0] == '/' {
+		return url
 	}
 
 	return "/" + url

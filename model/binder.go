@@ -45,18 +45,20 @@ func (thiz FieldBinder) BindProtectedField(model any, field string, value any) e
 		return fmt.Errorf("LimitedFieldsBinder: Model must be a struct")
 	}
 
+	rvField := rvModel.FieldByNameFunc(func(name string) bool {
+		return strings.ToLower(strcase.ToLowerCamel(strings.ToLower(name))) == strings.ToLower(strcase.ToLowerCamel(field))
+	})
+
 	if protectedFieldsModel, ok := model.(core.LimitedFieldsMarshaller); ok {
 		isProtectedAllowed := util.InArray(field, protectedFieldsModel.AllowedProtectedFields())
 		if !isProtectedAllowed {
+			rvField.Set(reflect.Zero(rvField.Type()))
 			return nil
 		}
 	} else {
 		return nil
 	}
 
-	rvField := rvModel.FieldByNameFunc(func(name string) bool {
-		return strings.ToLower(strcase.ToLowerCamel(strings.ToLower(name))) == strings.ToLower(strcase.ToLowerCamel(field))
-	})
 	rvField.Set(reflect.ValueOf(value))
 
 	return nil

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/smtp"
 	"os"
+	"strings"
 )
 
 type Attachment struct {
@@ -61,6 +62,13 @@ func (thiz MailService) Send(ctx context.Context, mail core.IMail) error {
 func (thiz MailService) buildBody(ctx context.Context, mail core.IMail) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
+	if len(mail.GetCc()) > 0 {
+		buf.WriteString(fmt.Sprintf("Cc: %s\n", strings.Join(mail.GetCc(), ",")))
+	}
+	if len(mail.GetBcc()) > 0 {
+		buf.WriteString(fmt.Sprintf("Bcc: %s\n", strings.Join(mail.GetBcc(), ",")))
+	}
+
 	buf.WriteString(fmt.Sprintf("Subject: %s\n", mail.GetSubject()))
 	buf.WriteString("MIME-version: 1.0;\n")
 	writer := multipart.NewWriter(buf)
@@ -99,8 +107,6 @@ func (thiz MailService) buildBody(ctx context.Context, mail core.IMail) ([]byte,
 		buf.Write(b)
 		buf.WriteString(fmt.Sprintf("\n--%s", boundary))
 	}
-
-	buf.WriteString("--")
 
 	return buf.Bytes(), nil
 }

@@ -16,7 +16,7 @@ type ViewProvider struct {
 }
 
 func (thiz *ViewProvider) InitProvider() {
-	thiz.RegisterViewEngine(view.NewNativeEngine("./resource/view", "html"))
+	thiz.RegisterViewEngine(view.NewNativeEngine("./resource/view", "gohtml"))
 }
 
 func (thiz *ViewProvider) RegisterViewEngine(engine core.IViewEngine) {
