@@ -1,6 +1,9 @@
 package model
 
-import "strings"
+import (
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"strings"
+)
 
 type PaginationCommand struct {
 	Page  int
@@ -16,8 +19,12 @@ func (thiz PaginationCommand) GetLimit() int {
 	return thiz.Limit
 }
 
-func (thiz PaginationCommand) GetSort() []SortParam {
-	return thiz.Sort
+func (thiz PaginationCommand) GetSort() []core.ISortParam {
+	iSortParams := make([]core.ISortParam, 0)
+	for i := range thiz.Sort {
+		iSortParams = append(iSortParams, thiz.Sort[i])
+	}
+	return iSortParams
 }
 
 type LimitedFieldsCommand struct {
@@ -26,4 +33,8 @@ type LimitedFieldsCommand struct {
 
 func (thiz LimitedFieldsCommand) GetFields() []string {
 	return strings.Split(thiz.Fields, ",")
+}
+
+func (thiz LimitedFieldsCommand) ContentType() core.ContentType {
+	return core.Query
 }

@@ -69,6 +69,11 @@ func (thiz inputResolver) resolve() ([]reflect.Value, error) {
 				return nil, err
 			}
 
+			//err = service.GetContainer().Make(&arg) error: invalid structure due to arg is an interface{} but not a concrete type
+			//if err != nil {
+			//	return nil, err
+			//}
+
 			if err := gorganyValidator.ValidateStruct(arg); err != nil {
 				return nil, err
 			}

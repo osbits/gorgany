@@ -44,3 +44,18 @@ type LimitedFieldsMarshaller interface {
 type ProtectedFields interface {
 	GetProtectedFields() []string
 }
+
+type ISortParam interface {
+	GetField() string
+	GetOrder() string
+}
+
+type PaginationParams interface {
+	GetPage() int
+	GetLimit() int
+	GetSort() []ISortParam
+}
+
+type LimitedFieldsParams interface {
+	GetFields() []string
+}

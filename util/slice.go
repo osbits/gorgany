@@ -68,25 +68,25 @@ func InterfaceSlice(slice interface{}) []interface{} {
 	return ret
 }
 
-func UniqueSlice[T any](slice []T) []T {
-	resSlice := make([]T, 0)
-
-	for _, sliceValue := range slice {
-		isExistsInResSlice := false
-		for _, valueInResSlice := range resSlice {
-			reflectedValue := reflect.ValueOf(sliceValue)
-			reflectedValue2 := reflect.ValueOf(valueInResSlice)
-			if fmt.Sprintf("%v", ConvertReflectedValue(reflectedValue2)) == fmt.Sprintf("%v", ConvertReflectedValue(reflectedValue)) {
-				isExistsInResSlice = true
-			}
-		}
-		if !isExistsInResSlice {
-			resSlice = append(resSlice, sliceValue)
-		}
-	}
-
-	return resSlice
-}
+//func UniqueSlice[T any](slice []T) []T {
+//	resSlice := make([]T, 0)
+//
+//	for _, sliceValue := range slice {
+//		isExistsInResSlice := false
+//		for _, valueInResSlice := range resSlice {
+//			reflectedValue := reflect.ValueOf(sliceValue)
+//			reflectedValue2 := reflect.ValueOf(valueInResSlice)
+//			if fmt.Sprintf("%v", ConvertReflectedValue(reflectedValue2)) == fmt.Sprintf("%v", ConvertReflectedValue(reflectedValue)) {
+//				isExistsInResSlice = true
+//			}
+//		}
+//		if !isExistsInResSlice {
+//			resSlice = append(resSlice, sliceValue)
+//		}
+//	}
+//
+//	return resSlice
+//}
 
 func Prepend[T any](x []T, y T) []T {
 	var empty T
@@ -94,4 +94,29 @@ func Prepend[T any](x []T, y T) []T {
 	copy(x[1:], x)
 	x[0] = y
 	return x
+}
+
+func UniqueSlice[T comparable](s []T) []T {
+	uniqueSlice := make([]T, 0, len(s))
+	seen := make(map[T]bool, len(s))
+	for _, v := range s {
+		if !seen[v] {
+			uniqueSlice = append(uniqueSlice, v)
+			seen[v] = true
+		}
+	}
+	return uniqueSlice
+}
+
+func UniqueSliceByClosure[T any, V comparable] (s []T, closure func(el T) V) []T {
+	uniqueSlice := make([]T, 0, len(s))
+	seen := make(map[V]bool, len(s))
+	for _, el := range s {
+		prop := closure(el)
+		if !seen[prop] {
+			uniqueSlice = append(uniqueSlice, el)
+			seen[prop] = true
+		}
+	}
+	return uniqueSlice
 }

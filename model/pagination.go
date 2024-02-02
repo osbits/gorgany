@@ -136,6 +136,14 @@ type SortParam struct {
 	Order string
 }
 
+func (thiz SortParam) GetField() string {
+	return thiz.Field
+}
+
+func (thiz SortParam) GetOrder() string {
+	return thiz.Order
+}
+
 // Query should look like this sort[0][field]=Email&sort[0][order]=desc&sort[1][field]=Id&sort[1][order]=asc
 func NewSortParam(field string, order string) (*SortParam, error) {
 	if field == "" {
@@ -152,14 +160,20 @@ func NewSortParam(field string, order string) (*SortParam, error) {
 	}, nil
 }
 
-func NewPaginationParams(page int, pageSize int, sort []SortParam, filters []Filter) *PaginationParams {
+func NewPaginationParams(page int, pageSize int, sort []core.ISortParam, filters []Filter) *PaginationParams {
 	if pageSize == 0 {
 		pageSize = 50 //todo
 	}
+
+	sortParams := make([]SortParam, 0)
+	for i := range sort {
+		sortParams = append(sortParams, sort[i].(SortParam))
+	}
+
 	return &PaginationParams{
 		Page:     page,
 		PageSize: pageSize,
-		Sort:     sort,
+		Sort:     sortParams,
 		Filters:  filters,
 	}
 }
