@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/spf13/viper"
 	"log"
 	"net/http"
 	"os"
@@ -347,6 +348,11 @@ func (c *Cors) isOriginAllowed(r *http.Request, origin string) bool {
 		return true
 	}
 	origin = strings.ToLower(origin)
+
+	if origin == strings.ToLower(viper.GetString("app.server.url")) {
+		return true
+	}
+
 	for _, o := range c.allowedOrigins {
 		if o == origin {
 			return true
