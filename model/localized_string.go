@@ -14,7 +14,7 @@ type LocalizedString struct {
 	Data LocalizedStringEntries
 }
 
-func (thiz LocalizedString) TableName() string {
+func (thiz *LocalizedString) TableName() string {
 	return "localized_string"
 }
 
@@ -22,7 +22,7 @@ func (thiz *LocalizedString) Query() core.IOrm[LocalizedString] {
 	return &orm.GorganyOrm[LocalizedString]{Model: thiz}
 }
 
-func (thiz LocalizedString) Text(lang string) string {
+func (thiz *LocalizedString) Text(lang string) string {
 	localizedMap := thiz.Map()
 	return localizedMap[lang]
 }
