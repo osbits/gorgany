@@ -6,10 +6,12 @@ import (
 	"encoding/base64"
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/util"
 	"mime/multipart"
 	"net/http"
 	"net/smtp"
 	"os"
+	"strings"
 )
 
 type Attachment struct {
@@ -55,13 +57,24 @@ func (thiz MailService) Send(ctx context.Context, mail core.IMail) error {
 		return err
 	}
 
-	return smtp.SendMail(thiz.buildSmtpAddress(), thiz.buildAuth(), thiz.sender, mail.GetRecipients(), body)
+	recipients := util.MergeSlice(mail.GetRecipients(), mail.GetCc(), mail.GetBcc())
+	return smtp.SendMail(thiz.buildSmtpAddress(), thiz.buildAuth(), thiz.sender, recipients, body)
 }
 
 func (thiz MailService) buildBody(ctx context.Context, mail core.IMail) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
+	buf.WriteString(fmt.Sprintf("To: %s\n", strings.Join(mail.GetRecipients(), ", ")))
+
 	buf.WriteString(fmt.Sprintf("Subject: %s\n", mail.GetSubject()))
+
+	if len(mail.GetCc()) > 0 {
+		buf.WriteString(fmt.Sprintf("Cc: %s\n", strings.Join(mail.GetCc(), ", ")))
+	}
+	if len(mail.GetBcc()) > 0 {
+		buf.WriteString(fmt.Sprintf("Bcc: %s\n", strings.Join(mail.GetBcc(), ", ")))
+	}
+
 	buf.WriteString("MIME-version: 1.0;\n")
 	writer := multipart.NewWriter(buf)
 	boundary := writer.Boundary()
@@ -99,8 +112,6 @@ func (thiz MailService) buildBody(ctx context.Context, mail core.IMail) ([]byte,
 		buf.Write(b)
 		buf.WriteString(fmt.Sprintf("\n--%s", boundary))
 	}
-
-	buf.WriteString("--")
 
 	return buf.Bytes(), nil
 }

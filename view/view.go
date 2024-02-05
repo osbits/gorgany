@@ -10,6 +10,7 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
+	"html/template"
 	"io"
 	"os"
 	"regexp"
@@ -37,8 +38,11 @@ func (thiz EngineRenderer) DoRender(ctx context.Context, w io.Writer, templateNa
 	return thiz.Engine.Render(w, templateName, opts)
 }
 
-func (thiz EngineRenderer) CreateLink(ctx context.Context, url string) string {
-	return util.AddLocaleToURL(thiz.Locale(ctx), url)
+func (thiz EngineRenderer) CreateLink(ctx context.Context, url string, absolute ...bool) string {
+	if len(absolute) > 0 {
+		return util.CreateLink(url, thiz.Locale(ctx), absolute[0])
+	}
+	return util.CreateLink(url, thiz.Locale(ctx), false)
 }
 
 func (thiz EngineRenderer) CreateLinkWithNamespace(ctx context.Context, url string, namespace string) string {
@@ -103,6 +107,14 @@ func (thiz EngineRenderer) CurrentUrl(ctx context.Context) string {
 	return ""
 }
 
+func (thiz EngineRenderer) AssetPath(path string, absolute bool) template.URL {
+	return template.URL(util.AssetPath(path, absolute))
+}
+
+func (thiz EngineRenderer) PublicPath(path string, absolute bool) template.URL {
+	return template.URL(util.PublicPath(path, absolute))
+}
+
 func (thiz EngineRenderer) registerFunctions(opts map[string]any) map[string]any {
 	opts["fn"] = map[string]any{
 		"InArray":                 util.InArray,
@@ -113,6 +125,8 @@ func (thiz EngineRenderer) registerFunctions(opts map[string]any) map[string]any
 		"CurrentUrl":              thiz.CurrentUrl,
 		"CreateLinkWithNamespace": thiz.CreateLinkWithNamespace,
 		"UrlByName":               router.GetRouter().UrlByNameSequence,
+		"AssetPath":               thiz.AssetPath,
+		"PublicPath":              thiz.PublicPath,
 	}
 
 	return opts

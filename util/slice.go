@@ -95,3 +95,10 @@ func Prepend[T any](x []T, y T) []T {
 	x[0] = y
 	return x
 }
+
+func MergeSlice[T any](s []T, ms ...[]T) []T {
+	for _, mergeSlice := range ms {
+		s = append(s, mergeSlice...)
+	}
+	return s
+}
