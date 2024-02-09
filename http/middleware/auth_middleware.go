@@ -36,7 +36,7 @@ func (thiz AuthMiddleware) Handle(message core.HttpMessage) bool {
 		}
 	}
 
-	if message.GetHeader().Get("Content-Type") == core.ApplicationJson || message.GetPathParam("namespace") == "api" {
+	if message.GetHeader().Get("Content-Type") == core.ApplicationJson.String() || message.GetPathParam("namespace") == "api" {
 		message.ResponseJSON(dto.ReturnObject(nil, core.NotAuthorizedHttpStatus, nil), 200)
 		return false
 	}

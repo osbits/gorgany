@@ -41,6 +41,18 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, 
 		}
 	}()
 
+	reflectedHandler := reflect.ValueOf(handler)
+	resolver := inputResolver{
+		reflectedHandler: reflectedHandler,
+		message:          message,
+	}
+
+	args, err := resolver.resolve()
+	if err != nil {
+		Catch(err, message)
+		return
+	}
+
 	for _, middleware := range internal.GetFrameworkRegistrar().GetMiddlewares() {
 		rtC := reflect.TypeOf(middleware)
 		corsMiddlewareName := util.IndirectType(rtC).Name()
@@ -62,18 +74,6 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, 
 	}
 
 	if handler == nil {
-		return
-	}
-
-	reflectedHandler := reflect.ValueOf(handler)
-	resolver := inputResolver{
-		reflectedHandler: reflectedHandler,
-		message:          message,
-	}
-
-	args, err := resolver.resolve()
-	if err != nil {
-		Catch(err, message)
 		return
 	}
 

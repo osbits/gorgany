@@ -1,12 +1,15 @@
 package multipart
 
 import (
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/decoder"
 	"git.qix.sx/gorgany/gorgany.git/model"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"github.com/gorilla/schema"
 	"reflect"
 	"strings"
 	"time"
+	"unsafe"
 )
 
 type ValuesDecoder struct {
@@ -14,8 +17,9 @@ type ValuesDecoder struct {
 }
 
 func NewFormValuesDecoder() *ValuesDecoder {
-	decoder := schema.NewDecoder()
-	decoder.RegisterConverter(model.FormDateTimeLocal{}, func(s string) reflect.Value {
+	d := schema.NewDecoder()
+	d.IgnoreUnknownKeys(true)
+	d.RegisterConverter(model.FormDateTimeLocal{}, func(s string) reflect.Value {
 		if s == "" {
 			return reflect.ValueOf(model.FormDateTimeLocal{})
 		}
@@ -27,7 +31,7 @@ func NewFormValuesDecoder() *ValuesDecoder {
 		return reflect.ValueOf(model.FormDateTimeLocal{Time: t})
 	})
 
-	decoder.RegisterConverter(model.FormDateLocal{}, func(s string) reflect.Value {
+	d.RegisterConverter(model.FormDateLocal{}, func(s string) reflect.Value {
 		if s == "" {
 			return reflect.ValueOf(model.FormDateLocal{})
 		}
@@ -39,15 +43,38 @@ func NewFormValuesDecoder() *ValuesDecoder {
 		return reflect.ValueOf(model.FormDateLocal{Time: t})
 	})
 
-	decoder.IgnoreUnknownKeys(true)
+	d.RegisterConverter(model.DateLocal{}, func(s string) reflect.Value {
+		if s == "" {
+			return reflect.ValueOf(model.DateLocal{})
+		}
 
-	return &ValuesDecoder{formSchemaDecoder: decoder}
+		t, err := time.Parse(core.GlobalDateFormat, s)
+		if err != nil {
+			panic(err)
+		}
+		return reflect.ValueOf(model.DateLocal{FormDateLocal: model.FormDateLocal{Time: t}})
+	})
+
+	d.RegisterConverter(model.DateTimeLocal{}, func(s string) reflect.Value {
+		if s == "" {
+			return reflect.ValueOf(model.DateTimeLocal{})
+		}
+
+		t, err := time.Parse(core.GlobalDateTimeFormat, s)
+		if err != nil {
+			panic(err)
+		}
+		return reflect.ValueOf(model.DateTimeLocal{FormDateLocal: model.FormDateLocal{Time: t}})
+	})
+
+	return &ValuesDecoder{formSchemaDecoder: d}
 }
 
 func (thiz ValuesDecoder) Decode(dst interface{}, src map[string][]string) error {
 	reflectedValue := reflect.ValueOf(dst)
 	reflectedType := reflect.TypeOf(dst)
 
+	// todo: redo this implementation on front for LocalizedString, after it can be removed
 	mapValues := make(map[string]map[string]string)
 	for key, values := range src {
 		splitKey := strings.Split(key, ".")
@@ -61,11 +88,65 @@ func (thiz ValuesDecoder) Decode(dst interface{}, src map[string][]string) error
 		mapValues[splitKey[0]][splitKey[1]] = values[0]
 		delete(src, key)
 	}
+	//
 
+	queryParams, err := decoder.ParseUrlValues(src)
+	if err != nil {
+		return err
+	}
+
+	for key, values := range queryParams {
+		if mapArray, ok := values.([]map[string]string); ok {
+			for _, el := range mapArray {
+				reflectedField := util.IndirectValue(reflectedValue).FieldByNameFunc(func(name string) bool {
+					return strings.ToLower(name) == key
+				})
+
+				if !reflectedField.IsValid() || reflectedField.Kind() != reflect.Slice {
+					continue
+				}
+
+				reflectedNestedStruct := util.GetReflectElementOfSlice(reflectedField.Interface())
+
+				if !reflectedNestedStruct.IsValid() {
+					continue
+				}
+
+				mapInitiator, err := thiz.mapInitiatorImplementation(reflectedNestedStruct, el)
+				if err != nil {
+					return err
+				}
+				if mapInitiator != nil {
+					reflectedField.Set(reflect.Append(reflectedField, reflect.ValueOf(mapInitiator)))
+					continue
+				}
+
+				for subKey, value := range el {
+					field := reflectedNestedStruct.FieldByNameFunc(func(name string) bool {
+						return strings.ToLower(name) == subKey
+					})
+					if !field.IsValid() {
+						continue
+					}
+
+					resolvedValue, err := util.ResolvePrimitive(field.Kind(), value)
+					if err != nil {
+						return err
+					}
+					field.Set(reflect.ValueOf(resolvedValue))
+				}
+
+				reflectedField.Set(reflect.Append(reflectedField, reflectedNestedStruct))
+			}
+		}
+	}
+
+	// todo: redo this implementation on front for LocalizedString, after it can be removed
 	for key, values := range mapValues {
 		reflectedField := reflectedValue.Elem().FieldByName(key)
 		reflectedField.Set(reflect.ValueOf(values))
 	}
+	//
 
 	for key, values := range src {
 		if len(values) > 1 {
@@ -94,4 +175,20 @@ func (thiz ValuesDecoder) Decode(dst interface{}, src map[string][]string) error
 	}
 
 	return thiz.formSchemaDecoder.Decode(dst, src)
+}
+
+func (thiz ValuesDecoder) mapInitiatorImplementation(value reflect.Value, params map[string]string) (core.MapInitiator, error) {
+	if value.Kind() != reflect.Ptr {
+		value = reflect.NewAt(value.Type(), unsafe.Pointer(value.UnsafeAddr()))
+	}
+
+	if mapInitiator, ok := value.Interface().(core.MapInitiator); ok {
+		err := mapInitiator.FromMap(params)
+		if err != nil {
+			return nil, err
+		}
+		return mapInitiator, nil
+	}
+
+	return nil, nil
 }

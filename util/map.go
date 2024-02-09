@@ -6,3 +6,10 @@ func MergeMaps[T any](m1 map[string]T, m2 map[string]T) map[string]T {
 	}
 	return m1
 }
+
+func ContainsKey[K comparable, V comparable](m map[K]V, key K) bool {
+	if _, ok := m[key]; ok {
+		return true
+	}
+	return false
+}

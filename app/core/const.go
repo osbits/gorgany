@@ -53,23 +53,28 @@ type HttpStatus struct {
 }
 
 var (
-	SuccessHttpStatus       HttpStatus = HttpStatus{Status: 200, Code: "SUCCESS"}
-	CreatedHttpStatus       HttpStatus = HttpStatus{Status: 201, Code: "CREATED"}
-	DeletedHttpStatus       HttpStatus = HttpStatus{Status: 204, Code: "DELETED"}
-	BadRequestHttpStatus    HttpStatus = HttpStatus{Status: 400, Code: "BAD_REQUEST"}
-	NotAuthorizedHttpStatus HttpStatus = HttpStatus{Status: 401, Code: "NOT_AUTHORIZED"}
-	ForbiddenHttpStatus     HttpStatus = HttpStatus{Status: 403, Code: "FORBIDDEN"}
-	NotFoundHttpStatus      HttpStatus = HttpStatus{Status: 404, Code: "NOT_FOUND"}
-	ValidationHttpStatus    HttpStatus = HttpStatus{Status: 422, Code: "VALIDATION"}
-	InternalErrorHttpStatus HttpStatus = HttpStatus{Status: 500, Code: "INTERNAL_ERROR"}
+	SuccessHttpStatus       = HttpStatus{Status: 200, Code: "SUCCESS"}
+	CreatedHttpStatus       = HttpStatus{Status: 201, Code: "CREATED"}
+	DeletedHttpStatus       = HttpStatus{Status: 204, Code: "DELETED"}
+	BadRequestHttpStatus    = HttpStatus{Status: 400, Code: "BAD_REQUEST"}
+	NotAuthorizedHttpStatus = HttpStatus{Status: 401, Code: "NOT_AUTHORIZED"}
+	ForbiddenHttpStatus     = HttpStatus{Status: 403, Code: "FORBIDDEN"}
+	NotFoundHttpStatus      = HttpStatus{Status: 404, Code: "NOT_FOUND"}
+	ValidationHttpStatus    = HttpStatus{Status: 422, Code: "VALIDATION"}
+	InternalErrorHttpStatus = HttpStatus{Status: 500, Code: "INTERNAL_ERROR"}
 )
 
 type ContentType string
 
 const (
-	ApplicationJson   = "application/json"
-	MultipartFormData = "multipart/form-data"
+	ApplicationJson   ContentType = "application/json"
+	MultipartFormData ContentType = "multipart/form-data"
+	Query             ContentType = "query"
 )
+
+func (thiz ContentType) String() string {
+	return string(thiz)
+}
 
 const (
 	GorganyFieldTag         = "grgorm"

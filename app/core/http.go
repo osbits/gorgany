@@ -2,14 +2,13 @@ package core
 
 import (
 	"context"
-	"io"
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"reflect"
 )
 
 type HttpMessage interface {
-	io.Closer
 	GetRequest() *http.Request
 	GetWriter() http.ResponseWriter
 	GetPathParam(key string) string
@@ -37,6 +36,8 @@ type HttpMessage interface {
 	GetFiles(key string) ([]IFile, error)
 	IsApiNamespace() bool
 	Context() context.Context
+	GetInputParameters() []reflect.Value
+	GetRawQuery() string
 	GetSession() ISession
 	GetCookieManager() ICookieManager
 }
@@ -65,4 +66,21 @@ type ICookieManager interface {
 	SetCookie(cookie *http.Cookie)
 	GetCookie(key string) *http.Cookie
 	GetCookies() []*http.Cookie
+}
+
+type HttpCommand interface {
+	ContentType() ContentType
+}
+
+type HttpFilterCommand interface {
+	AllowFilterFields(ctx context.Context) []string
+}
+
+type HttpAccessCommand interface {
+	IsAccessAllowed(ctx context.Context) bool
+	FilterBuilder(ctx context.Context) IQueryBuilder
+}
+
+type MapInitiator interface {
+	FromMap(params map[string]string) error
 }

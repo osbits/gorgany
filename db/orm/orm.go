@@ -199,6 +199,12 @@ func (thiz *GorganyOrm[T]) LoadRelations(relations ...string) error {
 	return thiz.builder.LoadRelations(relations...)
 }
 
+func (thiz *GorganyOrm[T]) MergeBuilder(builder core.IQueryBuilder) core.IOrm[T] {
+	thiz.setBuilder()
+	thiz.builder.MergeBuilder(builder)
+	return thiz
+}
+
 func (thiz *GorganyOrm[T]) ToQuery() string {
 	return thiz.builder.ToProcessedQuery()
 }
