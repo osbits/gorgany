@@ -43,6 +43,30 @@ func NewFormValuesDecoder() *ValuesDecoder {
 		return reflect.ValueOf(model.FormDateLocal{Time: t})
 	})
 
+	d.RegisterConverter(model.DateLocal{}, func(s string) reflect.Value {
+		if s == "" {
+			return reflect.ValueOf(model.DateLocal{})
+		}
+
+		t, err := time.Parse(core.GlobalDateFormat, s)
+		if err != nil {
+			panic(err)
+		}
+		return reflect.ValueOf(model.DateLocal{FormDateLocal: model.FormDateLocal{Time: t}})
+	})
+
+	d.RegisterConverter(model.DateTimeLocal{}, func(s string) reflect.Value {
+		if s == "" {
+			return reflect.ValueOf(model.DateTimeLocal{})
+		}
+
+		t, err := time.Parse(core.GlobalDateTimeFormat, s)
+		if err != nil {
+			panic(err)
+		}
+		return reflect.ValueOf(model.DateTimeLocal{FormDateLocal: model.FormDateLocal{Time: t}})
+	})
+
 	return &ValuesDecoder{formSchemaDecoder: d}
 }
 
