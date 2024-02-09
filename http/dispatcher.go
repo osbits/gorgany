@@ -12,6 +12,10 @@ import (
 )
 
 func Dispatch(w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, middlewares []core.IMiddleware) {
+	if originalPath := r.Context().Value(core.OriginalURLPathKey).(string); originalPath != "" {
+		r.URL.Path = originalPath
+	}
+
 	message := &Message{}
 	defer func() {
 		err := message.Close()

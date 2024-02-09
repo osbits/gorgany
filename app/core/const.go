@@ -25,6 +25,8 @@ const OneTimeSessionAttributeKey = "_GORGANY_ONE_TIME_PARAMS"
 
 const DefaultKeyInRegistrar = "default"
 
+const OriginalURLPathKey = "originalPath"
+
 // Error
 
 const GeneralError = "GeneralError"
