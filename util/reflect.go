@@ -316,3 +316,27 @@ type Float64 struct {
 func (thiz Float64) Value() any {
 	return thiz.val
 }
+
+func InterfaceSlice(slice interface{}) []interface{} {
+	s := IndirectValue(reflect.ValueOf(slice))
+	if s.Kind() != reflect.Slice {
+		panic("InterfaceSlice() given a non-slice type")
+	}
+
+	// Keep the distinction between nil and empty slice input
+	if s.IsNil() {
+		return nil
+	}
+
+	ret := make([]interface{}, s.Len())
+
+	for i := 0; i < s.Len(); i++ {
+		val := s.Index(i)
+		if s.Index(i).Kind() == reflect.Ptr {
+			val = reflect.Indirect(s.Index(i))
+		}
+		ret[i] = val.Interface()
+	}
+
+	return ret
+}

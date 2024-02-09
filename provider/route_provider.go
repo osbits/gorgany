@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"context"
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
@@ -127,6 +128,10 @@ func (thiz *RouteProvider) caseSensitiveRoutes() {
 	if !viper.GetBool("app.server.caseSensitiveRoutes") {
 		thiz.router.Engine().(chi.Router).Use(func(next http2.Handler) http2.Handler {
 			fn := func(w http2.ResponseWriter, r *http2.Request) {
+				ctx := r.Context()
+				ctx = context.WithValue(ctx, core.OriginURLPathKey, r.URL.Path)
+				r = r.WithContext(ctx)
+
 				r.URL.Path = strings.ToLower(r.URL.Path)
 				next.ServeHTTP(w, r)
 			}

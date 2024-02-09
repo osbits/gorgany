@@ -2,9 +2,11 @@ package util
 
 import (
 	"fmt"
+	"golang.org/x/exp/constraints"
 	"reflect"
 )
 
+// InArray
 func InArray(value any, slice any) bool {
 	sliceArr := InterfaceSlice(slice)
 
@@ -26,6 +28,7 @@ func InArrayFunc[T any](slice []T, callback func(element T) bool) bool {
 	return false
 }
 
+// Pluck
 func Pluck(slice any, key string) []any {
 	keySlice := make([]any, 0)
 
@@ -44,28 +47,16 @@ func Pluck(slice any, key string) []any {
 	return keySlice
 }
 
-func InterfaceSlice(slice interface{}) []interface{} {
-	s := IndirectValue(reflect.ValueOf(slice))
-	if s.Kind() != reflect.Slice {
-		panic("InterfaceSlice() given a non-slice type")
+func PluckInto[T any, R any](slice []T, dest *[]R, key string) {
+	if slice == nil {
+		return
 	}
 
-	// Keep the distinction between nil and empty slice input
-	if s.IsNil() {
-		return nil
+	for _, sliceValue := range slice {
+		reflectedValue := IndirectValue(reflect.ValueOf(sliceValue))
+		reflectedField := reflectedValue.FieldByName(key)
+		*dest = append(*dest, reflectedField.Interface().(R))
 	}
-
-	ret := make([]interface{}, s.Len())
-
-	for i := 0; i < s.Len(); i++ {
-		val := s.Index(i)
-		if s.Index(i).Kind() == reflect.Ptr {
-			val = reflect.Indirect(s.Index(i))
-		}
-		ret[i] = val.Interface()
-	}
-
-	return ret
 }
 
 //func UniqueSlice[T any](slice []T) []T {
@@ -88,6 +79,7 @@ func InterfaceSlice(slice interface{}) []interface{} {
 //	return resSlice
 //}
 
+// Add
 func Prepend[T any](x []T, y T) []T {
 	var empty T
 	x = append(x, empty)
@@ -96,6 +88,7 @@ func Prepend[T any](x []T, y T) []T {
 	return x
 }
 
+// Unique
 func UniqueSlice[T comparable](s []T) []T {
 	uniqueSlice := make([]T, 0, len(s))
 	seen := make(map[T]bool, len(s))
@@ -108,7 +101,7 @@ func UniqueSlice[T comparable](s []T) []T {
 	return uniqueSlice
 }
 
-func UniqueSliceByClosure[T any, V comparable] (s []T, closure func(el T) V) []T {
+func UniqueSliceByClosure[T any, V comparable](s []T, closure func(el T) V) []T {
 	uniqueSlice := make([]T, 0, len(s))
 	seen := make(map[V]bool, len(s))
 	for _, el := range s {
@@ -119,4 +112,114 @@ func UniqueSliceByClosure[T any, V comparable] (s []T, closure func(el T) V) []T
 		}
 	}
 	return uniqueSlice
+}
+
+// Sort
+func Sort[T any, V constraints.Ordered](s []T, closure func(el T) V) {
+	if len(s) <= 1 {
+		return
+	}
+
+	pivotIndex := len(s) / 2
+	pivot := closure(s[pivotIndex])
+
+	left := make([]T, 0, len(s))
+	right := make([]T, 0, len(s))
+
+	for i := range s {
+		if i == pivotIndex {
+			continue
+		}
+		value := closure(s[i])
+		if value < pivot {
+			left = append(left, s[i])
+		} else {
+			right = append(right, s[i])
+		}
+	}
+
+	Sort(left, closure)
+	Sort(right, closure)
+
+	copy(s, append(append(left, s[pivotIndex]), right...))
+}
+
+// Find
+func FindAll[T any](slice []T, closure func(T) bool) []T {
+	dest := make([]T, 0)
+	for _, el := range slice {
+		if closure(el) {
+			dest = append(dest, el)
+		}
+	}
+	return dest
+}
+
+func Find[T any](slice []T, dest *T, closure func(T) bool) {
+	for _, el := range slice {
+		if closure(el) {
+			*dest = el
+		}
+	}
+}
+
+// Contains
+func ContainsByClosure[T any](slice []T, closure func(T) bool) bool {
+	for _, el := range slice {
+		if closure(el) {
+			return true
+		}
+	}
+	return false
+}
+
+func Contains[T comparable](slice []T, value T) bool {
+	for _, el := range slice {
+		if el == value {
+			return true
+		}
+	}
+	return false
+}
+
+func ContainsAll[T comparable](slice []T, values []T) bool {
+	for _, value := range values {
+		if !Contains(slice, value) {
+			return false
+		}
+	}
+	return true
+}
+
+func ContainsAnyByClosure[T any, K comparable](slice []T, values []K, closure func(el T) K) bool {
+	for _, el := range slice {
+		value := closure(el)
+		if Contains(values, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func ContainsSameTypeByClosure[T any, K comparable](slice []T, values []T, closure func(el T) K) bool {
+	for _, v := range values {
+		value := closure(v)
+		for _, el := range slice {
+			elSlice := closure(el)
+			if value == elSlice {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Group
+func Group[T any, V comparable](s []T, closure func(T) V) map[V][]T {
+	grouped := make(map[V][]T)
+	for _, el := range s {
+		key := closure(el)
+		grouped[key] = append(grouped[key], el)
+	}
+	return grouped
 }
