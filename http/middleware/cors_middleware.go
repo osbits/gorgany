@@ -474,3 +474,7 @@ func parseHeaderList(headerList string) []string {
 	}
 	return headers
 }
+
+func (c *Cors) Priority() core.MiddlewarePriority {
+	return core.High
+}

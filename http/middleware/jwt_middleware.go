@@ -42,3 +42,7 @@ func (thiz JwtMiddleware) Handle(message core.HttpMessage) bool {
 	message.ResponseJSON(dto.ReturnObject(nil, core.ForbiddenHttpStatus, nil), 200)
 	return false
 }
+
+func (thiz JwtMiddleware) Priority() core.MiddlewarePriority {
+	return core.High
+}

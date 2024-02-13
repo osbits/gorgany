@@ -43,3 +43,7 @@ func (thiz AuthMiddleware) Handle(message core.HttpMessage) bool {
 	message.Redirect(viper.GetString("auth.login.formUrl"), 302)
 	return false
 }
+
+func (thiz AuthMiddleware) Priority() core.MiddlewarePriority {
+	return core.High
+}

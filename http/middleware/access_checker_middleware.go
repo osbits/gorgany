@@ -37,3 +37,7 @@ func (thiz AccessCheckerMiddleware) Handle(message core.HttpMessage) bool {
 	}
 	return true
 }
+
+func (thiz AccessCheckerMiddleware) Priority() core.MiddlewarePriority {
+	return core.Medium
+}

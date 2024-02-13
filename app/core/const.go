@@ -84,3 +84,11 @@ const (
 
 var GlobalDateFormat = "2006-01-02"
 var GlobalDateTimeFormat = "2006-01-02 15:04:05"
+
+type MiddlewarePriority int
+
+const (
+	Low    MiddlewarePriority = iota // not implemented yet
+	Medium                           // middleware is called after the input parameters are parsed and injected, so you can get the input parameters using message.GetInputParameters methods.
+	High                             // middleware is called before the input parameters are parsed and before they are injected
+)

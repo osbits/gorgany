@@ -41,6 +41,16 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, 
 		}
 	}()
 
+	middlewares = mergeMiddlewaresWithGlobal(middlewares)
+
+	highPriorityMiddleware := util.FindAll(middlewares, func(el core.IMiddleware) bool {
+		return el.Priority() == core.High
+	})
+
+	if !preProcess(highPriorityMiddleware, message) {
+		return
+	}
+
 	reflectedHandler := reflect.ValueOf(handler)
 	resolver := inputResolver{
 		reflectedHandler: reflectedHandler,
@@ -53,23 +63,11 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, 
 		return
 	}
 
-	for _, middleware := range internal.GetFrameworkRegistrar().GetMiddlewares() {
-		rtC := reflect.TypeOf(middleware)
-		corsMiddlewareName := util.IndirectType(rtC).Name()
+	mediumPriorityMiddleware := util.FindAll(middlewares, func(el core.IMiddleware) bool {
+		return el.Priority() == core.Medium
+	})
 
-		overridden := util.InArrayFunc(middlewares, func(el core.IMiddleware) bool {
-			middlewareName := util.IndirectType(reflect.TypeOf(el)).Name()
-			return corsMiddlewareName == middlewareName
-		})
-
-		if overridden {
-			continue
-		}
-
-		middlewares = util.Prepend[core.IMiddleware](middlewares, middleware)
-	}
-
-	if !preProcess(middlewares, message) {
+	if !preProcess(mediumPriorityMiddleware, message) {
 		return
 	}
 
@@ -78,6 +76,8 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, 
 	}
 
 	reflectedHandler.Call(args)
+
+	// lowPriorityMiddleware todo: not implemented yet
 }
 
 func preProcess(middlewares []core.IMiddleware, message *Message) bool {
@@ -95,4 +95,24 @@ func preProcess(middlewares []core.IMiddleware, message *Message) bool {
 	}
 
 	return preProcessed
+}
+
+func mergeMiddlewaresWithGlobal(handlerMiddlewares []core.IMiddleware) []core.IMiddleware {
+	for _, middleware := range internal.GetFrameworkRegistrar().GetMiddlewares() {
+		rtC := reflect.TypeOf(middleware)
+		corsMiddlewareName := util.IndirectType(rtC).Name()
+
+		overridden := util.InArrayFunc(handlerMiddlewares, func(el core.IMiddleware) bool {
+			middlewareName := util.IndirectType(reflect.TypeOf(el)).Name()
+			return corsMiddlewareName == middlewareName
+		})
+
+		if overridden {
+			continue
+		}
+
+		handlerMiddlewares = util.Prepend[core.IMiddleware](handlerMiddlewares, middleware)
+	}
+
+	return handlerMiddlewares
 }

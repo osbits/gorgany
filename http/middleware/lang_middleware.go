@@ -19,3 +19,7 @@ func (thiz LangMiddleware) Handle(message core.HttpMessage) bool {
 	}
 	return true
 }
+
+func (thiz LangMiddleware) Priority() core.MiddlewarePriority {
+	return core.High
+}
