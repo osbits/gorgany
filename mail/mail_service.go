@@ -64,6 +64,7 @@ func (thiz MailService) Send(ctx context.Context, mail core.IMail) error {
 func (thiz MailService) buildBody(ctx context.Context, mail core.IMail) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
+	buf.WriteString(fmt.Sprintf("From: %s\n", thiz.sender))
 	buf.WriteString(fmt.Sprintf("To: %s\n", strings.Join(mail.GetRecipients(), ", ")))
 
 	buf.WriteString(fmt.Sprintf("Subject: %s\n", mail.GetSubject()))
@@ -75,7 +76,7 @@ func (thiz MailService) buildBody(ctx context.Context, mail core.IMail) ([]byte,
 		buf.WriteString(fmt.Sprintf("Bcc: %s\n", strings.Join(mail.GetBcc(), ", ")))
 	}
 
-	buf.WriteString("MIME-version: 1.0;\n")
+	buf.WriteString("MIME-version: 1.0\n")
 	writer := multipart.NewWriter(buf)
 	boundary := writer.Boundary()
 
@@ -85,9 +86,9 @@ func (thiz MailService) buildBody(ctx context.Context, mail core.IMail) ([]byte,
 	}
 
 	if len(attachments) == 0 {
-		buf.WriteString("Content-Type: text/html; charset=\"UTF-8\";\n\n")
+		buf.WriteString("Content-Type: text/html; charset=\"UTF-8\"\n\n")
 	} else {
-		buf.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=%s\n", boundary))
+		buf.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=%s\n\n", boundary))
 		buf.WriteString(fmt.Sprintf("--%s\n", boundary))
 	}
 
@@ -97,20 +98,24 @@ func (thiz MailService) buildBody(ctx context.Context, mail core.IMail) ([]byte,
 	}
 
 	if mailBody != nil && len(attachments) > 0 {
-		buf.WriteString("Content-Type: text/html; charset=\"UTF-8\";\n\n")
+		buf.WriteString("Content-Type: text/html; charset=\"UTF-8\"\n")
+		buf.WriteString("Content-Transfer-Encoding: base64\n\n")
 	}
-	buf.Write(mailBody)
+
+	mailBodyBuffer := make([]byte, base64.StdEncoding.EncodedLen(len(mailBody)))
+	base64.StdEncoding.Encode(mailBodyBuffer, mailBody)
+	buf.Write(mailBodyBuffer)
 
 	for _, attachment := range attachments {
 		buf.WriteString(fmt.Sprintf("\n\n--%s\n", boundary))
 		buf.WriteString(fmt.Sprintf("Content-Type: %s\n", http.DetectContentType(attachment.GetContent())))
 		buf.WriteString("Content-Transfer-Encoding: base64\n")
-		buf.WriteString(fmt.Sprintf("Content-Disposition: attachment; filename=%s\n", attachment.GetName()))
+		buf.WriteString(fmt.Sprintf("Content-Disposition: attachment; filename=%s\n\n", attachment.GetName()))
 
 		b := make([]byte, base64.StdEncoding.EncodedLen(len(attachment.GetContent())))
 		base64.StdEncoding.Encode(b, attachment.GetContent())
 		buf.Write(b)
-		buf.WriteString(fmt.Sprintf("\n--%s", boundary))
+		buf.WriteString(fmt.Sprintf("\n\n--%s", boundary))
 	}
 
 	return buf.Bytes(), nil
