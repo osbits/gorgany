@@ -86,7 +86,8 @@ func (thiz MailService) buildBody(ctx context.Context, mail core.IMail) ([]byte,
 	}
 
 	if len(attachments) == 0 {
-		buf.WriteString("Content-Type: text/html; charset=\"UTF-8\"\n\n")
+		buf.WriteString("Content-Type: text/html; charset=\"UTF-8\"\n")
+		buf.WriteString("Content-Transfer-Encoding: base64\n\n")
 	} else {
 		buf.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=%s\n\n", boundary))
 		buf.WriteString(fmt.Sprintf("--%s\n", boundary))
