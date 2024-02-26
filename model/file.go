@@ -145,8 +145,8 @@ func (thiz File) MarshalJSON() ([]byte, error) {
 	}
 
 	fileMap := make(map[string]any)
-	fileMap["Name"] = thiz.Name
-	fileMap["Path"] = thiz.Path
+	fileMap["name"] = thiz.Name
+	fileMap["path"] = thiz.PublicPath()
 	//fileMap["Size"] = thiz.Size todo: fix it
 
 	jsonFile, err := json.Marshal(fileMap)

@@ -26,7 +26,7 @@ import (
 
 const MigrationDir = "db/migration"
 
-var AllowedTypesToMigrate = []string{"gorm.io/gorm.DeletedAt"}
+var AllowedTypesToMigrate = []string{"gorm.io/gorm.DeletedAt", gorgany.FrameworkGit + "/model.File"}
 
 type DiffCommand struct {
 	modelStructAlreadyAdded map[string]bool
