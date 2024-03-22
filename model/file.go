@@ -5,106 +5,47 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path"
 	"strings"
 )
 
-const RootStorage = "resource/public"
-
 type File struct {
 	Name    string
 	Path    string
-	Content string
+	Content []byte
 	Size    int64
+	Loaded  bool // if file has been read and contains content
 }
 
-func (thiz File) FullPath() string {
-	return path.Join(RootStorage, thiz.Path, thiz.Name)
+func (thiz *File) SetName(name string) {
+	thiz.Name = name
 }
 
-func (thiz File) PublicPath() string {
-	if thiz.Path == "" && thiz.Name == "" {
-		return ""
-	}
-	return path.Join("/", "public", thiz.Path, thiz.Name)
+func (thiz *File) GetName() string {
+	return thiz.Name
 }
 
-func (thiz File) PathInPublic() string {
-	return path.Join(thiz.Path, thiz.Name)
+func (thiz *File) GetSize() int64 {
+	return thiz.Size
 }
 
-func (thiz File) ReadContent() (string, error) {
-	file, err := os.ReadFile(thiz.FullPath())
-	if err != nil {
-		return "", err
-	}
-	return string(file), nil
+func (thiz *File) GetContent() []byte {
+	return thiz.Content
 }
 
-func (thiz *File) Save(p string) error {
-	if thiz.Name == "" {
-		return nil
-	}
-
-	if p == "" {
-		p = thiz.Path
-	} else if thiz.Path == "" {
-		thiz.Path = p
-	}
-
-	p = path.Join(RootStorage, p)
-	err := os.MkdirAll(p, os.ModePerm)
-	if err != nil {
-		return err
-	}
-
-	file, err := os.Create(path.Join(p, thiz.Name))
-	if err != nil {
-		return err
-	}
-
-	file.Write([]byte(thiz.Content))
-	return nil
+func (thiz *File) GetPath() string {
+	return thiz.Path
 }
 
-func (thiz File) IsExists() bool {
-	stat, err := os.Stat(thiz.FullPath())
-	if err != nil {
-		return false
-	}
-	return !stat.IsDir()
-}
-
-func (thiz File) IsNil() bool {
+func (thiz *File) IsEmpty() bool {
 	if thiz.Name == "" {
 		return true
 	}
 	return false
 }
 
-func (thiz *File) Delete() error {
-	if !thiz.IsExists() {
-		return nil
-	}
-
-	if thiz.FullPath() == "" {
-		return nil
-	}
-
-	err := os.Remove(thiz.FullPath())
-	if err != nil {
-		if strings.Contains(err.Error(), "no such file or directory") {
-			return nil
-		}
-		return err
-	}
-
-	thiz.Content = ""
-	thiz.Name = ""
-	thiz.Path = ""
-
-	return nil
+func (thiz *File) IsLoaded() bool {
+	return thiz.Loaded
 }
 
 func (thiz *File) Scan(value interface{}) error {
@@ -119,24 +60,16 @@ func (thiz *File) Scan(value interface{}) error {
 
 	thiz.Path = p
 	thiz.Name = fileName
-
-	content, err := thiz.ReadContent()
-	if err != nil {
-		if strings.Contains(err.Error(), "no such file or directory") {
-			return nil
-		}
-		return err
-	}
-	thiz.Content = content
+	thiz.Loaded = false
 
 	return nil
 }
 
 func (thiz File) Value() (driver.Value, error) {
-	if thiz.PathInPublic() == "" || !thiz.IsExists() {
+	if thiz.Path == "" || thiz.Name == "" {
 		return nil, nil
 	}
-	return thiz.PathInPublic(), nil
+	return path.Join(thiz.Path, thiz.Name), nil
 }
 
 func (thiz File) MarshalJSON() ([]byte, error) {
@@ -146,7 +79,6 @@ func (thiz File) MarshalJSON() ([]byte, error) {
 
 	fileMap := make(map[string]any)
 	fileMap["name"] = thiz.Name
-	fileMap["path"] = thiz.PublicPath()
 	//fileMap["Size"] = thiz.Size todo: fix it
 
 	jsonFile, err := json.Marshal(fileMap)

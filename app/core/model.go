@@ -21,14 +21,23 @@ type IDomainMeta interface {
 }
 
 type IFile interface {
-	FullPath() string
-	PublicPath() string
-	PathInPublic() string
-	ReadContent() (string, error)
-	Save(p string) error
-	IsExists() bool
-	IsNil() bool
-	Delete() error
+	SetName(name string)
+	GetName() string
+	GetSize() int64
+	GetContent() []byte
+	GetPath() string
+	IsEmpty() bool
+	IsLoaded() bool
+}
+
+type IFileService interface {
+	FullPath(file IFile) string
+	PublicPath(file IFile) string
+	Read(path string) (IFile, error)
+	Save(file IFile) error
+	IsExists(file IFile) bool
+	Delete(p string) error
+	DeleteFile(file IFile) error
 }
 
 type ILocalizedString interface {

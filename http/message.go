@@ -7,9 +7,9 @@ import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/auth"
+	"git.qix.sx/gorgany/gorgany.git/decoder"
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/internal"
-	"git.qix.sx/gorgany/gorgany.git/decoder"
 	"git.qix.sx/gorgany/gorgany.git/log"
 	"git.qix.sx/gorgany/gorgany.git/model"
 	"git.qix.sx/gorgany/gorgany.git/util"
@@ -330,8 +330,9 @@ func (thiz *Message) GetFile(key string) (core.IFile, error) {
 
 	return &model.File{
 		Name:    header.Filename,
-		Content: string(content),
+		Content: content,
 		Size:    header.Size,
+		Loaded:  true,
 	}, nil
 }
 
@@ -353,7 +354,7 @@ func (thiz *Message) GetFiles(key string) ([]core.IFile, error) {
 			if err != nil {
 				return nil, err
 			}
-			files = append(files, &model.File{Name: file.Filename, Content: string(content), Size: file.Size})
+			files = append(files, &model.File{Name: file.Filename, Content: content, Size: file.Size, Loaded: true})
 		}
 	}
 	return files, nil
