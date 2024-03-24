@@ -323,14 +323,11 @@ func (thiz *Message) GetFile(key string) (core.IFile, error) {
 		return nil, err
 	}
 
-	content, err := io.ReadAll(fileRequest)
-	if err != nil {
-		return nil, err
-	}
+	defer fileRequest.Close()
 
 	return &model.File{
 		Name:    header.Filename,
-		Content: content,
+		Content: fileRequest,
 		Size:    header.Size,
 		Loaded:  true,
 	}, nil
@@ -350,11 +347,9 @@ func (thiz *Message) GetFiles(key string) ([]core.IFile, error) {
 			if err != nil {
 				return nil, err
 			}
-			content, err := io.ReadAll(reader)
-			if err != nil {
-				return nil, err
-			}
-			files = append(files, &model.File{Name: file.Filename, Content: content, Size: file.Size, Loaded: true})
+			defer reader.Close()
+
+			files = append(files, &model.File{Name: file.Filename, Content: reader, Size: file.Size, Loaded: true})
 		}
 	}
 	return files, nil

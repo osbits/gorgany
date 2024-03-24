@@ -1,5 +1,7 @@
 package core
 
+import "io"
+
 type IDomain[T any] interface {
 	Query() IOrm[T]
 	Clone() *T
@@ -24,7 +26,7 @@ type IFile interface {
 	SetName(name string)
 	GetName() string
 	GetSize() int64
-	GetContent() []byte
+	GetContent() io.ReadCloser
 	GetPath() string
 	IsEmpty() bool
 	IsLoaded() bool

@@ -7,13 +7,34 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/internal"
 	"git.qix.sx/gorgany/gorgany.git/service"
 	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/go-chi/chi"
 	"net/http"
+	"net/url"
 	"reflect"
+	"strings"
 )
 
 func Dispatch(w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, middlewares []core.IMiddleware) {
 	if originalPath := r.Context().Value(core.OriginalURLPathKey).(string); originalPath != "" {
 		r.URL.Path = originalPath
+		ctx := chi.RouteContext(r.Context())
+
+		for i, v := range ctx.URLParams.Values {
+			unescapedValue, err := url.PathUnescape(v)
+			if err != nil {
+				err2.HandleError(err)
+				return
+			}
+
+			index := strings.Index(strings.ToLower(originalPath), strings.ToLower(unescapedValue))
+			if index == -1 {
+				err2.HandleError(fmt.Errorf("Mismatch between incoming parameters and original URL: %s, %v", originalPath, ctx.URLParams.Values))
+				return
+			}
+			originalValue := originalPath[index : index+len(unescapedValue)]
+			v = originalValue
+			ctx.URLParams.Values[i] = v
+		}
 	}
 
 	message := &Message{}

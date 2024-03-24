@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path"
 	"strings"
 )
@@ -12,7 +13,7 @@ import (
 type File struct {
 	Name    string
 	Path    string
-	Content []byte
+	Content io.ReadCloser
 	Size    int64
 	Loaded  bool // if file has been read and contains content
 }
@@ -29,7 +30,7 @@ func (thiz *File) GetSize() int64 {
 	return thiz.Size
 }
 
-func (thiz *File) GetContent() []byte {
+func (thiz *File) GetContent() io.ReadCloser {
 	return thiz.Content
 }
 

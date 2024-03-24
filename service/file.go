@@ -1,9 +1,11 @@
 package service
 
 import (
+	"bytes"
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/model"
+	"io"
 	"os"
 	"path"
 	"strings"
@@ -39,10 +41,11 @@ func (f FileService) Read(path string) (core.IFile, error) {
 	fileName := splitFullFilePath[len(splitFullFilePath)-1]
 	p := strings.Join(splitFullFilePath[:len(splitFullFilePath)-1], "/")
 
+	bReader := bytes.NewReader(content)
 	file := &model.File{
 		Name:    fileName,
 		Path:    p,
-		Content: content,
+		Content: io.NopCloser(bReader),
 		Size:    int64(len(content)),
 		Loaded:  true,
 	}
@@ -67,7 +70,9 @@ func (f FileService) Save(file core.IFile) error {
 		return err
 	}
 
-	_, err = rawFile.Write(file.GetContent())
+	defer file.GetContent().Close()
+	_, err = io.Copy(rawFile, file.GetContent())
+
 	return err
 }
 
