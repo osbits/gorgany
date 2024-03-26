@@ -40,9 +40,12 @@ type Message struct {
 	ctx context.Context
 
 	inputParameters []reflect.Value
+
+	io []io.Closer
 }
 
 func (thiz *Message) Init() {
+	thiz.io = make([]io.Closer, 0)
 	thiz.cookieManager = NewCookieManager(thiz.writer, thiz.request)
 	thiz.setSession()
 }
@@ -323,6 +326,8 @@ func (thiz *Message) GetFile(key string) (core.IFile, error) {
 		return nil, err
 	}
 
+	thiz.io = append(thiz.io, fileRequest)
+
 	return &model.File{
 		Name:    header.Filename,
 		Content: fileRequest,
@@ -345,6 +350,8 @@ func (thiz *Message) GetFiles(key string) ([]core.IFile, error) {
 			if err != nil {
 				return nil, err
 			}
+
+			thiz.io = append(thiz.io, reader)
 
 			files = append(files, &model.File{Name: file.Filename, Content: reader, Size: file.Size, Loaded: true})
 		}
@@ -408,6 +415,13 @@ func (thiz *Message) GetCookieManager() core.ICookieManager {
 
 func (thiz *Message) Close() error {
 	thiz.clearOneTimeParams()
+	for i := range thiz.io {
+		err := thiz.io[i].Close()
+		if err != nil {
+			log.Log().Warnf("Error when closing stream: %v\n", err)
+		}
+	}
+
 	return nil
 }
 

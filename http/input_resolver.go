@@ -164,7 +164,14 @@ func (thiz multipartParser) parse(arg interface{}) error {
 		}
 		return &validationErrors
 	}
-	err = multipart.DecodeFiles(multipartForm.File, arg)
+
+	openedFiles, err := multipart.DecodeFiles(multipartForm.File, arg)
+	defer func() {
+		if len(openedFiles) > 0 {
+			thiz.message.io = append(thiz.message.io, openedFiles...)
+		}
+	}()
+
 	if err != nil {
 		validationErrors := make(error2.ValidationErrors, 0)
 		for key, _ := range multipartForm.File {
@@ -172,6 +179,7 @@ func (thiz multipartParser) parse(arg interface{}) error {
 		}
 		return &validationErrors
 	}
+
 	return nil
 }
 
