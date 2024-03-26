@@ -24,8 +24,6 @@ func DecodeFiles(filesMap map[string][]*multipart.FileHeader, dest any) error {
 			return err
 		}
 
-		defer reader.Close()
-
 		rand.Seed(time.Now().UnixNano())
 		uniqueId := fmt.Sprintf("%d%d%d", rand.Intn(10000), rand.Intn(10000), rand.Intn(10000))
 		file := model.File{

@@ -70,7 +70,6 @@ func (f FileService) Save(file core.IFile) error {
 		return err
 	}
 
-	defer file.GetContent().Close()
 	_, err = io.Copy(rawFile, file.GetContent())
 
 	return err
