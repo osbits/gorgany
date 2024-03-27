@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/db/gorm/plugin"
-	"github.com/spf13/viper"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	"time"
 )
 
 func NewGormPostgresConnection(config map[string]any) core.IConnection {
@@ -24,7 +24,32 @@ func NewGormPostgresConnection(config map[string]any) core.IConnection {
 	db.Callback().Query().Before("gorm:query").Register("extended_model_processor_add_type_to_where", plugin.ExtendedModelProcessor{}.AddModelTypeToWhere)
 	db.Callback().Create().After("gorm:after_create").Register("after_create", plugin.ExtendedModelProcessor{}.AddModelTypeAfterInsert)
 
-	if viper.GetBool("gorm.debug") {
+	if propsRaw, ok := config["properties"]; ok {
+		rawDb, err := db.DB()
+		if err != nil {
+			panic(err)
+		}
+
+		props := propsRaw.(map[string]any)
+
+		if maxOpenConnections, ok := props["maxOpenConnections"]; ok {
+			rawDb.SetMaxOpenConns(maxOpenConnections.(int))
+		}
+
+		if maxIdleConnections, ok := props["maxIdleConnections"]; ok {
+			rawDb.SetMaxIdleConns(maxIdleConnections.(int))
+		}
+
+		if connectionMaxLifetime, ok := props["connectionMaxLifetime"]; ok {
+			rawDb.SetConnMaxLifetime(time.Duration(connectionMaxLifetime.(int)) * time.Second)
+		}
+
+		if connectionMaxIdleLifetime, ok := props["connectionMaxIdleLifetime"]; ok {
+			rawDb.SetConnMaxIdleTime(time.Duration(connectionMaxIdleLifetime.(int)) * time.Second)
+		}
+	}
+
+	if config["log"].(bool) {
 		db = db.Debug()
 	}
 

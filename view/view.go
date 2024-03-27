@@ -7,6 +7,7 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/http/router"
 	"git.qix.sx/gorgany/gorgany.git/i18n"
 	"git.qix.sx/gorgany/gorgany.git/internal"
+	"git.qix.sx/gorgany/gorgany.git/service"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
@@ -24,10 +25,17 @@ func NewEngineRenderer(ctx context.Context) *EngineRenderer {
 }
 
 type EngineRenderer struct {
-	Engine core.IViewEngine `container:"inject"`
+	Engine    core.IViewEngine `container:"inject"`
+	functions map[string]any
+	variables map[string]any
 }
 
-func (thiz EngineRenderer) DoRender(ctx context.Context, w io.Writer, templateName string, opts map[string]any) error {
+func (thiz *EngineRenderer) Init() {
+	thiz.functions = make(map[string]any)
+	thiz.variables = make(map[string]any)
+}
+
+func (thiz *EngineRenderer) DoRender(ctx context.Context, w io.Writer, templateName string, opts map[string]any) error {
 	if opts == nil {
 		opts = make(map[string]any)
 	}
@@ -38,22 +46,22 @@ func (thiz EngineRenderer) DoRender(ctx context.Context, w io.Writer, templateNa
 	return thiz.Engine.Render(w, templateName, opts)
 }
 
-func (thiz EngineRenderer) CreateLink(ctx context.Context, url string, absolute ...bool) string {
+func (thiz *EngineRenderer) CreateLink(ctx context.Context, url string, absolute ...bool) string {
 	if len(absolute) > 0 {
 		return util.CreateLink(url, thiz.Locale(ctx), absolute[0])
 	}
 	return util.CreateLink(url, thiz.Locale(ctx), false)
 }
 
-func (thiz EngineRenderer) CreateLinkWithNamespace(ctx context.Context, url string, namespace string) string {
+func (thiz *EngineRenderer) CreateLinkWithNamespace(ctx context.Context, url string, namespace string) string {
 	return util.AddLocaleToURL(thiz.Locale(ctx), fmt.Sprintf("/%s%s", namespace, url))
 }
 
-func (thiz EngineRenderer) __(ctx context.Context, code string, opts ...any) string {
+func (thiz *EngineRenderer) __(ctx context.Context, code string, opts ...any) string {
 	return i18n.TranslationWithSequence(code, thiz.Locale(ctx), opts)
 }
 
-func (thiz EngineRenderer) Locale(ctx context.Context) string {
+func (thiz *EngineRenderer) Locale(ctx context.Context) string {
 	locale := chi.URLParamFromCtx(ctx, "lang")
 	if locale == "" {
 		locale = viper.GetString("i18n.lang.default")
@@ -62,7 +70,7 @@ func (thiz EngineRenderer) Locale(ctx context.Context) string {
 }
 
 // return slice of langs exclude current one if i18n is enabled
-func (thiz EngineRenderer) AvailableLocalesOnFront(ctx context.Context) []string {
+func (thiz *EngineRenderer) AvailableLocalesOnFront(ctx context.Context) []string {
 	availableLangsOnFront := make([]string, 0)
 	availableLocales := i18n.AvailableLocales()
 	for _, lang := range availableLocales {
@@ -74,7 +82,7 @@ func (thiz EngineRenderer) AvailableLocalesOnFront(ctx context.Context) []string
 	return availableLangsOnFront
 }
 
-func (thiz EngineRenderer) ChangeLanguageLink(ctx context.Context, locale string) string {
+func (thiz *EngineRenderer) ChangeLanguageLink(ctx context.Context, locale string) string {
 	path := ""
 	if ctx, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext); ok {
 		path = ctx.GetURL().Path
@@ -100,22 +108,34 @@ func (thiz EngineRenderer) ChangeLanguageLink(ctx context.Context, locale string
 	return processedPath
 }
 
-func (thiz EngineRenderer) CurrentUrl(ctx context.Context) string {
+func (thiz *EngineRenderer) CurrentUrl(ctx context.Context) string {
 	if ctx, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext); ok {
 		return ctx.GetRequestURL()
 	}
 	return ""
 }
 
-func (thiz EngineRenderer) AssetPath(path string, absolute bool) template.URL {
+func (thiz *EngineRenderer) AssetPath(path string, absolute bool) template.URL {
 	return template.URL(util.AssetPath(path, absolute))
 }
 
-func (thiz EngineRenderer) PublicPath(path string, absolute bool) template.URL {
+func (thiz *EngineRenderer) PublicPath(path string, absolute bool) template.URL {
 	return template.URL(util.PublicPath(path, absolute))
 }
 
-func (thiz EngineRenderer) registerFunctions(opts map[string]any) map[string]any {
+func (thiz *EngineRenderer) SafeHtml(content string) template.HTML {
+	return template.HTML(content)
+}
+
+func (thiz *EngineRenderer) RegisterGlobalFunction(name string, f any) {
+	thiz.functions[name] = f
+}
+
+func (thiz *EngineRenderer) RegisterGlobalVariable(name string, v any) {
+	thiz.variables[name] = v
+}
+
+func (thiz *EngineRenderer) registerFunctions(opts map[string]any) map[string]any {
 	opts["fn"] = map[string]any{
 		"InArray":                 util.InArray,
 		"Pluck":                   util.Pluck,
@@ -127,12 +147,14 @@ func (thiz EngineRenderer) registerFunctions(opts map[string]any) map[string]any
 		"UrlByName":               router.GetRouter().UrlByNameSequence,
 		"AssetPath":               thiz.AssetPath,
 		"PublicPath":              thiz.PublicPath,
+		"Pagination":              service.PaginationService{}.Pagination,
+		"SafeHtml":                thiz.SafeHtml,
 	}
 
-	return opts
+	return util.MergeMaps(opts, thiz.functions)
 }
 
-func (thiz EngineRenderer) registerDefaultOptions(ctx context.Context, opts map[string]any) map[string]any {
+func (thiz *EngineRenderer) registerDefaultOptions(ctx context.Context, opts map[string]any) map[string]any {
 	appName := os.Getenv("APP_NAME")
 	if appName == "" {
 		appName = "Gorgany"
@@ -144,5 +166,5 @@ func (thiz EngineRenderer) registerDefaultOptions(ctx context.Context, opts map[
 	opts["AllLocales"] = i18n.AllLocales()
 	opts["Ctx"] = ctx
 
-	return opts
+	return util.MergeMaps(opts, thiz.variables)
 }

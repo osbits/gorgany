@@ -1,6 +1,7 @@
 package util
 
 import (
+	"fmt"
 	"golang.org/x/crypto/bcrypt"
 	"regexp"
 	"strings"
@@ -31,4 +32,15 @@ func FindValueInTagValues(searchValue, values, separator string) (string, bool) 
 		}
 	}
 	return "", false
+}
+
+func Join[T comparable](elements []T, sep string) string {
+	output := ""
+	for i, el := range elements {
+		output += fmt.Sprintf("%v", el)
+		if i < len(elements)-1 {
+			output += sep
+		}
+	}
+	return output
 }

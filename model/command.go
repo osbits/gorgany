@@ -12,10 +12,16 @@ type PaginationCommand struct {
 }
 
 func (thiz PaginationCommand) GetPage() int {
+	if thiz.Page == 0 {
+		thiz.Page = 1
+	}
 	return thiz.Page
 }
 
 func (thiz PaginationCommand) GetLimit() int {
+	if thiz.Limit == 0 {
+		return 50 //todo read from config
+	}
 	return thiz.Limit
 }
 

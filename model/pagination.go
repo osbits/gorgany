@@ -186,6 +186,9 @@ type PaginationParams struct {
 }
 
 func (thiz PaginationParams) Offset() int {
+	if thiz.Page == 0 {
+		thiz.Page = 1
+	}
 	return (thiz.Page - 1) * thiz.PageSize
 }
 

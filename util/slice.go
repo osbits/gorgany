@@ -231,3 +231,11 @@ func MergeSlice[T any](s []T, ms ...[]T) []T {
 	}
 	return s
 }
+
+func Range(from, to int) []int {
+	out := make([]int, 0)
+	for i := from; i <= to; i++ {
+		out = append(out, i)
+	}
+	return out
+}
