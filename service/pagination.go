@@ -124,7 +124,7 @@ func (thiz PaginationService) wrapItems(items string, url *url.URL, total, limit
 	}
 
 	wrappedItems := ""
-	if totalPages > 0 {
+	if totalPages > 1 {
 		wrappedItems = fmt.Sprintf(""+
 			"<div class=\"col-sm-12 col-md-7\">"+
 			"	<div>"+
