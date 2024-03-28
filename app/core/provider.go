@@ -2,13 +2,14 @@ package core
 
 type IProviders []IProvider
 
-type IProvider interface {
+type IAppProvider interface {
 	InitProvider()
+	RegisterProvider(provider IProvider)
+	GetRegistrar() IRegistrar
 }
 
-type IAppProvider interface {
-	IProvider
-	RegisterProvider(provider IProvider)
+type IProvider interface {
+	InitProvider(appProvider IAppProvider)
 }
 
 type IRegistrar interface {

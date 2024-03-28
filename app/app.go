@@ -35,7 +35,7 @@ func GetRunMode() gorgany.RunMode {
 
 type app struct {
 	timezone    *time.Location
-	appProvider core.IProvider
+	appProvider core.IAppProvider
 	execType    gorgany.ExecType
 }
 

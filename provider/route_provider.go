@@ -25,7 +25,7 @@ func NewRouteProvider() *RouteProvider {
 	return &RouteProvider{}
 }
 
-func (thiz *RouteProvider) InitProvider() {
+func (thiz *RouteProvider) InitProvider(appProvider core.IAppProvider) {
 	thiz.RegisterRouter(router.NewGorganyRouter())
 	thiz.caseSensitiveRoutes()
 }

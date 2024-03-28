@@ -16,7 +16,7 @@ func NewDbProvider() *DbProvider {
 	return &DbProvider{}
 }
 
-func (thiz *DbProvider) InitProvider() {
+func (thiz *DbProvider) InitProvider(appProvider core.IAppProvider) {
 
 	databases := viper.GetStringMap("databases")
 	for name, config := range databases {

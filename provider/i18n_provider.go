@@ -13,7 +13,7 @@ func NewI18nProvider() *I18nProvider {
 	return &I18nProvider{}
 }
 
-func (thiz *I18nProvider) InitProvider() {
+func (thiz *I18nProvider) InitProvider(appProvider core.IAppProvider) {
 	availableLangs := viper.GetStringSlice("i18n.lang.available")
 	defaultLang := viper.GetString("i18n.lang.default")
 	availableLangs = append(availableLangs, defaultLang)

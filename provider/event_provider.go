@@ -10,7 +10,7 @@ import (
 type EventProvider struct {
 }
 
-func (thiz EventProvider) InitProvider() {
+func (thiz EventProvider) InitProvider(appProvider core.IAppProvider) {
 	internal.GetFrameworkRegistrar().RegisterEventBus(eventService.NewEventBus())
 }
 

@@ -14,7 +14,7 @@ func NewCommandProvider() *CommandProvider {
 	return &CommandProvider{}
 }
 
-func (thiz *CommandProvider) InitProvider() {
+func (thiz *CommandProvider) InitProvider(appProvider core.IAppProvider) {
 	thiz.RegisterCommand(command.VersionCommand{})
 	thiz.RegisterCommand(db.DiffCommand{})
 	thiz.RegisterCommand(db.MigrateCommand{})

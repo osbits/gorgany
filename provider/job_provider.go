@@ -18,7 +18,7 @@ type JobProvider struct {
 	jobs chan core.IJob
 }
 
-func (thiz *JobProvider) InitProvider() {
+func (thiz *JobProvider) InitProvider(appProvider core.IAppProvider) {
 	if thiz.jobs == nil {
 		thiz.jobs = make(chan core.IJob)
 	}

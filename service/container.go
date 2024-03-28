@@ -111,7 +111,14 @@ func (thiz Container) invoke(function interface{}) (interface{}, error) {
 			return values[0].Interface(), err
 		}
 	}
-	return values[0].Interface(), nil
+
+	value := values[0].Interface()
+	err = thiz.Make(value)
+	if err != nil {
+		return nil, err
+	}
+
+	return value, nil
 }
 
 // arguments returns the list of resolved arguments for a function.
@@ -262,8 +269,20 @@ func (thiz Container) fill(structure interface{}, chainOfDependencies map[string
 
 	if receiverType.Kind() == reflect.Ptr {
 		indirectReceiverType := receiverType.Elem()
+
+		doublePointer := false
+		if indirectReceiverType.Kind() == reflect.Ptr {
+			doublePointer = true
+			indirectReceiverType = indirectReceiverType.Elem()
+		}
+
 		if indirectReceiverType.Kind() == reflect.Struct {
 			s := reflect.ValueOf(structure).Elem()
+
+			if s.Kind() == reflect.Ptr {
+				s = s.Elem()
+			}
+
 			rtStruct := s.Type()
 
 			for i := 0; i < s.NumField(); i++ {
@@ -323,9 +342,12 @@ func (thiz Container) fill(structure interface{}, chainOfDependencies map[string
 					}
 
 					chainOfDependencies[receiverType.String()] = structure
-					err := thiz.fill(instance, chainOfDependencies)
-					if err != nil {
-						return fmt.Errorf("container: cannot make %v field", s.Type().Field(i).Name)
+
+					if concrete == nil || !concrete.isSingleton {
+						err := thiz.fill(instance, chainOfDependencies)
+						if err != nil {
+							return fmt.Errorf("container: cannot make %v field", s.Type().Field(i).Name)
+						}
 					}
 
 					ptr := reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem()
@@ -333,8 +355,14 @@ func (thiz Container) fill(structure interface{}, chainOfDependencies map[string
 				}
 			}
 
-			if initiator, ok := structure.(core.Initiator); ok {
-				initiator.Init()
+			if doublePointer {
+				if initiator, ok := structure.(*core.Initiator); ok {
+					(*initiator).Init()
+				}
+			} else {
+				if initiator, ok := structure.(core.Initiator); ok {
+					initiator.Init()
+				}
 			}
 
 			return nil
@@ -353,6 +381,10 @@ func (thiz Container) Make(structure interface{}, values ...map[string]interface
 
 	if receiverType.Kind() == reflect.Ptr {
 		elem := receiverType.Elem()
+
+		if elem.Kind() == reflect.Ptr {
+			elem = elem.Elem()
+		}
 
 		if elem.Kind() == reflect.Struct {
 			s := reflect.ValueOf(structure).Elem()

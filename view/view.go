@@ -69,7 +69,7 @@ func (thiz *EngineRenderer) Locale(ctx context.Context) string {
 	return locale
 }
 
-// return slice of langs exclude current one if i18n is enabled
+// AvailableLocalesOnFront returns slice of langs exclude current one if i18n is enabled
 func (thiz *EngineRenderer) AvailableLocalesOnFront(ctx context.Context) []string {
 	availableLangsOnFront := make([]string, 0)
 	availableLocales := i18n.AvailableLocales()
