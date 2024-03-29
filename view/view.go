@@ -58,7 +58,7 @@ func (thiz *EngineRenderer) CreateLinkWithNamespace(ctx context.Context, url str
 }
 
 func (thiz *EngineRenderer) __(ctx context.Context, code string, opts ...any) string {
-	return i18n.TranslationWithSequence(code, thiz.Locale(ctx), opts)
+	return i18n.TranslationWithSequence(code, thiz.Locale(ctx), opts...)
 }
 
 func (thiz *EngineRenderer) Locale(ctx context.Context) string {

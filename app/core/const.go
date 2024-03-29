@@ -92,3 +92,15 @@ const (
 	Medium                           // middleware is called after the input parameters are parsed and injected, so you can get the input parameters using message.GetInputParameters methods.
 	High                             // middleware is called before the input parameters are parsed and before they are injected
 )
+
+type ContentDisposition string
+
+const (
+	Inline     ContentDisposition = "inline"
+	Attachment ContentDisposition = "attachment"
+	FormData   ContentType        = "form-data"
+)
+
+func (thiz ContentDisposition) String() string {
+	return string(thiz)
+}

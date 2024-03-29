@@ -12,6 +12,8 @@ type IMail interface {
 }
 
 type IAttachment interface {
+	GetId() string
 	GetName() string
 	GetContent() []byte
+	GetContentDisposition() ContentDisposition
 }

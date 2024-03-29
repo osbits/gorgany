@@ -49,7 +49,7 @@ func Translation(code string, opts map[string]any, locale string) string {
 	return processedMessage
 }
 
-func TranslationWithSequence(code string, locale string, opts ...[]any) string {
+func TranslationWithSequence(code string, locale string, opts ...any) string {
 	config := GetManager().GetConfig(locale)
 	message := config.GetString(code)
 
@@ -63,7 +63,7 @@ func TranslationWithSequence(code string, locale string, opts ...[]any) string {
 		}
 
 		if len(opts) > i {
-			val := opts[i][0]
+			val := opts[i]
 			i++
 			return fmt.Sprintf("%v", val)
 		} else {
