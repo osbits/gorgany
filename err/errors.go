@@ -16,8 +16,7 @@ func GetStacktrace() string {
 }
 
 func PrintError(err any) {
-	log.Log("").Error(err)
-	log.Log("").Error(GetStacktrace())
+	log.Log("").Errorf("%s\n%s", err, GetStacktrace())
 }
 
 func HandleError(err any) {
@@ -27,15 +26,13 @@ func HandleError(err any) {
 	_, file, line, _ := runtime.Caller(1)
 	//pc, file, line, _ := runtime.Caller(1)
 	//funcName := runtime.FuncForPC(pc).Name()
-	log.Log("").Errorf("\u001B[0;31mRuntime error in %s, line: %d: \u001B[0m", file, line)
-	log.Log("").Error(err)
+	log.Log("").Errorf("\u001B[0;31mError in \u001B[0m%s:%d: %v\n", file, line, err)
 }
 
 func HandleErrorWithStacktrace(err any) {
 	if err == nil {
 		return
 	}
-	log.Log("").Error("\u001B[0;31mRuntime error: \u001B[0m")
 	PrintError(err)
 }
 
