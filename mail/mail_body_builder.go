@@ -168,7 +168,7 @@ func (thiz *bodyBuilder) AddToBoundary(key string, content boundaryContent) *bod
 
 func (thiz *bodyBuilder) String() []byte {
 	buf := new(bytes.Buffer)
-	buf.WriteString(fmt.Sprintf("Content-Type: %s; boundaryIter=\"%s\"\n\n", thiz.Boundary.ContentType, thiz.Boundary.Key))
+	buf.WriteString(fmt.Sprintf("Content-Type: %s; boundary=\"%s\"\n\n", thiz.Boundary.ContentType, thiz.Boundary.Key))
 
 	parentBoundary := thiz.Boundary
 	boundaryIter := thiz.Boundary.ChildBoundary
@@ -178,7 +178,7 @@ func (thiz *bodyBuilder) String() []byte {
 		}
 
 		buf.WriteString(fmt.Sprintf("--%s\n", parentBoundary.Key))
-		buf.WriteString(fmt.Sprintf("Content-Type: %s; boundaryIter=\"%s\"\n\n", boundaryIter.ContentType, boundaryIter.Key))
+		buf.WriteString(fmt.Sprintf("Content-Type: %s; boundary=\"%s\"\n\n", boundaryIter.ContentType, boundaryIter.Key))
 
 		parentBoundary = boundaryIter
 		boundaryIter = boundaryIter.ChildBoundary
