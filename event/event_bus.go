@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/internal"
 	"git.qix.sx/gorgany/gorgany.git/service"
 	"reflect"
@@ -111,7 +112,13 @@ func (thiz *EventBus) doPublish(subscriber core.ISubscriber) {
 func (thiz *EventBus) doPublishAsync(subscriber core.ISubscriber) {
 	thiz.waitGroup.Add(1)
 	go func() {
-		defer thiz.waitGroup.Done()
+		defer func() {
+			thiz.waitGroup.Done()
+
+			if r := recover(); r != nil {
+				err.HandleErrorWithStacktrace(r)
+			}
+		}()
 		subscriber.Handle()
 	}()
 }

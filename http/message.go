@@ -421,6 +421,7 @@ func (thiz *Message) Close() error {
 			log.Log().Warnf("Error when closing stream: %v\n", err)
 		}
 	}
+	thiz.request.Body.Close()
 
 	return nil
 }
