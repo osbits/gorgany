@@ -239,3 +239,74 @@ func Range(from, to int) []int {
 	}
 	return out
 }
+
+//type Collection[T any] struct {
+//	elements []T
+//}
+//
+//func (thiz *Collection[T]) Add(el T) core.Collection[T] {
+//	thiz.initSliceIfNil()
+//	thiz.elements = append(thiz.elements, el)
+//	return thiz
+//}
+//
+//func (thiz *Collection[T]) AddAll(col core.Collection[T]) core.Collection[T] {
+//	thiz.initSliceIfNil()
+//	thiz.elements = append(thiz.elements, col.ToSlice()...)
+//	return thiz
+//}
+//
+//func (thiz *Collection[T]) AddSlice(s []T) core.Collection[T] {
+//	thiz.initSliceIfNil()
+//	thiz.elements = append(thiz.elements, s...)
+//	return thiz
+//}
+//
+//func (thiz *Collection[T]) RemoveIndex(index int) {
+//	thiz.elements = copy()
+//}
+//
+//func (thiz *Collection[T]) Size() uint64 {
+//	//TODO implement me
+//	panic("implement me")
+//}
+//
+//func (thiz *Collection[T]) Get(i int) T {
+//	//TODO implement me
+//	panic("implement me")
+//}
+//
+//func (thiz *Collection[T]) Find(closure func(el T) bool) T {
+//	//TODO implement me
+//	panic("implement me")
+//}
+//
+//func (thiz *Collection[T]) FindAll(closure func(el T) bool) core.Collection[T] {
+//	//TODO implement me
+//	panic("implement me")
+//}
+//
+//func (thiz *Collection[T]) Unique(closure func(el T) bool) core.Collection[T] {
+//	//TODO implement me
+//	panic("implement me")
+//}
+//
+//func (thiz *Collection[T]) Sort(closure func(el T) bool) core.Collection[T] {
+//	//TODO implement me
+//	panic("implement me")
+//}
+//
+//func (thiz *Collection[T]) Each(closure func(el T)) {
+//	//TODO implement me
+//	panic("implement me")
+//}
+//
+//func (thiz *Collection[T]) ToSlice() []T {
+//	return thiz.elements
+//}
+//
+//func (thiz *Collection[T]) initSliceIfNil() {
+//	if thiz.elements == nil {
+//		thiz.elements = make([]T, 0)
+//	}
+//}

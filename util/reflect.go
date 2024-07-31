@@ -4,6 +4,7 @@ import (
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"reflect"
 	"strconv"
+	"strings"
 )
 
 func ConvertReflectedValue(vf reflect.Value) any {
@@ -45,11 +46,32 @@ func IndirectType(v reflect.Type) reflect.Type {
 	return v
 }
 
-func GetElementOfSlice(slice any) any {
-	return GetReflectElementOfSlice(slice).Interface()
+func GetIndirectElementOfSlice(slice any) any {
+	return GetIndirectReflectElementOfSlice(slice).Interface()
 }
 
-func GetReflectElementOfSlice(slice any) reflect.Value {
+func GetElementOfSlice(slice any) any {
+	return GetReflectedElementOfSlice(slice).Interface()
+}
+
+func GetReflectedElementOfSlice(slice any) reflect.Value {
+	rtSlice := reflect.TypeOf(slice)
+	if rtSlice.Kind() != reflect.Slice {
+		panic("")
+	}
+
+	rtOriginalEl := reflect.MakeSlice(rtSlice, 1, 1).Index(0)
+	model := rtOriginalEl.Interface()
+	rType := IndirectType(reflect.TypeOf(model))
+
+	if rtOriginalEl.Kind() == reflect.Ptr {
+		return reflect.New(rType)
+	}
+
+	return reflect.New(rType).Elem()
+}
+
+func GetIndirectReflectElementOfSlice(slice any) reflect.Value {
 	rtSlice := reflect.TypeOf(slice)
 	if rtSlice.Kind() != reflect.Slice {
 		panic("")
@@ -339,4 +361,44 @@ func InterfaceSlice(slice interface{}) []interface{} {
 	}
 
 	return ret
+}
+
+func IsGenericImplemented(s any, generic any) bool {
+	rtS := reflect.TypeOf(s)
+	rtGeneric := IndirectType(reflect.TypeOf(generic))
+
+	for i := 0; i < rtGeneric.NumMethod(); i++ {
+		method := rtGeneric.Method(i)
+		_, found := rtS.MethodByName(method.Name)
+		if !found {
+			return false
+		}
+
+		//if foundMethod.Type.NumIn() != method.Type.NumIn() {
+		//	return false
+		//}
+		//
+		//if foundMethod.Type.NumOut() != method.Type.NumOut() {
+		//	return false
+		//}
+	}
+
+	return true
+}
+
+func FindFieldByTag(s reflect.Value, tag, tagValue string) (bool, reflect.Value, reflect.StructField) {
+	s = IndirectValue(s)
+	rtS := IndirectType(s.Type())
+	for i := 0; i < rtS.NumField(); i++ {
+		field := rtS.Field(i)
+		if field.Anonymous && IndirectType(field.Type).Kind() == reflect.Struct {
+			return FindFieldByTag(s.Field(i), tag, tagValue)
+		}
+		rawTag := field.Tag.Get(tag)
+		splitTag := strings.Split(rawTag, ",")
+		if splitTag[0] == tagValue {
+			return true, s.Field(i), field
+		}
+	}
+	return false, reflect.Value{}, reflect.StructField{}
 }

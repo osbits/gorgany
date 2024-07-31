@@ -1,0 +1,308 @@
+package http
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/db"
+	error2 "git.qix.sx/gorgany/gorgany.git/err"
+	"git.qix.sx/gorgany/gorgany.git/service/cache"
+	"git.qix.sx/gorgany/gorgany.git/util"
+	"reflect"
+)
+
+// json parser
+type jsonParser struct {
+	message *Message
+}
+
+func (thiz jsonParser) parse(dest interface{}) error {
+	if len(thiz.message.GetBody()) == 0 { // todo: check it
+		return nil
+	}
+
+	//err := json.Unmarshal(thiz.message.GetBody(), dest)
+	inputMap := make(map[string]interface{})
+	err := json.Unmarshal(thiz.message.GetBody(), &inputMap)
+	if err != nil {
+		validationErrors := make(error2.ValidationErrors, 0)
+		if errors.Is(err, &json.UnmarshalTypeError{}) {
+			typeError := err.(*json.UnmarshalTypeError)
+			validationErrors.AddValidationError(error2.ValidationError{
+				Field: typeError.Field,
+				Err:   typeError.Error(),
+			})
+		} else {
+			checkAndAddIfValidationError(err, &validationErrors)
+		}
+		return &validationErrors
+	}
+
+	return thiz.initStruct(dest, inputMap)
+}
+
+func (thiz jsonParser) initStruct(dest any, inputMap map[string]any) error {
+	for key, value := range inputMap {
+		err := thiz.processValue(dest, key, value)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (thiz jsonParser) processValue(dest any, key string, value interface{}) error {
+	rvDest := reflect.ValueOf(dest)
+	if rvDest.Kind() != reflect.Ptr || !rvDest.IsValid() {
+		return fmt.Errorf("gorgany.http.jsonParser: Destination type must be a pointer")
+	}
+	rvDest = rvDest.Elem()
+
+	found, err := thiz.callBindMethodIfExists(dest, key, value)
+	if err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+
+	var field reflect.Value
+	if util.IndirectValue(rvDest).Kind() == reflect.Struct {
+		found, field, _ = util.FindFieldByTag(rvDest, "json", key)
+		if !found {
+			return nil
+		}
+	} else {
+		field = rvDest
+	}
+
+	//if field.Kind() == reflect.Ptr {
+	//	indirectType := field.Type().Elem()
+	//	primitive, err := util.ResolvePrimitive(indirectType.Kind(), fmt.Sprintf("%v", value))
+	//	if err != nil {
+	//		return err
+	//	}
+	//
+	//	rtPrimitive := reflect.ValueOf(primitive)
+	//	convertedValue := rtPrimitive.Convert(indirectType)
+	//
+	//	field.Set(reflect.New(indirectType).Elem().Addr().Convert(reflect.PointerTo(indirectType)))
+	//	field.Elem().Set(convertedValue)
+	//} else {
+	//	if field.Kind() == reflect.Slice {
+	//		reflectedElement := util.GetIndirectReflectElementOfSlice(field.Interface())
+	//		s, ok := value.([]any)
+	//		if !ok {
+	//			return &error2.ValidationErrors{
+	//				error2.ValidationError{Field: key, Err: "Value must be slice"},
+	//			}
+	//		}
+	//
+	//		for _, v := range s {
+	//			rv := reflect.New(reflectedElement.Type()).Elem().Addr().Convert(reflect.PointerTo(reflectedElement.Type()))
+	//			err = thiz.processValue(rv.Interface(), "_", v)
+	//			if err != nil {
+	//				return err
+	//			}
+	//			reflect.Append(field, rv)
+	//		}
+	//	} else if field.Kind() == reflect.Map {
+	//		m, ok := value.(map[string]any)
+	//		if !ok {
+	//			return &error2.ValidationErrors{
+	//				error2.ValidationError{Field: key, Err: "Value must be map"},
+	//			}
+	//		}
+	//
+	//		field.Set(reflect.MakeMap(field.Type()))
+	//		for k, v := range m {
+	//			mapValueRType := field.Type().Elem()
+	//			rv := reflect.New(mapValueRType).Elem().Addr().Convert(reflect.PointerTo(mapValueRType)).Elem()
+	//			err = thiz.processValue(rv.Addr().Interface(), "_", v)
+	//			if err != nil {
+	//				return err
+	//			}
+	//			field.SetMapIndex(reflect.ValueOf(k), rv)
+	//		}
+	//	} else if nestedValue, ok := value.(map[string]any); ok {
+	//		found, field, _ = util.FindFieldByTag(rvDest, "json", key)
+	//		if !found {
+	//			return nil
+	//		}
+	//		err := thiz.initStruct(field.Interface(), nestedValue)
+	//		if err != nil {
+	//			return err
+	//		}
+	//		return nil
+	//	} else {
+	//		primitive, err := util.ResolvePrimitive(field.Kind(), fmt.Sprintf("%v", value))
+	//		if err != nil {
+	//			return err
+	//		}
+	//		field.Set(reflect.ValueOf(primitive))
+	//	}
+	//}
+
+	return thiz.setFieldValue(field, key, value)
+}
+
+func (thiz jsonParser) setFieldValue(field reflect.Value, key string, value interface{}) error {
+	switch field.Kind() {
+	case reflect.Ptr:
+		return thiz.setPointer(field, key, value)
+	case reflect.Slice:
+		return thiz.setSlice(field, key, value)
+	case reflect.Struct:
+		return thiz.setStruct(field, key, value)
+	case reflect.Map:
+		return thiz.setMap(field, key, value)
+	default:
+		return thiz.setPrimitive(field, key, value)
+	}
+}
+
+func (thiz jsonParser) setPointer(field reflect.Value, key string, value interface{}) error {
+	//indirectReflectedValue := reflect.ValueOf(value)
+	indirectType := field.Type().Elem()
+	field.Set(reflect.New(indirectType).Elem().Addr().Convert(reflect.PointerTo(indirectType)))
+	return thiz.setFieldValue(field.Elem(), key, value)
+}
+
+func (thiz jsonParser) setSlice(field reflect.Value, key string, value interface{}) error {
+	reflectedElement := util.GetReflectedElementOfSlice(field.Interface()) // fix the GetReflectElementOfSlice method, becouse it always returns a pointer, but we need a raw value
+	s, ok := value.([]any)
+	if !ok {
+		return &error2.ValidationErrors{
+			error2.ValidationError{Field: key, Err: "Value must be slice"},
+		}
+	}
+
+	for _, v := range s {
+		rv := reflect.New(reflectedElement.Type()).Elem().Addr().Convert(reflect.PointerTo(reflectedElement.Type())).Elem()
+		err := thiz.processValue(rv.Addr().Interface(), key, v)
+		if err != nil {
+			return err
+		}
+
+		field.Set(reflect.Append(field, rv)) // todo fix loading of domains
+	}
+
+	return nil
+}
+
+func (thiz jsonParser) setMap(field reflect.Value, key string, value interface{}) error {
+	m, ok := value.(map[string]any)
+	if !ok {
+		return &error2.ValidationErrors{
+			error2.ValidationError{Field: key, Err: "Value must be map"},
+		}
+	}
+
+	field.Set(reflect.MakeMap(field.Type()))
+	for k, v := range m {
+		mapValueRType := field.Type().Elem()
+		rv := reflect.New(mapValueRType).Elem().Addr().Convert(reflect.PointerTo(mapValueRType)).Elem()
+		err := thiz.processValue(rv.Addr().Interface(), key, v)
+		if err != nil {
+			return err
+		}
+		field.SetMapIndex(reflect.ValueOf(k), rv)
+	}
+	return nil
+}
+
+func (thiz jsonParser) setStruct(field reflect.Value, key string, value interface{}) error {
+	found, err := thiz.initDomain(field, key, value)
+	if err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+
+	if nestedValue, ok := value.(map[string]any); ok {
+		err = thiz.initStruct(field.Addr().Interface(), nestedValue)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	return nil
+}
+
+func (thiz jsonParser) setPrimitive(field reflect.Value, key string, value interface{}) error {
+	primitive, err := util.ResolvePrimitive(field.Kind(), fmt.Sprintf("%v", value))
+	if err != nil {
+		return err
+	}
+	field.Set(reflect.ValueOf(primitive))
+	return nil
+}
+
+func (thiz jsonParser) callBindMethodIfExists(command any, fieldName string, value any) (bool, error) {
+	rvArg := reflect.ValueOf(command)
+	if util.IndirectValue(rvArg).Kind() != reflect.Struct {
+		return false, nil
+	}
+
+	found, _, structField := util.FindFieldByTag(rvArg, "json", fieldName)
+	if !found {
+		return false, nil
+	}
+
+	method := rvArg.MethodByName(fmt.Sprintf("Bind%s", structField.Name))
+	if !method.IsValid() {
+		return false, nil
+	}
+
+	if _, ok := value.(map[string]any); ok {
+		method.Call([]reflect.Value{reflect.ValueOf(value)})
+	} else {
+		castedValue, err := util.ResolvePrimitive(method.Type().In(0).Kind(), fmt.Sprintf("%v", value))
+		if err != nil {
+			return false, &error2.ValidationErrors{
+				error2.ValidationError{Field: structField.Name, Err: err.Error()},
+			}
+		}
+		method.Call([]reflect.Value{reflect.ValueOf(castedValue)})
+	}
+	return true, nil
+}
+
+func (thiz jsonParser) initDomain(field reflect.Value, fieldName string, value any) (bool, error) {
+	if field.Kind() != reflect.Struct {
+		return false, nil
+	}
+
+	s := reflect.New(field.Type()).Interface()
+	if !util.IsGenericImplemented(s, (*core.IDomain[any])(nil)) {
+		return false, nil
+	}
+
+	scheme := cache.GetDomainSchemeCache().ParseDomain(s)
+	primaryField := scheme.PrioritizedPrimaryField
+
+	dest := reflect.New(field.Type()).Interface()
+
+	neededGeneralType := core.GeneralDataTypeOf(util.IndirectType(primaryField.FieldType).Kind())
+	if neededGeneralType != core.GeneralDataTypeOf(reflect.TypeOf(value).Kind()) {
+		return false, &error2.ValidationErrors{
+			error2.ValidationError{Field: fieldName, Err: fmt.Sprintf("Input value must be %s", neededGeneralType)},
+		}
+	}
+
+	err := db.Builder().WhereEqual(primaryField.DBName, value).Get(dest)
+	if err != nil {
+		return false, err
+	}
+
+	if !dest.(core.IDomainMeta).GetLoaded() {
+		return false, &error2.ValidationErrors{
+			error2.ValidationError{Field: fieldName, Err: fmt.Sprintf("Record with specified primary key (%v) was not found", value)},
+		}
+	}
+	field.Set(reflect.ValueOf(dest).Elem())
+
+	return true, nil
+}

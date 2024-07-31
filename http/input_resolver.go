@@ -1,7 +1,6 @@
 package http
 
 import (
-	"encoding/json"
 	"errors"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/decoder/multipart"
@@ -113,33 +112,6 @@ func resolveBodyParser(command core.HttpCommand, message *Message) bodyParser {
 		return queryParser{message: message}
 	}
 
-	return nil
-}
-
-// json parser
-type jsonParser struct {
-	message *Message
-}
-
-func (thiz jsonParser) parse(arg interface{}) error {
-	if len(thiz.message.GetBody()) == 0 { // todo: check it
-		return nil
-	}
-
-	err := json.Unmarshal(thiz.message.GetBody(), arg)
-	if err != nil {
-		validationErrors := make(error2.ValidationErrors, 0)
-		if errors.Is(err, &json.UnmarshalTypeError{}) {
-			typeError := err.(*json.UnmarshalTypeError)
-			validationErrors.AddValidationError(error2.ValidationError{
-				Field: typeError.Field,
-				Err:   typeError.Error(),
-			})
-		} else {
-			checkAndAddIfValidationError(err, &validationErrors)
-		}
-		return &validationErrors
-	}
 	return nil
 }
 

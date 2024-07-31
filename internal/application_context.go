@@ -4,14 +4,14 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 )
 
-var frameworkRegistrar core.IRegistrar
+var applicationContext core.IApplicationContext
 
-func GetFrameworkRegistrar() core.IRegistrar {
-	return frameworkRegistrar
+func GetFrameworkRegistrar() core.IApplicationContext {
+	return applicationContext
 }
 
 func init() {
-	frameworkRegistrar = &Registrar{
+	applicationContext = &Registrar{
 		controllers:         make(core.Controllers, 0),
 		providers:           make(core.IProviders, 0),
 		dbConnections:       make(map[string]core.IConnection),
@@ -26,8 +26,8 @@ func init() {
 	}
 }
 
-func SetRegistrar(registrar core.IRegistrar) {
-	frameworkRegistrar = registrar
+func SetRegistrar(registrar core.IApplicationContext) {
+	applicationContext = registrar
 }
 
 type Registrar struct {
