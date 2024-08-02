@@ -136,10 +136,6 @@ type SortParam struct {
 	Order string
 }
 
-func (thiz SortParam) BindField() {
-	fmt.Println("tst")
-}
-
 func (thiz SortParam) GetField() string {
 	return thiz.Field
 }

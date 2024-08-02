@@ -57,11 +57,3 @@ type IApplicationContext interface {
 	RegisterEventBus(bus IEventBus)
 	GetEventBus() IEventBus
 }
-
-type IConsoleApplicationContext interface {
-	IApplicationContext
-}
-
-type IWebApplicationContext interface {
-	IApplicationContext
-}
