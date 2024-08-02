@@ -7,9 +7,9 @@ import (
 
 func Connection(name ...string) core.IConnection {
 	if len(name) == 0 {
-		return internal.GetFrameworkRegistrar().GetDbConnection(core.DefaultKeyInRegistrar)
+		return internal.GetApplicationContext().GetDbConnection(core.DefaultKeyInRegistrar)
 	}
-	return internal.GetFrameworkRegistrar().GetDbConnection(name[0])
+	return internal.GetApplicationContext().GetDbConnection(name[0])
 }
 
 func Builder(name ...string) core.IQueryBuilder {

@@ -6,7 +6,6 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/auth"
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/http/router"
-	"git.qix.sx/gorgany/gorgany.git/internal"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"net/http"
 	"net/url"
@@ -19,16 +18,22 @@ func NewLoginController() *LoginController {
 type LoginController struct{}
 
 func (thiz LoginController) ShowLogin(message core.HttpMessage) {
+	appCtx := message.Context().Value(core.ApplicationContextKey).(core.IApplicationContext)
+	homeUrl := appCtx.GetHomeUrl()
+
 	if auth.Strategy().IsLoggedIn(message.Context()) {
-		message.Redirect(internal.GetFrameworkRegistrar().GetHomeUrl(), 301)
+		message.Redirect(homeUrl, 301)
 	}
 
 	message.Render("auth/login", nil)
 }
 
 func (thiz LoginController) Login(message core.HttpMessage) {
+	appCtx := message.Context().Value(core.ApplicationContextKey).(core.IApplicationContext)
+	homeUrl := appCtx.GetHomeUrl()
+
 	if auth.Strategy().IsLoggedIn(message.Context()) {
-		message.Redirect(internal.GetFrameworkRegistrar().GetHomeUrl(), 301)
+		message.Redirect(homeUrl, 301)
 	}
 
 	body := message.GetBodyContent()
@@ -54,7 +59,7 @@ func (thiz LoginController) Login(message core.HttpMessage) {
 		return
 	}
 
-	message.Redirect(internal.GetFrameworkRegistrar().GetHomeUrl(), 301)
+	message.Redirect(homeUrl, 301)
 }
 
 func (thiz LoginController) Logout(message core.HttpMessage) {

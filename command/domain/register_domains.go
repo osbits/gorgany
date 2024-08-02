@@ -2,8 +2,9 @@ package domain
 
 import (
 	"bytes"
+	"context"
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/internal"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"os"
 	"path/filepath"
@@ -18,7 +19,7 @@ func (thiz RegisterDomainsCommand) GetName() string {
 	return "domains:register"
 }
 
-func (thiz RegisterDomainsCommand) Execute() {
+func (thiz RegisterDomainsCommand) Execute(ctx context.Context) {
 	needToRegenerate := false
 
 	pkgInfos, err := util.ScanDir("./pkg/domain")
@@ -28,7 +29,7 @@ func (thiz RegisterDomainsCommand) Execute() {
 
 	moduleName := util.ModuleName()
 
-	registeredModels := internal.GetFrameworkRegistrar().GetDomains()
+	registeredModels := ctx.Value(core.ApplicationContextKey).(core.IApplicationContext).GetDomains()
 
 	registers := make([]string, 0)
 	imports := make([]string, 0)

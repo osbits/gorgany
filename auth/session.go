@@ -8,7 +8,7 @@ import (
 )
 
 func GetSessionStorage() core.ISessionStorage {
-	return internal.GetFrameworkRegistrar().GetSessionStorage()
+	return internal.GetApplicationContext().GetSessionStorage()
 }
 
 // concrete session

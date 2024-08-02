@@ -20,7 +20,7 @@ var defaultErrorHandlerMap = map[string]core.ErrorHandler{
 }
 
 func getErrorHandler(key string) core.ErrorHandler {
-	customHandlers := internal.GetFrameworkRegistrar().GetErrorHandlers()
+	customHandlers := internal.GetApplicationContext().GetErrorHandlers()
 
 	if errorHandler, ok := customHandlers[key]; ok {
 		return errorHandler

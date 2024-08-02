@@ -18,20 +18,24 @@ import (
 )
 
 type RouteProvider struct {
-	router core.Router
+	router             core.Router
+	applicationContext core.IApplicationContext
 }
 
 func NewRouteProvider() *RouteProvider {
 	return &RouteProvider{}
 }
 
-func (thiz *RouteProvider) InitProvider(appProvider core.IAppProvider) {
+func (thiz *RouteProvider) InitProvider(applicationContext core.IApplicationContext) {
+	thiz.applicationContext = applicationContext
+
 	thiz.RegisterRouter(router.NewGorganyRouter())
 	thiz.caseSensitiveRoutes()
+	thiz.supportEndSlash()
 }
 
 func (thiz *RouteProvider) RegisterRouter(router core.Router) {
-	internal.GetFrameworkRegistrar().RegisterRouter(router)
+	thiz.applicationContext.RegisterRouter(router)
 	thiz.router = router
 }
 
@@ -84,22 +88,22 @@ func (thiz *RouteProvider) RegisterController(controller core.IController) {
 			switch routeConfig.Method {
 			case core.GET:
 				routerEngine.Get(pattern, func(w http2.ResponseWriter, r *http2.Request) {
-					http.Dispatch(w, r, handler, middlewares)
+					http.Dispatch(thiz.applicationContext, w, r, handler, middlewares)
 				})
 				break
 			case core.PUT:
 				routerEngine.Put(pattern, func(w http2.ResponseWriter, r *http2.Request) {
-					http.Dispatch(w, r, handler, middlewares)
+					http.Dispatch(thiz.applicationContext, w, r, handler, middlewares)
 				})
 				break
 			case core.DELETE:
 				routerEngine.Delete(pattern, func(w http2.ResponseWriter, r *http2.Request) {
-					http.Dispatch(w, r, handler, middlewares)
+					http.Dispatch(thiz.applicationContext, w, r, handler, middlewares)
 				})
 				break
 			case core.POST:
 				routerEngine.Post(pattern, func(w http2.ResponseWriter, r *http2.Request) {
-					http.Dispatch(w, r, handler, middlewares)
+					http.Dispatch(thiz.applicationContext, w, r, handler, middlewares)
 				})
 				break
 			default:
@@ -110,11 +114,11 @@ func (thiz *RouteProvider) RegisterController(controller core.IController) {
 }
 
 func (thiz *RouteProvider) SetHomeUrl(url string) {
-	internal.GetFrameworkRegistrar().SetHomeUrl(url)
+	internal.GetApplicationContext().(core.IWebApplicationContext).SetHomeUrl(url)
 }
 
 func (thiz *RouteProvider) RegisterMiddleware(middleware core.IMiddleware) {
-	internal.GetFrameworkRegistrar().RegisterMiddleware(middleware)
+	thiz.applicationContext.RegisterMiddleware(middleware)
 }
 
 func (thiz *RouteProvider) buildLangRegex() string {
@@ -140,6 +144,20 @@ func (thiz *RouteProvider) caseSensitiveRoutes() {
 	}
 }
 
+func (thiz *RouteProvider) supportEndSlash() {
+	thiz.router.Engine().(chi.Router).Use(func(next http2.Handler) http2.Handler {
+		fn := func(w http2.ResponseWriter, r *http2.Request) {
+			path := r.URL.Path
+			if path[len(path)-1] == '/' {
+				r.URL.Path = path[:len(path)-1]
+			}
+
+			next.ServeHTTP(w, r)
+		}
+		return http2.HandlerFunc(fn)
+	})
+}
+
 func (thiz *RouteProvider) addOptionsMethodToCheckPreflightCORS(pattern string, handler any, middlewares []core.IMiddleware) {
 	routerEngine := thiz.router.Engine().(chi.Router)
 	var corsMiddleware core.IMiddleware
@@ -157,7 +175,7 @@ func (thiz *RouteProvider) addOptionsMethodToCheckPreflightCORS(pattern string, 
 
 	corsMiddleware = findInMiddlewares(middlewares)
 	if corsMiddleware == nil {
-		corsMiddleware = findInMiddlewares(internal.GetFrameworkRegistrar().GetMiddlewares())
+		corsMiddleware = findInMiddlewares(thiz.applicationContext.GetMiddlewares())
 	}
 
 	if corsMiddleware == nil {

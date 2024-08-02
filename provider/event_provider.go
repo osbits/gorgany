@@ -4,14 +4,16 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/err"
 	eventService "git.qix.sx/gorgany/gorgany.git/event"
-	"git.qix.sx/gorgany/gorgany.git/internal"
 )
 
 type EventProvider struct {
+	applicationContext core.IApplicationContext
 }
 
-func (thiz EventProvider) InitProvider(appProvider core.IAppProvider) {
-	internal.GetFrameworkRegistrar().RegisterEventBus(eventService.NewEventBus())
+func (thiz EventProvider) InitProvider(applicationContext core.IApplicationContext) {
+	thiz.applicationContext = applicationContext
+
+	applicationContext.RegisterEventBus(eventService.NewEventBus())
 }
 
 func (thiz EventProvider) RegisterEvent(event string, subscriber core.ISubscriber) {

@@ -3,6 +3,7 @@ package postgres
 import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/db"
 	"git.qix.sx/gorgany/gorgany.git/db/orm"
 	"git.qix.sx/gorgany/gorgany.git/err"
 	model2 "git.qix.sx/gorgany/gorgany.git/service/cache"
@@ -73,6 +74,14 @@ func NewBuilderWithConfig(gormInstance core.IConnection, config Config) *Builder
 		where:        &Where{operator: "AND"},
 		having:       &Having{},
 	}
+}
+
+func WithTransaction(transactionClosure func(tx core.IQueryBuilder)) {
+	conn := db.Connection().(*GormPostgresConnection)
+	indirectConn := *conn
+	copyConn := &indirectConn
+	copyConn.gormInstance = copyConn.gormInstance.Begin()
+	transactionClosure(copyConn.Builder())
 }
 
 func (thiz *Builder) Select(fields ...string) core.IQueryBuilder {
@@ -149,7 +158,9 @@ func (thiz *Builder) WhereNotIn(field string, values ...interface{}) core.IQuery
 	return thiz
 }
 
-// WhereClosure. Deprecated. Use WhereAnd instead
+// WhereClosure.
+// Deprecated.
+// Use WhereAnd instead
 func (thiz *Builder) WhereClosure(closure func(builder core.IQueryBuilder) core.IQueryBuilder) core.IQueryBuilder {
 	builder := closure(NewBuilder(thiz.GetConnection()))
 	thiz.where.AddNestedCondition("AND", builder.GetWhere())
@@ -352,7 +363,7 @@ func (thiz *Builder) List(dest any) error {
 		return fmt.Errorf("Dest must be slice")
 	}
 
-	model := util.GetElementOfSlice(rvDestSlice.Interface())
+	model := util.GetIndirectElementOfSlice(rvDestSlice.Interface())
 	thiz.FromModel(model)
 
 	sc := model2.GetDomainSchemeCache().ParseDomain(model)

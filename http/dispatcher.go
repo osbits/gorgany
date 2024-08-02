@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/internal"
 	"git.qix.sx/gorgany/gorgany.git/service"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"github.com/go-chi/chi"
@@ -14,7 +13,7 @@ import (
 	"strings"
 )
 
-func Dispatch(w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, middlewares []core.IMiddleware) {
+func Dispatch(applicationContext core.IApplicationContext, w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, middlewares []core.IMiddleware) {
 	if originalPath := r.Context().Value(core.OriginalURLPathKey).(string); originalPath != "" {
 		r.URL.Path = originalPath
 		ctx := chi.RouteContext(r.Context())
@@ -37,7 +36,7 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, 
 		}
 	}
 
-	message := &Message{}
+	message := &Message{applicationContext: applicationContext}
 	defer func() {
 		err := message.Close()
 		if err != nil {
@@ -62,7 +61,7 @@ func Dispatch(w http.ResponseWriter, r *http.Request, handler core.HandlerFunc, 
 		}
 	}()
 
-	middlewares = mergeMiddlewaresWithGlobal(middlewares)
+	middlewares = mergeMiddlewaresWithGlobal(applicationContext, middlewares)
 
 	highPriorityMiddleware := util.FindAll(middlewares, func(el core.IMiddleware) bool {
 		return el.Priority() == core.High
@@ -118,8 +117,8 @@ func preProcess(middlewares []core.IMiddleware, message *Message) bool {
 	return preProcessed
 }
 
-func mergeMiddlewaresWithGlobal(handlerMiddlewares []core.IMiddleware) []core.IMiddleware {
-	for _, middleware := range internal.GetFrameworkRegistrar().GetMiddlewares() {
+func mergeMiddlewaresWithGlobal(applicationContext core.IApplicationContext, handlerMiddlewares []core.IMiddleware) []core.IMiddleware {
+	for _, middleware := range applicationContext.GetMiddlewares() {
 		rtC := reflect.TypeOf(middleware)
 		corsMiddlewareName := util.IndirectType(rtC).Name()
 

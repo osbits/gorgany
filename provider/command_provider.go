@@ -5,16 +5,19 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/command"
 	"git.qix.sx/gorgany/gorgany.git/command/db"
 	"git.qix.sx/gorgany/gorgany.git/command/domain"
-	"git.qix.sx/gorgany/gorgany.git/internal"
 )
 
-type CommandProvider struct{}
+type CommandProvider struct {
+	applicationContext core.IApplicationContext
+}
 
 func NewCommandProvider() *CommandProvider {
 	return &CommandProvider{}
 }
 
-func (thiz *CommandProvider) InitProvider(appProvider core.IAppProvider) {
+func (thiz *CommandProvider) InitProvider(applicationContext core.IApplicationContext) {
+	thiz.applicationContext = applicationContext
+
 	thiz.RegisterCommand(command.VersionCommand{})
 	thiz.RegisterCommand(db.DiffCommand{})
 	thiz.RegisterCommand(db.MigrateCommand{})
@@ -23,5 +26,5 @@ func (thiz *CommandProvider) InitProvider(appProvider core.IAppProvider) {
 }
 
 func (thiz *CommandProvider) RegisterCommand(cmd core.ICommand) {
-	internal.GetFrameworkRegistrar().RegisterCommand(cmd)
+	thiz.applicationContext.RegisterCommand(cmd)
 }

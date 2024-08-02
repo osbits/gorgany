@@ -106,7 +106,7 @@ func (thiz ValuesDecoder) Decode(dst interface{}, src map[string][]string) error
 					continue
 				}
 
-				reflectedNestedStruct := util.GetReflectElementOfSlice(reflectedField.Interface())
+				reflectedNestedStruct := util.GetIndirectReflectElementOfSlice(reflectedField.Interface())
 
 				if !reflectedNestedStruct.IsValid() {
 					continue

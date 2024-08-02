@@ -3,17 +3,20 @@ package provider
 import (
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/i18n"
-	"git.qix.sx/gorgany/gorgany.git/internal"
 	"github.com/spf13/viper"
 )
 
-type I18nProvider struct{}
+type I18nProvider struct {
+	applicationContext core.IApplicationContext
+}
 
 func NewI18nProvider() *I18nProvider {
 	return &I18nProvider{}
 }
 
-func (thiz *I18nProvider) InitProvider(appProvider core.IAppProvider) {
+func (thiz *I18nProvider) InitProvider(applicationContext core.IApplicationContext) {
+	thiz.applicationContext = applicationContext
+
 	availableLangs := viper.GetStringSlice("i18n.lang.available")
 	defaultLang := viper.GetString("i18n.lang.default")
 	availableLangs = append(availableLangs, defaultLang)
@@ -37,6 +40,6 @@ func (thiz *I18nProvider) InitProvider(appProvider core.IAppProvider) {
 	thiz.SetManager(manager)
 }
 
-func (thiz I18nProvider) SetManager(manager core.Ii18nManager) {
-	internal.GetFrameworkRegistrar().SetI18nManager(manager)
+func (thiz *I18nProvider) SetManager(manager core.Ii18nManager) {
+	thiz.applicationContext.SetI18nManager(manager)
 }

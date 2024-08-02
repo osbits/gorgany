@@ -3,7 +3,6 @@ package command
 import (
 	"flag"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/internal"
 	"git.qix.sx/gorgany/gorgany.git/log"
 	"github.com/go-playground/validator/v10"
 	"os"
@@ -24,14 +23,17 @@ type FlagConfig struct { //`command:"flag,default=value,name=name"`
 type Flags map[string]*FlagConfig //[fieldName]FlagConfig
 
 type Resolver struct {
+	applicationContext core.IApplicationContext
 }
 
-func NewCommandResolver() *Resolver {
-	return &Resolver{}
+func NewCommandResolver(applicationContext core.IApplicationContext) *Resolver {
+	return &Resolver{
+		applicationContext: applicationContext,
+	}
 }
 
 func (thiz Resolver) ResolveCommand(commandName string) core.ICommand {
-	command := internal.GetFrameworkRegistrar().GetCommand(commandName)
+	command := thiz.applicationContext.GetCommand(commandName)
 	if command == nil {
 		log.Log("").Panicf("Command %s does not exist", commandName)
 	}

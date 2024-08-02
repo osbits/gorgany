@@ -15,10 +15,13 @@ func NewJobProvider() *JobProvider {
 }
 
 type JobProvider struct {
-	jobs chan core.IJob
+	jobs               chan core.IJob
+	applicationContext core.IApplicationContext
 }
 
-func (thiz *JobProvider) InitProvider(appProvider core.IAppProvider) {
+func (thiz *JobProvider) InitProvider(applicationContext core.IApplicationContext) {
+	thiz.applicationContext = applicationContext
+
 	if thiz.jobs == nil {
 		thiz.jobs = make(chan core.IJob)
 	}

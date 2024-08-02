@@ -52,7 +52,7 @@ type IMessageContext interface {
 	GetSession() ISession
 	GetRequest() *http.Request
 
-	GetParent() context.Context
+	GetRequestContext() context.Context
 }
 
 type ISimpleStorage interface {

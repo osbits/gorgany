@@ -20,7 +20,7 @@ import (
 
 func NewEngineRenderer(ctx context.Context) *EngineRenderer {
 	return &EngineRenderer{
-		Engine: internal.GetFrameworkRegistrar().GetViewEngine(),
+		Engine: internal.GetApplicationContext().GetViewEngine(),
 	}
 }
 

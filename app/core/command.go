@@ -1,9 +1,12 @@
 package core
 
-import "gorm.io/gorm"
+import (
+	"context"
+	"gorm.io/gorm"
+)
 
 type ICommand interface {
-	Execute()
+	Execute(ctx context.Context)
 	GetName() string
 }
 

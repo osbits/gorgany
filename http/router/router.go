@@ -6,5 +6,5 @@ import (
 )
 
 func GetRouter() core.Router {
-	return internal.GetFrameworkRegistrar().GetRouter()
+	return internal.GetApplicationContext().GetRouter()
 }

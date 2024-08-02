@@ -11,7 +11,7 @@ import (
 )
 
 func GetContainer() core.IContainer {
-	return internal.GetFrameworkRegistrar().GetContainer()
+	return internal.GetApplicationContext().GetContainer()
 }
 
 // binding holds a resolver and a concrete (if already resolved).

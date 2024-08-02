@@ -3,16 +3,15 @@ package core
 type IProviders []IProvider
 
 type IAppProvider interface {
-	InitProvider()
+	InitProvider(applicationContext IApplicationContext)
 	RegisterProvider(provider IProvider)
-	GetRegistrar() IRegistrar
 }
 
 type IProvider interface {
-	InitProvider(appProvider IAppProvider)
+	InitProvider(applicationContext IApplicationContext)
 }
 
-type IRegistrar interface {
+type IApplicationContext interface {
 	SetHomeUrl(url string)
 	GetHomeUrl() string
 	RegisterController(controller IController)
@@ -57,4 +56,12 @@ type IRegistrar interface {
 	GetContainer() IContainer
 	RegisterEventBus(bus IEventBus)
 	GetEventBus() IEventBus
+}
+
+type IConsoleApplicationContext interface {
+	IApplicationContext
+}
+
+type IWebApplicationContext interface {
+	IApplicationContext
 }

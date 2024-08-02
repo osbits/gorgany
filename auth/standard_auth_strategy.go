@@ -36,7 +36,7 @@ func (thiz *StandardAuthStrategy) NewSessionWithoutUser(ctx context.Context) (co
 
 	session = &Session{
 		id:     hashedToken,
-		expiry: now.Add(time.Second * time.Duration(internal.GetFrameworkRegistrar().GetSessionLifetime())),
+		expiry: now.Add(time.Second * time.Duration(internal.GetApplicationContext().GetSessionLifetime())),
 	}
 	thiz.sessionManager.AddSession(session)
 

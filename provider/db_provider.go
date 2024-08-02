@@ -4,19 +4,20 @@ import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	postgres2 "git.qix.sx/gorgany/gorgany.git/db/gorm/postgres"
-	"git.qix.sx/gorgany/gorgany.git/internal"
 	"git.qix.sx/gorgany/gorgany.git/log"
 	"github.com/spf13/viper"
 )
 
 type DbProvider struct {
+	applicationContext core.IApplicationContext
 }
 
 func NewDbProvider() *DbProvider {
 	return &DbProvider{}
 }
 
-func (thiz *DbProvider) InitProvider(appProvider core.IAppProvider) {
+func (thiz *DbProvider) InitProvider(applicationContext core.IApplicationContext) {
+	thiz.applicationContext = applicationContext
 
 	databases := viper.GetStringMap("databases")
 	for name, config := range databases {
@@ -40,7 +41,7 @@ func (thiz *DbProvider) InitProvider(appProvider core.IAppProvider) {
 }
 
 func (thiz *DbProvider) RegisterDbConnection(name string, connection core.IConnection) {
-	internal.GetFrameworkRegistrar().RegisterDbConnection(name, connection)
+	thiz.applicationContext.RegisterDbConnection(name, connection)
 	log.Log("").Infof("Connection for %s initialized", name)
 }
 

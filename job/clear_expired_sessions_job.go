@@ -10,7 +10,7 @@ type ClearExpiredSessionsJob struct {
 }
 
 func (thiz ClearExpiredSessionsJob) InitSchedule() *gocron.Job {
-	return gocron.Every(uint64(internal.GetFrameworkRegistrar().GetSessionLifetime())).Seconds()
+	return gocron.Every(uint64(internal.GetApplicationContext().GetSessionLifetime())).Seconds()
 }
 
 func (thiz ClearExpiredSessionsJob) Handle() {

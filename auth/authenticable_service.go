@@ -6,5 +6,5 @@ import (
 )
 
 func GetAuthEntityService() core.IUserService {
-	return internal.GetFrameworkRegistrar().GetUserService()
+	return internal.GetApplicationContext().GetUserService()
 }

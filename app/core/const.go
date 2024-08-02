@@ -1,5 +1,7 @@
 package core
 
+import "reflect"
+
 // HTTP
 
 type Method string
@@ -17,6 +19,7 @@ const GorganyORMTag = "grgorm"
 const GorganyORMPreload = "preload"
 const GorganyORMExtends = "extends"
 
+const ApplicationContextKey = "applicationContext"
 const MessageContextKey = "messageContext"
 
 const OneTimeParamsCookieName = "oneTimeParams"
@@ -103,4 +106,29 @@ const (
 
 func (thiz ContentDisposition) String() string {
 	return string(thiz)
+}
+
+type GeneralDataType string
+
+const (
+	Numeric GeneralDataType = "numeric"
+	String  GeneralDataType = "string"
+	Struct  GeneralDataType = "struct"
+	Bool    GeneralDataType = "bool"
+	Unknown GeneralDataType = "unknown"
+)
+
+func GeneralDataTypeOf(kind reflect.Kind) GeneralDataType {
+	switch kind {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
+		return Numeric
+	case reflect.String:
+		return String
+	case reflect.Bool:
+		return Bool
+	case reflect.Struct:
+		return Struct
+	default:
+		return Unknown
+	}
 }

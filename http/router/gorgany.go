@@ -11,18 +11,18 @@ import (
 
 func NewGorganyRouter() *GorganyRouter {
 	return &GorganyRouter{
-		eninge: chi.NewRouter(),
+		engine: chi.NewRouter(),
 		routes: make(map[string]core.IRouteConfig),
 	}
 }
 
 type GorganyRouter struct {
-	eninge *chi.Mux
+	engine *chi.Mux
 	routes map[string]core.IRouteConfig
 }
 
 func (thiz GorganyRouter) Engine() http.Handler {
-	return thiz.eninge
+	return thiz.engine
 }
 
 func (thiz GorganyRouter) RegisterRoute(route core.IRouteConfig) {

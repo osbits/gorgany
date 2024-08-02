@@ -7,13 +7,13 @@ import (
 )
 
 func Strategy(strategyName ...string) core.IAuthStrategy {
-	return internal.GetFrameworkRegistrar().GetAuthStrategy(strategyName...)
+	return internal.GetApplicationContext().GetAuthStrategy(strategyName...)
 }
 
 // ResolveAuthStrategyByContext :
 // param ctx must be context with value and has key core.MessageContextKey with core.IMessageContext value
 func ResolveAuthStrategyByContext(ctx context.Context) core.IAuthStrategy {
-	authStrategies := internal.GetFrameworkRegistrar().GetAuthStrategies()
+	authStrategies := internal.GetApplicationContext().GetAuthStrategies()
 	for key := range authStrategies {
 		if key == core.DefaultKeyInRegistrar {
 			continue

@@ -1,9 +1,10 @@
 package db
 
 import (
+	"context"
 	"fmt"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/db"
-	"git.qix.sx/gorgany/gorgany.git/internal"
 	"gorm.io/gorm"
 	"os"
 	"time"
@@ -23,7 +24,7 @@ const (
 	Down               = "down"
 )
 
-func (thiz MigrateCommand) Execute() {
+func (thiz MigrateCommand) Execute(ctx context.Context) {
 	if len(os.Args) < 3 {
 		panic("Use 'cli db:migrate up' or 'cli db:migrate down'")
 	}
@@ -31,7 +32,7 @@ func (thiz MigrateCommand) Execute() {
 
 	switch migrationKind {
 	case Up:
-		thiz.up()
+		thiz.up(ctx)
 	case Down:
 		thiz.down()
 	default:
@@ -40,7 +41,7 @@ func (thiz MigrateCommand) Execute() {
 
 }
 
-func (thiz MigrateCommand) up() {
+func (thiz MigrateCommand) up(ctx context.Context) {
 	gormInstance := db.Builder().GetConnection().Driver().(*gorm.DB)
 
 	err := gormInstance.AutoMigrate(&db.Migration{})
@@ -49,7 +50,7 @@ func (thiz MigrateCommand) up() {
 	}
 
 	isError := false
-	for _, migration := range internal.GetFrameworkRegistrar().GetMigrations() {
+	for _, migration := range ctx.Value(core.ApplicationContextKey).(core.IApplicationContext).GetMigrations() {
 		var migrationDomain db.Migration
 		gormInstance.First(&migrationDomain, "name = ?", migration.Name())
 		if thiz.isMigrationExists(migrationDomain) {

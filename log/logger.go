@@ -12,10 +12,10 @@ func Log(loggerKey ...string) core.Logger {
 		key = loggerKey[0]
 	}
 
-	logger := internal.GetFrameworkRegistrar().GetLogger(key)
+	logger := internal.GetApplicationContext().GetLogger(key)
 	if logger == nil && key == "" {
 		defaultLogger := &DefaultLogger{}
-		internal.GetFrameworkRegistrar().RegisterLogger("", defaultLogger)
+		internal.GetApplicationContext().RegisterLogger("", defaultLogger)
 		return defaultLogger
 	}
 	return logger

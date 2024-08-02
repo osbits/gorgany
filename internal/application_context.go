@@ -6,12 +6,25 @@ import (
 
 var applicationContext core.IApplicationContext
 
-func GetFrameworkRegistrar() core.IApplicationContext {
+func GetApplicationContext() core.IApplicationContext {
 	return applicationContext
 }
 
-func init() {
-	applicationContext = &Registrar{
+func InitApplicationContext() core.IApplicationContext {
+	if applicationContext == nil {
+		applicationContext = &ApplicationContext{
+			AbstractApplicationContext: newAbstractContext(),
+		}
+	}
+	return applicationContext
+}
+
+type ApplicationContext struct {
+	*AbstractApplicationContext
+}
+
+func newAbstractContext() *AbstractApplicationContext {
+	return &AbstractApplicationContext{
 		controllers:         make(core.Controllers, 0),
 		providers:           make(core.IProviders, 0),
 		dbConnections:       make(map[string]core.IConnection),
@@ -26,11 +39,7 @@ func init() {
 	}
 }
 
-func SetRegistrar(registrar core.IApplicationContext) {
-	applicationContext = registrar
-}
-
-type Registrar struct {
+type AbstractApplicationContext struct {
 	homeUrl             string
 	controllers         core.Controllers
 	providers           core.IProviders
@@ -53,35 +62,31 @@ type Registrar struct {
 	eventBus            core.IEventBus
 }
 
-func (thiz *Registrar) SetHomeUrl(url string) {
+func (thiz *AbstractApplicationContext) SetHomeUrl(url string) {
 	thiz.homeUrl = url
 }
 
-func (thiz *Registrar) GetHomeUrl() string {
+func (thiz *AbstractApplicationContext) GetHomeUrl() string {
 	return thiz.homeUrl
 }
 
-type T struct {
-	Registrar
-}
-
-func (thiz *Registrar) RegisterController(controller core.IController) {
+func (thiz *AbstractApplicationContext) RegisterController(controller core.IController) {
 	thiz.controllers = append(thiz.controllers, controller)
 }
 
-func (thiz *Registrar) GetControllers() core.Controllers {
+func (thiz *AbstractApplicationContext) GetControllers() core.Controllers {
 	return thiz.controllers
 }
 
-func (thiz *Registrar) RegisterProvider(provider core.IProvider) {
+func (thiz *AbstractApplicationContext) RegisterProvider(provider core.IProvider) {
 	thiz.providers = append(thiz.providers, provider)
 }
 
-func (thiz *Registrar) GetProviders() core.IProviders {
+func (thiz *AbstractApplicationContext) GetProviders() core.IProviders {
 	return thiz.providers
 }
 
-func (thiz *Registrar) RegisterCommand(command core.ICommand) {
+func (thiz *AbstractApplicationContext) RegisterCommand(command core.ICommand) {
 	if thiz.commands == nil {
 		thiz.commands = make(map[string]core.ICommand)
 	}
@@ -89,106 +94,106 @@ func (thiz *Registrar) RegisterCommand(command core.ICommand) {
 	thiz.commands[command.GetName()] = command
 }
 
-func (thiz *Registrar) GetCommands() map[string]core.ICommand {
+func (thiz *AbstractApplicationContext) GetCommands() map[string]core.ICommand {
 	return thiz.commands
 }
 
-func (thiz *Registrar) GetCommand(name string) core.ICommand {
+func (thiz *AbstractApplicationContext) GetCommand(name string) core.ICommand {
 	return thiz.commands[name]
 }
 
-func (thiz *Registrar) SetSessionLifetime(lifetime int) {
+func (thiz *AbstractApplicationContext) SetSessionLifetime(lifetime int) {
 	thiz.sessionLifetime = lifetime
 }
 
-func (thiz *Registrar) GetSessionLifetime() int {
+func (thiz *AbstractApplicationContext) GetSessionLifetime() int {
 	if thiz.sessionLifetime == 0 {
 		return 3600
 	}
 	return thiz.sessionLifetime
 }
 
-func (thiz *Registrar) SetUserService(service core.IUserService) {
+func (thiz *AbstractApplicationContext) SetUserService(service core.IUserService) {
 	thiz.userService = service
 }
 
-func (thiz *Registrar) GetUserService() core.IUserService {
+func (thiz *AbstractApplicationContext) GetUserService() core.IUserService {
 	return thiz.userService
 }
 
-func (thiz *Registrar) RegisterMiddleware(middleware core.IMiddleware) {
+func (thiz *AbstractApplicationContext) RegisterMiddleware(middleware core.IMiddleware) {
 	if thiz.middlewares == nil {
 		thiz.middlewares = make([]core.IMiddleware, 0)
 	}
 	thiz.middlewares = append(thiz.middlewares, middleware)
 }
 
-func (thiz *Registrar) GetMiddlewares() []core.IMiddleware {
+func (thiz *AbstractApplicationContext) GetMiddlewares() []core.IMiddleware {
 	return thiz.middlewares
 }
 
-func (thiz *Registrar) RegisterErrorHandler(errorType string, handler core.ErrorHandler) {
+func (thiz *AbstractApplicationContext) RegisterErrorHandler(errorType string, handler core.ErrorHandler) {
 	if thiz.customErrorHandlers == nil {
 		thiz.customErrorHandlers = make(map[string]core.ErrorHandler)
 	}
 	thiz.customErrorHandlers[errorType] = handler
 }
 
-func (thiz *Registrar) GetErrorHandlers() map[string]core.ErrorHandler {
+func (thiz *AbstractApplicationContext) GetErrorHandlers() map[string]core.ErrorHandler {
 	return thiz.customErrorHandlers
 }
 
-func (thiz *Registrar) RegisterLogger(key string, logger core.Logger) {
+func (thiz *AbstractApplicationContext) RegisterLogger(key string, logger core.Logger) {
 	if thiz.loggers == nil {
 		thiz.loggers = make(map[string]core.Logger)
 	}
 	thiz.loggers[key] = logger
 }
 
-func (thiz *Registrar) GetLoggers() map[string]core.Logger {
+func (thiz *AbstractApplicationContext) GetLoggers() map[string]core.Logger {
 	return thiz.loggers
 }
 
-func (thiz *Registrar) GetLogger(key string) core.Logger {
+func (thiz *AbstractApplicationContext) GetLogger(key string) core.Logger {
 	return thiz.loggers[key]
 }
 
-func (thiz *Registrar) RegisterDomain(key string, domain interface{}) {
+func (thiz *AbstractApplicationContext) RegisterDomain(key string, domain interface{}) {
 	if thiz.domains == nil {
 		thiz.domains = make(map[string]interface{})
 	}
 	thiz.domains[key] = domain
 }
 
-func (thiz *Registrar) GetDomains() map[string]interface{} {
+func (thiz *AbstractApplicationContext) GetDomains() map[string]interface{} {
 	return thiz.domains
 }
 
-func (thiz *Registrar) RegisterMigration(migration core.IMigration) {
+func (thiz *AbstractApplicationContext) RegisterMigration(migration core.IMigration) {
 	thiz.migrations = append(thiz.migrations, migration)
 }
 
-func (thiz *Registrar) GetMigrations() []core.IMigration {
+func (thiz *AbstractApplicationContext) GetMigrations() []core.IMigration {
 	return thiz.migrations
 }
 
-func (thiz *Registrar) RegisterSeeder(seeder core.ISeeder) {
+func (thiz *AbstractApplicationContext) RegisterSeeder(seeder core.ISeeder) {
 	thiz.seeders = append(thiz.seeders, seeder)
 }
 
-func (thiz *Registrar) GetSeeders() []core.ISeeder {
+func (thiz *AbstractApplicationContext) GetSeeders() []core.ISeeder {
 	return thiz.seeders
 }
 
-func (thiz *Registrar) SetSessionStorage(sessionStorage core.ISessionStorage) {
+func (thiz *AbstractApplicationContext) SetSessionStorage(sessionStorage core.ISessionStorage) {
 	thiz.sessionStorage = sessionStorage
 }
 
-func (thiz *Registrar) GetSessionStorage() core.ISessionStorage {
+func (thiz *AbstractApplicationContext) GetSessionStorage() core.ISessionStorage {
 	return thiz.sessionStorage
 }
 
-func (thiz *Registrar) SetAuthStrategy(authProvider core.IAuthStrategy, strategyName ...string) {
+func (thiz *AbstractApplicationContext) SetAuthStrategy(authProvider core.IAuthStrategy, strategyName ...string) {
 	name := core.DefaultKeyInRegistrar
 	if len(strategyName) > 0 {
 		name = strategyName[0]
@@ -197,7 +202,7 @@ func (thiz *Registrar) SetAuthStrategy(authProvider core.IAuthStrategy, strategy
 	thiz.authStrategies[name] = authProvider
 }
 
-func (thiz *Registrar) GetAuthStrategy(strategyName ...string) core.IAuthStrategy {
+func (thiz *AbstractApplicationContext) GetAuthStrategy(strategyName ...string) core.IAuthStrategy {
 	name := core.DefaultKeyInRegistrar
 	if len(strategyName) > 0 {
 		name = strategyName[0]
@@ -206,58 +211,58 @@ func (thiz *Registrar) GetAuthStrategy(strategyName ...string) core.IAuthStrateg
 	return thiz.authStrategies[name]
 }
 
-func (thiz *Registrar) GetAuthStrategies() map[string]core.IAuthStrategy {
+func (thiz *AbstractApplicationContext) GetAuthStrategies() map[string]core.IAuthStrategy {
 	return thiz.authStrategies
 }
 
-func (thiz *Registrar) SetI18nManager(manager core.Ii18nManager) {
+func (thiz *AbstractApplicationContext) SetI18nManager(manager core.Ii18nManager) {
 	thiz.i18nManager = manager
 }
 
-func (thiz *Registrar) GetI18nManager() core.Ii18nManager {
+func (thiz *AbstractApplicationContext) GetI18nManager() core.Ii18nManager {
 	return thiz.i18nManager
 }
 
-func (thiz *Registrar) RegisterDbConnection(name string, connection core.IConnection) {
+func (thiz *AbstractApplicationContext) RegisterDbConnection(name string, connection core.IConnection) {
 	thiz.dbConnections[name] = connection
 }
 
-func (thiz *Registrar) GetDbConnections() map[string]core.IConnection {
+func (thiz *AbstractApplicationContext) GetDbConnections() map[string]core.IConnection {
 	return thiz.dbConnections
 }
 
-func (thiz *Registrar) GetDbConnection(name string) core.IConnection {
+func (thiz *AbstractApplicationContext) GetDbConnection(name string) core.IConnection {
 	return thiz.dbConnections[name]
 }
 
-func (thiz *Registrar) RegisterViewEngine(engine core.IViewEngine) {
+func (thiz *AbstractApplicationContext) RegisterViewEngine(engine core.IViewEngine) {
 	thiz.viewEngine = engine
 }
 
-func (thiz *Registrar) GetViewEngine() core.IViewEngine {
+func (thiz *AbstractApplicationContext) GetViewEngine() core.IViewEngine {
 	return thiz.viewEngine
 }
 
-func (thiz *Registrar) RegisterRouter(router core.Router) {
+func (thiz *AbstractApplicationContext) RegisterRouter(router core.Router) {
 	thiz.router = router
 }
 
-func (thiz *Registrar) GetRouter() core.Router {
+func (thiz *AbstractApplicationContext) GetRouter() core.Router {
 	return thiz.router
 }
 
-func (thiz *Registrar) RegisterContainer(container core.IContainer) {
+func (thiz *AbstractApplicationContext) RegisterContainer(container core.IContainer) {
 	thiz.container = container
 }
 
-func (thiz *Registrar) GetContainer() core.IContainer {
+func (thiz *AbstractApplicationContext) GetContainer() core.IContainer {
 	return thiz.container
 }
 
-func (thiz *Registrar) RegisterEventBus(eventBus core.IEventBus) {
+func (thiz *AbstractApplicationContext) RegisterEventBus(eventBus core.IEventBus) {
 	thiz.eventBus = eventBus
 }
 
-func (thiz *Registrar) GetEventBus() core.IEventBus {
+func (thiz *AbstractApplicationContext) GetEventBus() core.IEventBus {
 	return thiz.eventBus
 }

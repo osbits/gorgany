@@ -2,7 +2,6 @@ package provider
 
 import (
 	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/internal"
 	"git.qix.sx/gorgany/gorgany.git/log"
 	"git.qix.sx/gorgany/gorgany.git/view"
 	"reflect"
@@ -13,9 +12,12 @@ func NewViewProvider() *ViewProvider {
 }
 
 type ViewProvider struct {
+	applicationContext core.IApplicationContext
 }
 
-func (thiz *ViewProvider) InitProvider(appProvider core.IAppProvider) {
+func (thiz *ViewProvider) InitProvider(applicationContext core.IApplicationContext) {
+	thiz.applicationContext = applicationContext
+
 	thiz.RegisterViewEngine(view.NewNativeEngine("./resource/view", "gohtml"))
 }
 
@@ -25,6 +27,6 @@ func (thiz *ViewProvider) RegisterViewEngine(engine core.IViewEngine) {
 		rtEngine = rtEngine.Elem()
 	}
 
-	internal.GetFrameworkRegistrar().RegisterViewEngine(engine)
+	thiz.applicationContext.RegisterViewEngine(engine)
 	log.Log("").Infof("%s is set as view engine", rtEngine.Name())
 }

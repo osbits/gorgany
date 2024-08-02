@@ -17,7 +17,9 @@ type messageContext struct {
 	session       core.ISession
 	request       *http.Request
 
-	parentCtx context.Context
+	applicationContext core.IApplicationContext
+
+	requestCtx context.Context
 }
 
 func (thiz *messageContext) GetURL() *url.URL {
@@ -42,7 +44,7 @@ func (thiz *messageContext) GetBearerToken() string {
 }
 
 func (thiz *messageContext) GetPathParam(name string) string {
-	return chi.URLParamFromCtx(thiz.parentCtx, name)
+	return chi.URLParamFromCtx(thiz.requestCtx, name)
 }
 
 func (thiz *messageContext) GetSession() core.ISession {
@@ -53,6 +55,6 @@ func (thiz *messageContext) GetRequest() *http.Request {
 	return thiz.request
 }
 
-func (thiz *messageContext) GetParent() context.Context {
-	return thiz.parentCtx
+func (thiz *messageContext) GetRequestContext() context.Context {
+	return thiz.requestCtx
 }

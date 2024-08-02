@@ -2,6 +2,7 @@ package db
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git"
@@ -9,7 +10,6 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/db"
 	"git.qix.sx/gorgany/gorgany.git/db/gorm/plugin"
 	"git.qix.sx/gorgany/gorgany.git/db/orm"
-	"git.qix.sx/gorgany/gorgany.git/internal"
 	model2 "git.qix.sx/gorgany/gorgany.git/service/cache"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"gorm.io/gorm"
@@ -37,7 +37,7 @@ func (thiz DiffCommand) GetName() string {
 	return "db:diff"
 }
 
-func (thiz DiffCommand) Execute() {
+func (thiz DiffCommand) Execute(ctx context.Context) {
 	thiz.modelStructAlreadyAdded = make(map[string]bool)
 	thiz.pivotTables = make(map[string]bool)
 
@@ -51,7 +51,7 @@ func (thiz DiffCommand) Execute() {
 	})
 
 	moduleName := util.ModuleName()
-	modelsMap := internal.GetFrameworkRegistrar().GetDomains()
+	modelsMap := ctx.Value(core.ApplicationContextKey).(core.IApplicationContext).GetDomains()
 
 	pkgInfos, err := util.ScanDir("./pkg/domain")
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/command"
 	"git.qix.sx/gorgany/gorgany.git/config"
 	"git.qix.sx/gorgany/gorgany.git/http/router"
+	"git.qix.sx/gorgany/gorgany.git/internal"
 	"git.qix.sx/gorgany/gorgany.git/log"
 	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
@@ -39,7 +40,7 @@ type app struct {
 	execType    gorgany.ExecType
 }
 
-func (s *app) Run() {
+func (s *app) Run(applicationContext core.IApplicationContext) {
 	s.log("").Infof("Gorgany framework is starting...\n\n")
 	if err := godotenv.Load(); err != nil {
 		s.log("").Panicf("Failed load env file: %s", err.Error())
@@ -59,7 +60,7 @@ func (s *app) Run() {
 	timezone, _ := time.LoadLocation(viper.GetString("app.server.timezone"))
 	s.timezone = timezone
 
-	s.appProvider.InitProvider()
+	s.appProvider.InitProvider(applicationContext)
 }
 
 func (s *app) ServerTimezone() *time.Location {
@@ -155,7 +156,9 @@ type ServerApp struct {
 }
 
 func (s *ServerApp) Run() {
-	s.app.Run()
+	applicationContext := internal.InitApplicationContext()
+
+	s.app.Run(applicationContext)
 
 	port := viper.GetInt("app.server.port")
 	if port == 0 {
@@ -204,16 +207,18 @@ type ConsoleApp struct {
 }
 
 func (s *ConsoleApp) Run() {
-	s.app.Run()
+	applicationContext := internal.InitApplicationContext()
 
-	resolver := command.NewCommandResolver()
+	s.app.Run(applicationContext)
+
+	resolver := command.NewCommandResolver(applicationContext)
 
 	if len(os.Args) < 2 {
 		fmt.Println("Command name must be presented")
 		return
 	}
 	cmd := resolver.ResolveCommand(os.Args[1])
-	cmd.Execute()
+	cmd.Execute(context.WithValue(context.Background(), core.ApplicationContextKey, applicationContext))
 }
 
 func (s *ConsoleApp) Shutdown(ctx context.Context) error {

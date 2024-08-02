@@ -25,7 +25,7 @@ func NewEventBus() core.IEventBus {
 }
 
 func GetEventBus() core.IEventBus {
-	return internal.GetFrameworkRegistrar().GetEventBus()
+	return internal.GetApplicationContext().GetEventBus()
 }
 
 type EventBus struct {

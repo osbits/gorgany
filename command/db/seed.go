@@ -1,9 +1,10 @@
 package db
 
 import (
+	"context"
 	"fmt"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/db"
-	"git.qix.sx/gorgany/gorgany.git/internal"
 	"gorm.io/gorm"
 	"time"
 )
@@ -15,7 +16,7 @@ func (thiz SeedCommand) GetName() string {
 	return "db:seed"
 }
 
-func (thiz SeedCommand) Execute() {
+func (thiz SeedCommand) Execute(ctx context.Context) {
 	gormInstance := db.Builder().GetConnection().Driver().(*gorm.DB)
 
 	err := gormInstance.AutoMigrate(&db.Seeder{})
@@ -25,7 +26,7 @@ func (thiz SeedCommand) Execute() {
 
 	total := 0
 	tx := gormInstance.Begin()
-	for _, seeder := range internal.GetFrameworkRegistrar().GetSeeders() {
+	for _, seeder := range ctx.Value(core.ApplicationContextKey).(core.IApplicationContext).GetSeeders() {
 		var seederDomain db.Seeder
 		gormInstance.First(&seederDomain, "name = ?", seeder.Name())
 

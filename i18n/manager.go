@@ -6,7 +6,7 @@ import (
 )
 
 func GetManager() core.Ii18nManager {
-	return internal.GetFrameworkRegistrar().GetI18nManager()
+	return internal.GetApplicationContext().GetI18nManager()
 }
 
 type Manager struct {

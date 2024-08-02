@@ -26,6 +26,8 @@ import (
 )
 
 type Message struct {
+	applicationContext core.IApplicationContext
+
 	writer  http.ResponseWriter
 	request *http.Request
 
@@ -378,11 +380,13 @@ func (thiz *Message) Context() context.Context {
 	mCtx.cookieManager = thiz.cookieManager
 	mCtx.headers = thiz.GetHeader()
 	mCtx.request = thiz.GetRequest()
+	mCtx.applicationContext = thiz.applicationContext
 
-	parentCtx := thiz.GetRequest().Context()
-	mCtx.parentCtx = parentCtx
+	parentRequestCtx := thiz.GetRequest().Context()
+	mCtx.requestCtx = parentRequestCtx
 
-	thiz.ctx = context.WithValue(parentCtx, core.MessageContextKey, mCtx)
+	appCtx := context.WithValue(parentRequestCtx, core.ApplicationContextKey, thiz.applicationContext)
+	thiz.ctx = context.WithValue(appCtx, core.MessageContextKey, mCtx)
 
 	mCtx.session = thiz.GetSession()
 
@@ -446,7 +450,7 @@ func (thiz *Message) addOptionsToView(options map[string]any) map[string]any {
 }
 
 func (thiz *Message) setSession() {
-	if thiz.GetRequest().Method == "OPTIONS" {
+	if thiz.GetRequest().Method == http.MethodOptions {
 		return
 	}
 
@@ -458,7 +462,7 @@ func (thiz *Message) setSession() {
 	session := currentAuthStrategy.CurrentSession(thiz.Context())
 
 	if session != nil && !session.IsExpired() {
-		session.SetExpiry(session.GetExpiry().Add(time.Duration(internal.GetFrameworkRegistrar().GetSessionLifetime()) * time.Second))
+		session.SetExpiry(session.GetExpiry().Add(time.Duration(internal.GetApplicationContext().GetSessionLifetime()) * time.Second))
 		thiz.currentSession = session
 		thiz.makeOneTimeParamsUsed()
 		return
