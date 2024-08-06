@@ -114,7 +114,7 @@ func (thiz *RouteProvider) RegisterController(controller core.IController) {
 }
 
 func (thiz *RouteProvider) SetHomeUrl(url string) {
-	internal.GetApplicationContext().(core.IWebApplicationContext).SetHomeUrl(url)
+	internal.GetApplicationContext().(core.IApplicationContext).SetHomeUrl(url)
 }
 
 func (thiz *RouteProvider) RegisterMiddleware(middleware core.IMiddleware) {

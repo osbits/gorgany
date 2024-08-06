@@ -40,12 +40,12 @@ func (thiz *DbProvider) InitProvider(applicationContext core.IApplicationContext
 	}
 }
 
-func (thiz *DbProvider) RegisterDbConnection(name string, connection core.IConnection) {
+func (thiz *DbProvider) RegisterDbConnection(name string, connection core.GrgDBConnection) {
 	thiz.applicationContext.RegisterDbConnection(name, connection)
 	log.Log("").Infof("Connection for %s initialized", name)
 }
 
-func (thiz *DbProvider) resolveDb(kind core.DbType, config map[string]any) core.IConnection {
+func (thiz *DbProvider) resolveDb(kind core.DbType, config map[string]any) core.GrgDBConnection {
 	switch kind {
 	case core.GormPostgreSQL:
 		return postgres2.NewGormPostgresConnection(config)

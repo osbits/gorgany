@@ -59,7 +59,7 @@ func TestBuilder_Join_Multiples(t *testing.T) {
 
 	query := builder.From("test_table tt").Join("joinable_table jt", "tt.id", "=", "jt.test_table_id").Join("joinable_table_2 jt2", "jt2.joinable_table_id", "=", "jt.id").ToProcessedQuery()
 
-	assert.Equal(t, "SELECT * FROM test_table tt INNER JOIN joinable_table jt ON tt.id = jt.test_table_id, joinable_table_2 jt2 ON jt2.joinable_table_id = jt.id", query)
+	assert.Equal(t, "SELECT * FROM test_table tt INNER JOIN joinable_table jt ON tt.id = jt.test_table_id INNER JOIN joinable_table_2 jt2 ON jt2.joinable_table_id = jt.id", query)
 }
 
 func TestBuilder_Join_WithRawSubquery(t *testing.T) {

@@ -77,73 +77,6 @@ func (thiz jsonParser) processValue(dest any, key string, value interface{}) err
 		field = rvDest
 	}
 
-	//if field.Kind() == reflect.Ptr {
-	//	indirectType := field.Type().Elem()
-	//	primitive, err := util.ResolvePrimitive(indirectType.Kind(), fmt.Sprintf("%v", value))
-	//	if err != nil {
-	//		return err
-	//	}
-	//
-	//	rtPrimitive := reflect.ValueOf(primitive)
-	//	convertedValue := rtPrimitive.Convert(indirectType)
-	//
-	//	field.Set(reflect.New(indirectType).Elem().Addr().Convert(reflect.PointerTo(indirectType)))
-	//	field.Elem().Set(convertedValue)
-	//} else {
-	//	if field.Kind() == reflect.Slice {
-	//		reflectedElement := util.GetIndirectReflectElementOfSlice(field.Interface())
-	//		s, ok := value.([]any)
-	//		if !ok {
-	//			return &error2.ValidationErrors{
-	//				error2.ValidationError{Field: key, Err: "Value must be slice"},
-	//			}
-	//		}
-	//
-	//		for _, v := range s {
-	//			rv := reflect.New(reflectedElement.Type()).Elem().Addr().Convert(reflect.PointerTo(reflectedElement.Type()))
-	//			err = thiz.processValue(rv.Interface(), "_", v)
-	//			if err != nil {
-	//				return err
-	//			}
-	//			reflect.Append(field, rv)
-	//		}
-	//	} else if field.Kind() == reflect.Map {
-	//		m, ok := value.(map[string]any)
-	//		if !ok {
-	//			return &error2.ValidationErrors{
-	//				error2.ValidationError{Field: key, Err: "Value must be map"},
-	//			}
-	//		}
-	//
-	//		field.Set(reflect.MakeMap(field.Type()))
-	//		for k, v := range m {
-	//			mapValueRType := field.Type().Elem()
-	//			rv := reflect.New(mapValueRType).Elem().Addr().Convert(reflect.PointerTo(mapValueRType)).Elem()
-	//			err = thiz.processValue(rv.Addr().Interface(), "_", v)
-	//			if err != nil {
-	//				return err
-	//			}
-	//			field.SetMapIndex(reflect.ValueOf(k), rv)
-	//		}
-	//	} else if nestedValue, ok := value.(map[string]any); ok {
-	//		found, field, _ = util.FindFieldByTag(rvDest, "json", key)
-	//		if !found {
-	//			return nil
-	//		}
-	//		err := thiz.initStruct(field.Interface(), nestedValue)
-	//		if err != nil {
-	//			return err
-	//		}
-	//		return nil
-	//	} else {
-	//		primitive, err := util.ResolvePrimitive(field.Kind(), fmt.Sprintf("%v", value))
-	//		if err != nil {
-	//			return err
-	//		}
-	//		field.Set(reflect.ValueOf(primitive))
-	//	}
-	//}
-
 	return thiz.setFieldValue(field, key, value)
 }
 
@@ -163,7 +96,9 @@ func (thiz jsonParser) setFieldValue(field reflect.Value, key string, value inte
 }
 
 func (thiz jsonParser) setPointer(field reflect.Value, key string, value interface{}) error {
-	//indirectReflectedValue := reflect.ValueOf(value)
+	if value == nil && field.Kind() == reflect.Ptr {
+		return nil
+	}
 	indirectType := field.Type().Elem()
 	field.Set(reflect.New(indirectType).Elem().Addr().Convert(reflect.PointerTo(indirectType)))
 	return thiz.setFieldValue(field.Elem(), key, value)
@@ -232,11 +167,15 @@ func (thiz jsonParser) setStruct(field reflect.Value, key string, value interfac
 }
 
 func (thiz jsonParser) setPrimitive(field reflect.Value, key string, value interface{}) error {
+	if value == nil {
+		return nil
+	}
+
 	primitive, err := util.ResolvePrimitive(field.Kind(), fmt.Sprintf("%v", value))
 	if err != nil {
 		return err
 	}
-	field.Set(reflect.ValueOf(primitive))
+	field.Set(reflect.ValueOf(primitive).Convert(field.Type()))
 	return nil
 }
 

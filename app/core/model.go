@@ -70,3 +70,11 @@ type PaginationParams interface {
 type LimitedFieldsParams interface {
 	GetFields() []string
 }
+
+type NullableValueGetter interface {
+	GetValue() any
+}
+
+type NullableValueSetter interface {
+	SetValue(v any)
+}

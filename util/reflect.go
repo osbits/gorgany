@@ -389,16 +389,33 @@ func IsGenericImplemented(s any, generic any) bool {
 func FindFieldByTag(s reflect.Value, tag, tagValue string) (bool, reflect.Value, reflect.StructField) {
 	s = IndirectValue(s)
 	rtS := IndirectType(s.Type())
+
+	type fieldUnion struct {
+		fieldValue  reflect.Value
+		fieltStruct reflect.StructField
+	}
+
+	embeddedFields := make([]reflect.Value, 0)
+
 	for i := 0; i < rtS.NumField(); i++ {
 		field := rtS.Field(i)
 		if field.Anonymous && IndirectType(field.Type).Kind() == reflect.Struct {
-			return FindFieldByTag(s.Field(i), tag, tagValue)
+			embeddedFields = append(embeddedFields, s.Field(i))
+			continue
 		}
 		rawTag := field.Tag.Get(tag)
 		splitTag := strings.Split(rawTag, ",")
 		if splitTag[0] == tagValue {
 			return true, s.Field(i), field
 		}
+	}
+
+	for _, embededField := range embeddedFields {
+		found, v, sf := FindFieldByTag(embededField, tag, tagValue)
+		if found {
+			return found, v, sf
+		}
+
 	}
 	return false, reflect.Value{}, reflect.StructField{}
 }

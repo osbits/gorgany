@@ -26,7 +26,7 @@ type DomainFilter[T any] struct {
 	Filter *Filter
 }
 
-func (thiz *DomainFilter[T]) FromMap(params map[string]string) error {
+func (thiz *DomainFilter[T]) ValueOfMap(params map[string]string) error {
 	var domain T
 	filter, err := NewFilter(params["field"], params["operator"], params["value"], domain)
 	if err != nil {

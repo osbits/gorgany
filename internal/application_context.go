@@ -27,7 +27,7 @@ func newAbstractContext() *AbstractApplicationContext {
 	return &AbstractApplicationContext{
 		controllers:         make(core.Controllers, 0),
 		providers:           make(core.IProviders, 0),
-		dbConnections:       make(map[string]core.IConnection),
+		dbConnections:       make(map[string]core.GrgDBConnection),
 		commands:            make(map[string]core.ICommand),
 		middlewares:         make([]core.IMiddleware, 0),
 		customErrorHandlers: make(map[string]core.ErrorHandler),
@@ -43,7 +43,7 @@ type AbstractApplicationContext struct {
 	homeUrl             string
 	controllers         core.Controllers
 	providers           core.IProviders
-	dbConnections       map[string]core.IConnection
+	dbConnections       map[string]core.GrgDBConnection
 	commands            map[string]core.ICommand
 	sessionLifetime     int //in seconds
 	userService         core.IUserService
@@ -223,15 +223,15 @@ func (thiz *AbstractApplicationContext) GetI18nManager() core.Ii18nManager {
 	return thiz.i18nManager
 }
 
-func (thiz *AbstractApplicationContext) RegisterDbConnection(name string, connection core.IConnection) {
+func (thiz *AbstractApplicationContext) RegisterDbConnection(name string, connection core.GrgDBConnection) {
 	thiz.dbConnections[name] = connection
 }
 
-func (thiz *AbstractApplicationContext) GetDbConnections() map[string]core.IConnection {
+func (thiz *AbstractApplicationContext) GetDbConnections() map[string]core.GrgDBConnection {
 	return thiz.dbConnections
 }
 
-func (thiz *AbstractApplicationContext) GetDbConnection(name string) core.IConnection {
+func (thiz *AbstractApplicationContext) GetDbConnection(name string) core.GrgDBConnection {
 	return thiz.dbConnections[name]
 }
 

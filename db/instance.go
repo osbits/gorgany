@@ -5,7 +5,7 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/internal"
 )
 
-func Connection(name ...string) core.IConnection {
+func Connection(name ...string) core.GrgDBConnection {
 	if len(name) == 0 {
 		return internal.GetApplicationContext().GetDbConnection(core.DefaultKeyInRegistrar)
 	}

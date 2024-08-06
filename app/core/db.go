@@ -1,6 +1,9 @@
 package core
 
-import "gorm.io/gorm"
+import (
+	"context"
+	"gorm.io/gorm"
+)
 
 type DbType string
 
@@ -9,9 +12,10 @@ const (
 	MongoDb        DbType = "mongo"
 )
 
-type IConnection interface {
+type GrgDBConnection interface {
 	Driver() any
 	Builder() IQueryBuilder
+	WithContext(ctx context.Context) GrgDBConnection
 }
 
 type IQueryBuilder interface {
@@ -59,7 +63,7 @@ type IQueryBuilder interface {
 	Relation(relation string) IQueryBuilder
 	Raw(sql string, values ...any) IQueryBuilder
 	Exec() error
-	GetConnection() IConnection
+	GetConnection() GrgDBConnection
 	CountRelation(relation string) (int64, error)
 	ReplaceRelation(relation string, values ...any) error
 	DeleteRelation(relation string, values ...any) error

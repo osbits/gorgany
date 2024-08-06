@@ -18,9 +18,9 @@ type IApplicationContext interface {
 	GetControllers() Controllers
 	RegisterProvider(provider IProvider)
 	GetProviders() IProviders
-	RegisterDbConnection(name string, connection IConnection)
-	GetDbConnections() map[string]IConnection
-	GetDbConnection(name string) IConnection
+	RegisterDbConnection(name string, connection GrgDBConnection)
+	GetDbConnections() map[string]GrgDBConnection
+	GetDbConnection(name string) GrgDBConnection
 	RegisterCommand(command ICommand)
 	GetCommands() map[string]ICommand
 	GetCommand(name string) ICommand

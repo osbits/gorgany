@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/db"
@@ -29,6 +30,10 @@ func (thiz *GormPostgresConnection) Builder() core.IQueryBuilder {
 	return NewBuilder(thiz)
 }
 
+func (thiz *GormPostgresConnection) WithContext(ctx context.Context) core.GrgDBConnection {
+	return &GormPostgresConnection{gormInstance: thiz.gormInstance.WithContext(ctx)}
+}
+
 type Config struct {
 	PreloadingMaxDeep int
 }
@@ -38,7 +43,7 @@ func (thiz Config) SetPreloadingMaxDeep(maxDeep int) {
 }
 
 type Builder struct {
-	gormInstance    core.IConnection
+	gormInstance    core.GrgDBConnection
 	config          Config
 	selectStatement []string
 	from            core.IFrom
@@ -54,7 +59,7 @@ type Builder struct {
 	copyGorm *gorm.DB
 }
 
-func NewBuilder(gormInstance core.IConnection) *Builder {
+func NewBuilder(gormInstance core.GrgDBConnection) *Builder {
 	return &Builder{
 		gormInstance: gormInstance,
 		config:       Config{PreloadingMaxDeep: RecursiveRelationMaxDeep},
@@ -65,7 +70,7 @@ func NewBuilder(gormInstance core.IConnection) *Builder {
 	}
 }
 
-func NewBuilderWithConfig(gormInstance core.IConnection, config Config) *Builder {
+func NewBuilderWithConfig(gormInstance core.GrgDBConnection, config Config) *Builder {
 	return &Builder{
 		gormInstance: gormInstance,
 		config:       config,
@@ -299,7 +304,7 @@ func (thiz *Builder) BuildGroupBy() string {
 	if len(thiz.groupBy) == 0 {
 		return ""
 	}
-	return fmt.Sprintf(" GROUP BY ", strings.Join(thiz.groupBy, ","))
+	return fmt.Sprintf(" GROUP BY %s", strings.Join(thiz.groupBy, ","))
 }
 
 func (thiz *Builder) BuildHaving() (string, []any) {
@@ -436,7 +441,7 @@ func (thiz *Builder) Relation(relation string) core.IQueryBuilder {
 	return thiz
 }
 
-func (thiz *Builder) GetConnection() core.IConnection {
+func (thiz *Builder) GetConnection() core.GrgDBConnection {
 	return thiz.gormInstance
 }
 

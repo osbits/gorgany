@@ -30,7 +30,18 @@ func (thiz FieldBinder) BindField(model any, field string, value any) error {
 	rvField := rvModel.FieldByNameFunc(func(name string) bool {
 		return strings.ToLower(strcase.ToLowerCamel(strings.ToLower(name))) == strings.ToLower(strcase.ToLowerCamel(field))
 	})
-	rvField.Set(reflect.ValueOf(value))
+
+	if dbField, ok := value.(core.NullableValueGetter); ok {
+		value = dbField.GetValue()
+	}
+
+	if dbField, ok := rvField.Addr().Interface().(core.NullableValueSetter); ok {
+		dbField.SetValue(value)
+	} else {
+		if value != nil {
+			rvField.Set(reflect.ValueOf(value))
+		}
+	}
 
 	return nil
 }
@@ -59,7 +70,15 @@ func (thiz FieldBinder) BindProtectedField(model any, field string, value any) e
 		return nil
 	}
 
-	rvField.Set(reflect.ValueOf(value))
+	if dbField, ok := value.(core.NullableValueGetter); ok {
+		value = dbField.GetValue()
+	}
+
+	if dbField, ok := rvField.Interface().(core.NullableValueSetter); ok {
+		dbField.SetValue(value)
+	} else {
+		rvField.Set(reflect.ValueOf(value))
+	}
 
 	return nil
 }
@@ -92,7 +111,18 @@ func (thiz FieldBinder) BindFieldClosure(model any, field string, closure any) e
 	rvField := rvModel.FieldByNameFunc(func(name string) bool {
 		return strings.ToLower(strcase.ToLowerCamel(strings.ToLower(name))) == strings.ToLower(strcase.ToLowerCamel(field))
 	})
-	rvField.Set(returnedValues[0])
+
+	value := returnedValues[0]
+
+	if dbField, ok := value.Interface().(core.NullableValueGetter); ok {
+		value = reflect.ValueOf(dbField.GetValue())
+	}
+
+	if dbField, ok := rvField.Interface().(core.NullableValueSetter); ok {
+		dbField.SetValue(value)
+	} else {
+		rvField.Set(reflect.ValueOf(value))
+	}
 
 	return nil
 

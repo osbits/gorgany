@@ -82,5 +82,5 @@ type HttpAccessCommand interface {
 }
 
 type MapInitiator interface {
-	FromMap(params map[string]string) error
+	ValueOfMap(params map[string]string) error
 }

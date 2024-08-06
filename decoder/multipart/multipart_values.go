@@ -183,7 +183,7 @@ func (thiz ValuesDecoder) mapInitiatorImplementation(value reflect.Value, params
 	}
 
 	if mapInitiator, ok := value.Interface().(core.MapInitiator); ok {
-		err := mapInitiator.FromMap(params)
+		err := mapInitiator.ValueOfMap(params)
 		if err != nil {
 			return nil, err
 		}
