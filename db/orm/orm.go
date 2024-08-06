@@ -1,6 +1,7 @@
 package orm
 
 import (
+	"context"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/db"
 	"gorm.io/gorm"
@@ -10,14 +11,23 @@ import (
 type GorganyOrm[T any] struct {
 	builder core.IQueryBuilder
 	Model   *T
+
+	context context.Context
 }
 
-func OrmInstance[T any](model *T) *GorganyOrm[T] {
+func OrmInstance[T any](model *T, ctx ...context.Context) *GorganyOrm[T] {
+	var ctxValue context.Context
+	if ctx == nil || len(ctx) == 0 {
+		ctxValue = context.Background()
+	} else {
+		ctxValue = ctx[0]
+	}
+
 	if model == nil {
 		var m T
 		model = &m
 	}
-	orm := &GorganyOrm[T]{Model: model}
+	orm := &GorganyOrm[T]{Model: model, context: ctxValue}
 	orm.setBuilder()
 
 	return orm
@@ -212,6 +222,14 @@ func (thiz *GorganyOrm[T]) ToQuery() string {
 func (thiz *GorganyOrm[T]) setBuilder() {
 	if thiz.builder != nil {
 		return
+	}
+
+	if dbSessionCtx := thiz.context.Value(core.DbSessionContextKey); dbSessionCtx != nil {
+		if dbSession, ok := dbSessionCtx.(core.GrgDBConnection); ok {
+			thiz.builder = dbSession.Builder()
+			thiz.builder.FromModel(thiz.Model)
+			return
+		}
 	}
 
 	rv := reflect.ValueOf(thiz)

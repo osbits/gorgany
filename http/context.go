@@ -17,8 +17,6 @@ type messageContext struct {
 	session       core.ISession
 	request       *http.Request
 
-	applicationContext core.IApplicationContext
-
 	requestCtx context.Context
 }
 

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/auth"
+	"git.qix.sx/gorgany/gorgany.git/db"
 	"git.qix.sx/gorgany/gorgany.git/decoder"
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/internal"
@@ -380,13 +381,14 @@ func (thiz *Message) Context() context.Context {
 	mCtx.cookieManager = thiz.cookieManager
 	mCtx.headers = thiz.GetHeader()
 	mCtx.request = thiz.GetRequest()
-	mCtx.applicationContext = thiz.applicationContext
+	//mCtx.applicationContext = thiz.applicationContext
 
 	parentRequestCtx := thiz.GetRequest().Context()
 	mCtx.requestCtx = parentRequestCtx
 
 	appCtx := context.WithValue(parentRequestCtx, core.ApplicationContextKey, thiz.applicationContext)
-	thiz.ctx = context.WithValue(appCtx, core.MessageContextKey, mCtx)
+	msgCtx := context.WithValue(appCtx, core.MessageContextKey, mCtx)
+	thiz.ctx = context.WithValue(msgCtx, core.DbSessionContextKey, db.Connection().WithContext(msgCtx)) // todo: Currently it can be only GORM Postgres DB
 
 	mCtx.session = thiz.GetSession()
 

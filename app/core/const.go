@@ -21,6 +21,7 @@ const GorganyORMExtends = "extends"
 
 const ApplicationContextKey = "applicationContext"
 const MessageContextKey = "messageContext"
+const DbSessionContextKey = "dbContext"
 
 const OneTimeParamsCookieName = "oneTimeParams"
 const SessionCookieName = "GRG_SESSION_ID"
