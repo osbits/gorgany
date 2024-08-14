@@ -28,8 +28,8 @@ type ISession interface {
 	ISimpleStorage
 	GetId() string
 	GetExpiry() time.Time
-	GetUsername() string
-	SetUsername(user string)
+	GetUserId() string
+	SetUserId(id string)
 	IsExpired() bool
 	SetExpiry(t time.Time)
 }
@@ -44,7 +44,7 @@ type Authenticable interface {
 type UserRole string
 
 type IUserService interface {
-	Get(id uint64) (Authenticable, error)
+	Get(id any) (Authenticable, error)
 	GetByUsername(username string) (Authenticable, error)
 	Save(authEntity Authenticable) error
 }
