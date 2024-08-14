@@ -41,6 +41,9 @@ func ParseUrlValues(params url.Values) (QueryParams, error) {
 		}
 
 		if !regExp.MatchString(key) {
+			if str, ok := value.(string); ok && str == "" {
+				continue
+			}
 			processedParams[key] = value
 			continue
 		}
@@ -65,7 +68,9 @@ func ParseUrlValues(params url.Values) (QueryParams, error) {
 			processedParams[elementName].([]map[string]string)[index] = make(map[string]string)
 		}
 
-		processedParams[elementName].([]map[string]string)[index][key] = value.(string)
+		if value.(string) != "" { // todo: Test it
+			processedParams[elementName].([]map[string]string)[index][key] = value.(string)
+		}
 	}
 
 	return processedParams, nil

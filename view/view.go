@@ -69,14 +69,13 @@ func (thiz *EngineRenderer) registerFunctions(localRenderingContext *localRender
 		"AssetPath":  localRenderingContext.AssetPath,
 		"PublicPath": localRenderingContext.PublicPath,
 
-		"SafeHtml": localRenderingContext.SafeHtml,
+		"SafeHtml":   localRenderingContext.SafeHtml,
+		"Pagination": localRenderingContext.Pagination,
 
 		"InArray": util.InArray,
 		"Pluck":   util.Pluck,
 
 		"UrlByName": router.GetRouter().UrlByNameSequence,
-
-		"Pagination": service.PaginationService{}.Pagination,
 	}
 
 	return util.MergeMaps(opts, thiz.functions)
@@ -180,6 +179,10 @@ func (thiz *localRenderingContext) PublicPath(path string, absolute bool) templa
 
 func (thiz *localRenderingContext) SafeHtml(content string) template.HTML {
 	return template.HTML(content)
+}
+
+func (thiz *localRenderingContext) Pagination(offset, limit, total int) string {
+	return service.PaginationService{}.Pagination(thiz.ctx, offset, limit, total)
 }
 
 func (thiz *localRenderingContext) Close() error {

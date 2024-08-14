@@ -119,9 +119,9 @@ func (thiz FieldBinder) BindFieldClosure(model any, field string, closure any) e
 	}
 
 	if dbField, ok := rvField.Interface().(core.NullableValueSetter); ok {
-		dbField.SetValue(value)
+		dbField.SetValue(value.Interface())
 	} else {
-		rvField.Set(reflect.ValueOf(value))
+		rvField.Set(value)
 	}
 
 	return nil

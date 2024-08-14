@@ -78,3 +78,7 @@ type NullableValueGetter interface {
 type NullableValueSetter interface {
 	SetValue(v any)
 }
+
+type IFormValue interface {
+	Value() (any, error)
+}

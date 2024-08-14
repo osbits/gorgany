@@ -115,46 +115,6 @@ func resolveBodyParser(command core.HttpCommand, message *Message) bodyParser {
 	return nil
 }
 
-// multipart parser
-type multipartParser struct {
-	message *Message
-}
-
-func (thiz multipartParser) parse(arg interface{}) error {
-	multipartForm := thiz.message.GetMultipartFormValues()
-	decoder := multipart.NewFormValuesDecoder()
-	err := decoder.Decode(arg, multipartForm.Value)
-	if err != nil {
-		validationErrors := make(error2.ValidationErrors, 0)
-		if errors.As(err, &schema.MultiError{}) {
-			multiError := err.(schema.MultiError)
-			for key, err := range multiError {
-				validationErrors.AddValidationError(error2.ValidationError{Field: key, Err: err.Error()})
-			}
-		} else {
-			checkAndAddIfValidationError(err, &validationErrors)
-		}
-		return &validationErrors
-	}
-
-	openedFiles, err := multipart.DecodeFiles(multipartForm.File, arg)
-	defer func() {
-		if len(openedFiles) > 0 {
-			thiz.message.io = append(thiz.message.io, openedFiles...)
-		}
-	}()
-
-	if err != nil {
-		validationErrors := make(error2.ValidationErrors, 0)
-		for key, _ := range multipartForm.File {
-			validationErrors.AddValidationError(error2.ValidationError{Field: key, Err: "Incorrect files"})
-		}
-		return &validationErrors
-	}
-
-	return nil
-}
-
 // form parser
 type queryParser struct {
 	message *Message
