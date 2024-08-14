@@ -48,12 +48,12 @@ func (thiz *Session) GetItem(key string) string {
 	return ""
 }
 
-func (thiz *Session) GetUsername() string {
+func (thiz *Session) GetUserId() string {
 	return thiz.username
 }
 
-func (thiz *Session) SetUsername(username string) {
-	thiz.username = username
+func (thiz *Session) SetUserId(id string) {
+	thiz.username = id
 }
 
 func (thiz *Session) IsExpired() bool {

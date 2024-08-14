@@ -61,7 +61,7 @@ func (thiz *StandardAuthStrategy) NewSessionWithoutUser(ctx context.Context) (co
 func (thiz *StandardAuthStrategy) Login(user core.Authenticable, ctx context.Context) (core.ISession, error) {
 	session := thiz.CurrentSession(ctx)
 
-	if session == nil || (session.GetUsername() != "" && !session.IsExpired()) {
+	if session == nil || (session.GetUserId() != "" && !session.IsExpired()) {
 		var err error
 		session, err = thiz.NewSessionWithoutUser(ctx)
 		if err != nil {
@@ -69,7 +69,7 @@ func (thiz *StandardAuthStrategy) Login(user core.Authenticable, ctx context.Con
 		}
 	}
 
-	session.SetUsername(user.GetUsername())
+	session.SetUserId(user.GetId())
 
 	messageContext, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext)
 	if !ok {
@@ -106,7 +106,7 @@ func (thiz *StandardAuthStrategy) IsLoggedIn(ctx context.Context) bool {
 		return false
 	}
 
-	if session.GetUsername() == "" {
+	if session.GetUserId() == "" {
 		return false
 	}
 
@@ -144,11 +144,11 @@ func (thiz *StandardAuthStrategy) CurrentUser(ctx context.Context) (core.Authent
 		return nil, nil
 	}
 
-	if session.IsExpired() || session.GetUsername() == "" {
+	if session.IsExpired() || session.GetUserId() == "" {
 		return nil, nil
 	}
 
-	return GetAuthEntityService().GetByUsername(session.GetUsername())
+	return GetAuthEntityService().Get(session.GetUserId())
 }
 
 func (thiz *StandardAuthStrategy) ResolveSessionId(ctx context.Context) string {
