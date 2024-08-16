@@ -405,8 +405,8 @@ func FindFieldByTag(s reflect.Value, tag, tagValue string) (bool, reflect.Value,
 		}
 	}
 
-	for _, embededField := range embeddedFields {
-		found, v, sf := FindFieldByTag(embededField, tag, tagValue)
+	for _, embeddedField := range embeddedFields {
+		found, v, sf := FindFieldByTag(embeddedField, tag, tagValue)
 		if found {
 			return found, v, sf
 		}
