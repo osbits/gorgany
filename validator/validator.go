@@ -3,7 +3,9 @@ package validator
 import (
 	error2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/model"
+	"git.qix.sx/gorgany/gorgany.git/util"
 	goValidator "github.com/go-playground/validator/v10"
+	"reflect"
 )
 
 func New() *goValidator.Validate {
@@ -42,7 +44,9 @@ func New() *goValidator.Validate {
 
 func ValidateStruct(s any) error {
 	validate := New()
-	err := validate.Struct(s)
+
+	overriddenFields := getOverriddenFields(s, "", nil)
+	err := validate.StructExcept(s, overriddenFields...)
 	if err != nil {
 		if _, ok := err.(*goValidator.InvalidValidationError); ok {
 			return err
@@ -62,4 +66,43 @@ func ValidateStruct(s any) error {
 	}
 
 	return nil
+}
+
+func getOverriddenFields(s any, parentKey string, parentFields map[string]bool) []string {
+	if parentFields == nil {
+		parentFields = make(map[string]bool)
+	}
+
+	rvS := util.IndirectValue(reflect.ValueOf(s))
+	rtS := rvS.Type()
+
+	embeddedFields := make(map[string]reflect.Value)
+
+	overriddenFields := make([]string, 0)
+
+	for i := 0; i < rvS.NumField(); i++ {
+		rvField := rvS.Field(i)
+		rtField := rtS.Field(i)
+		if rtField.Anonymous {
+			embeddedFields[rtField.Type.Name()] = rvField
+			continue
+		}
+
+		if _, ok := parentFields[rtField.Name]; ok {
+			overriddenFields = append(overriddenFields, parentKey+"."+rtField.Name)
+		}
+
+		parentFields[rtField.Name] = true
+	}
+
+	for fieldName, field := range embeddedFields {
+		if parentKey == "" {
+			parentKey = fieldName
+		} else {
+			parentKey = parentKey + "." + fieldName
+		}
+		overriddenFields = append(overriddenFields, getOverriddenFields(field.Addr().Interface(), parentKey, parentFields)...)
+	}
+
+	return overriddenFields
 }

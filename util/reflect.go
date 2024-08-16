@@ -390,11 +390,6 @@ func FindFieldByTag(s reflect.Value, tag, tagValue string) (bool, reflect.Value,
 	s = IndirectValue(s)
 	rtS := IndirectType(s.Type())
 
-	type fieldUnion struct {
-		fieldValue  reflect.Value
-		fieltStruct reflect.StructField
-	}
-
 	embeddedFields := make([]reflect.Value, 0)
 
 	for i := 0; i < rtS.NumField(); i++ {
