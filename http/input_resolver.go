@@ -3,14 +3,11 @@ package http
 import (
 	"errors"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/decoder/multipart"
 	error2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/log"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	gorganyValidator "git.qix.sx/gorgany/gorgany.git/validator"
 	"github.com/go-chi/chi"
-	"github.com/gorilla/schema"
-	url2 "net/url"
 	"reflect"
 )
 
@@ -110,37 +107,6 @@ func resolveBodyParser(command core.HttpCommand, message *Message) bodyParser {
 		return multipartParser{message: message}
 	} else if command.ContentType() == core.Query {
 		return queryParser{message: message}
-	}
-
-	return nil
-}
-
-// form parser
-type queryParser struct {
-	message *Message
-}
-
-func (thiz queryParser) parse(arg interface{}) error {
-	decoder := multipart.NewFormValuesDecoder()
-	values, err := url2.ParseQuery(thiz.message.GetRawQuery())
-	if err != nil {
-		return &error2.ValidationErrors{error2.ValidationError{
-			Field: core.GeneralError,
-			Err:   err.Error(),
-		}}
-	}
-	err = decoder.Decode(arg, values)
-	if err != nil {
-		validationErrors := make(error2.ValidationErrors, 0)
-		if errors.As(err, &schema.MultiError{}) {
-			multiError := err.(schema.MultiError)
-			for key, err := range multiError {
-				validationErrors.AddValidationError(error2.ValidationError{Field: key, Err: err.Error()})
-			}
-		} else {
-			checkAndAddIfValidationError(err, &validationErrors)
-		}
-		return &validationErrors
 	}
 
 	return nil
