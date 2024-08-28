@@ -71,8 +71,8 @@ type IQueryBuilder interface {
 	AppendRelation(relation string, values ...any) error
 	LoadRelations(relation ...string) error
 	GetWhere() IWhere
-	AddMetaToModel(dest any, statement *gorm.Statement)
 	SetAlias(alias string) IQueryBuilder
+	AddMetaToModel(dest any, tableName string)
 	GetAlias() string
 	MergeBuilder(builder IQueryBuilder) IQueryBuilder
 }

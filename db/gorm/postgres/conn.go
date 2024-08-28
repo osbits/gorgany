@@ -337,7 +337,7 @@ func (thiz *Builder) Get(dest any) error {
 
 	res := thiz.buildGormQuery(thiz.GetDriver()).First(dest)
 
-	thiz.AddMetaToModel(dest, res.Statement)
+	thiz.AddMetaToModel(dest, res.Statement.Table)
 
 	thiz.clearQueryParams()
 
@@ -385,7 +385,7 @@ func (thiz *Builder) List(dest any) error {
 	thiz.clearQueryParams()
 
 	for _, d := range util.GetSliceFromAny(dest) {
-		thiz.AddMetaToModel(d, res.Statement)
+		thiz.AddMetaToModel(d, res.Statement.Table)
 	}
 
 	if res.Error != nil && res.Error.Error() == "record not found" {
@@ -401,7 +401,7 @@ func (thiz *Builder) Insert(model any) error {
 	}
 
 	res := thiz.GetDriver().Create(model)
-	thiz.AddMetaToModel(model, res.Statement)
+	thiz.AddMetaToModel(model, res.Statement.Table)
 
 	thiz.clearQueryParams()
 	return res.Error
@@ -414,7 +414,7 @@ func (thiz *Builder) Save(model any) error {
 	}
 
 	res := thiz.GetDriver().Save(model)
-	thiz.AddMetaToModel(model, res.Statement)
+	thiz.AddMetaToModel(model, res.Statement.Table)
 
 	thiz.clearQueryParams()
 	return res.Error
@@ -549,11 +549,13 @@ func (thiz *Builder) LoadRelations(relations ...string) error {
 		return fmt.Errorf("You must specify model. Call postgres.Builder.FromModel(model any)")
 	}
 
+	var model any
 	for _, relation := range relations {
 		splitRelation := strings.Split(relation, ".")
 
 		r := splitRelation[0]
-		rv := reflect.ValueOf(thiz.copyGorm.Statement.Model)
+		model = thiz.copyGorm.Statement.Model
+		rv := reflect.ValueOf(model)
 		rvField := rv.Elem().FieldByName(r)
 
 		fieldType := util.IndirectType(rvField.Type())
@@ -571,7 +573,6 @@ func (thiz *Builder) LoadRelations(relations ...string) error {
 		if err != nil {
 			return err
 		}
-		thiz.AddMetaToModel(v, thiz.copyGorm.Statement)
 
 		if thiz.copyGorm.RowsAffected == 0 {
 			if meta, ok := v.(core.IDomainMeta); ok {
@@ -588,7 +589,22 @@ func (thiz *Builder) LoadRelations(relations ...string) error {
 		}
 
 		rvField.Set(reflect.ValueOf(v))
+
+		thiz.clearQueryParams()
+		thiz.FromModel(model)
 	}
+
+	tableName := ""
+	ns := schema.NamingStrategy{}
+	if tabler, ok := model.(schema.Tabler); ok {
+		tableName = tabler.TableName()
+	} else {
+		rtModel := reflect.TypeOf(model)
+		tableName = ns.TableName(util.IndirectType(rtModel).Name())
+	}
+
+	thiz.AddMetaToModel(thiz.copyGorm.Statement.Model, tableName)
+	thiz.clearQueryParams()
 	return nil
 }
 
@@ -609,17 +625,47 @@ func (thiz *Builder) GetWhere() core.IWhere {
 	return thiz.where
 }
 
-func (thiz *Builder) AddMetaToModel(dest any, statement *gorm.Statement) {
+func (thiz *Builder) AddMetaToModel(dest any, tableName string) {
+	rvDomain := reflect.ValueOf(dest)
 	domainMetaInstance, ok := dest.(core.IDomainMeta)
 	if ok {
 		domainMetaInstance.SetLoaded(true)
-		domainMetaInstance.SetTable(statement.Table)
+		domainMetaInstance.SetTable(tableName)
 		domainMetaInstance.SetDriver(core.GormPostgreSQL)
 
 		copyDest := util.IndirectValue(reflect.ValueOf(dest)).Interface()
 		domainMetaInstance.SetOriginal(&copyDest)
 
 		domainMetaInstance.SetDomain(dest)
+
+		sc := model2.GetDomainSchemeCache().ParseDomain(dest)
+		if len(sc.Relationships.Relations) > 0 {
+			for _, relation := range sc.Relationships.Relations {
+				field := util.IndirectValue(rvDomain).FieldByName(relation.Name)
+				if !field.IsValid() || field.IsZero() {
+					continue
+				}
+				if len(relation.Schema.PrimaryFields) == 0 {
+					continue // currently skip if domain has no primary fields
+				}
+
+				if field.Kind() == reflect.Slice {
+					fieldValue := field.Interface()
+					for _, d := range util.GetSliceFromAny(fieldValue) {
+						thiz.AddMetaToModel(d, relation.Schema.Table)
+					}
+					continue
+				}
+
+				primaryField := util.IndirectValue(field).FieldByName(relation.Schema.PrimaryFields[0].Name)
+				if !primaryField.IsValid() || primaryField.IsZero() {
+					continue
+				}
+
+				fieldValue := field.Interface()
+				thiz.AddMetaToModel(fieldValue, relation.Schema.Table)
+			}
+		}
 	}
 }
 
