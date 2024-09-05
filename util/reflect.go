@@ -386,7 +386,7 @@ func IsGenericImplemented(s any, generic any) bool {
 	return true
 }
 
-func FindFieldByTag(s reflect.Value, tag, tagValue string) (bool, reflect.Value, reflect.StructField) {
+func FindFieldByTag(s reflect.Value, tag, tagValue string, allowSearchByCamelName bool) (bool, reflect.Value, reflect.StructField) {
 	s = IndirectValue(s)
 	rtS := IndirectType(s.Type())
 
@@ -406,11 +406,16 @@ func FindFieldByTag(s reflect.Value, tag, tagValue string) (bool, reflect.Value,
 	}
 
 	for _, embeddedField := range embeddedFields {
-		found, v, sf := FindFieldByTag(embeddedField, tag, tagValue)
+		found, v, sf := FindFieldByTag(embeddedField, tag, tagValue, true)
 		if found {
 			return found, v, sf
 		}
 
 	}
+
+	s.FieldByNameFunc(func(name string) bool {
+		return CamelCase(name) == tagValue
+	})
+
 	return false, reflect.Value{}, reflect.StructField{}
 }

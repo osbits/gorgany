@@ -44,3 +44,22 @@ func Join[T comparable](elements []T, sep string) string {
 	}
 	return output
 }
+
+func CamelCase(s string) string {
+	words := strings.FieldsFunc(s, func(r rune) bool {
+		return r == ' ' || r == '-' || r == '_'
+	})
+
+	if len(words) == 0 {
+		return ""
+	}
+
+	for i := range words {
+		words[i] = strings.ToLower(words[i])
+		if i > 0 {
+			words[i] = strings.Title(words[i])
+		}
+	}
+
+	return strings.Join(words, "")
+}

@@ -61,7 +61,10 @@ func (thiz FieldBinder) BindProtectedField(model any, field string, value any) e
 	})
 
 	if protectedFieldsModel, ok := model.(core.LimitedFieldsMarshaller); ok {
-		isProtectedAllowed := util.InArray(field, protectedFieldsModel.AllowedProtectedFields())
+		isProtectedAllowed := util.InArrayFunc(protectedFieldsModel.AllowedProtectedFields(), func(el string) bool {
+			return strings.ToLower(field) == strings.ToLower(el)
+		})
+
 		if !isProtectedAllowed {
 			rvField.Set(reflect.Zero(rvField.Type()))
 			return nil

@@ -69,7 +69,7 @@ func (thiz jsonParser) processValue(dest any, key string, value interface{}) err
 
 	var field reflect.Value
 	if util.IndirectValue(rvDest).Kind() == reflect.Struct {
-		found, field, _ = util.FindFieldByTag(rvDest, "json", key)
+		found, field, _ = util.FindFieldByTag(rvDest, "json", key, true)
 		if !found {
 			return nil
 		}
@@ -185,7 +185,7 @@ func (thiz jsonParser) callBindMethodIfExists(command any, fieldName string, val
 		return false, nil
 	}
 
-	found, _, structField := util.FindFieldByTag(rvArg, "json", fieldName)
+	found, _, structField := util.FindFieldByTag(rvArg, "json", fieldName, true)
 	if !found {
 		return false, nil
 	}

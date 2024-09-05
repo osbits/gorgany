@@ -63,7 +63,7 @@ func (thiz queryParser) processValue(dest any, key string, value interface{}) er
 
 	var field reflect.Value
 	if util.IndirectValue(rvDest).Kind() == reflect.Struct {
-		found, field, _ = util.FindFieldByTag(rvDest, "scheme", key)
+		found, field, _ = util.FindFieldByTag(rvDest, "scheme", key, true)
 		if !found {
 			return nil
 		}
@@ -179,7 +179,7 @@ func (thiz queryParser) callBindMethodIfExists(command any, fieldName string, va
 		return false, nil
 	}
 
-	found, _, structField := util.FindFieldByTag(rvArg, "scheme", fieldName)
+	found, _, structField := util.FindFieldByTag(rvArg, "scheme", fieldName, true)
 	if !found {
 		return false, nil
 	}
