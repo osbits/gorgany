@@ -13,8 +13,9 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/internal"
 	"git.qix.sx/gorgany/gorgany.git/log"
 	"git.qix.sx/gorgany/gorgany.git/model"
+	"git.qix.sx/gorgany/gorgany.git/service"
 	"git.qix.sx/gorgany/gorgany.git/util"
-	view2 "git.qix.sx/gorgany/gorgany.git/view"
+	"git.qix.sx/gorgany/gorgany.git/view"
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
 	"io"
@@ -31,8 +32,6 @@ type Message struct {
 
 	writer  http.ResponseWriter
 	request *http.Request
-
-	renderer *view2.EngineRenderer `container:"inject"`
 
 	cachedQuery    *decoder.QueryParams
 	currentSession core.ISession
@@ -101,8 +100,16 @@ func (thiz *Message) Render(template string, options map[string]any) {
 		options[key] = values
 	}
 
+	renderer := &view.EngineRenderer{}
+	err := service.GetContainer().Make(renderer)
+	if err != nil {
+		err2.HandleError(err)
+		thiz.writer.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
 	options = thiz.addOptionsToView(options)
-	err := thiz.renderer.DoRender(thiz.Context(), thiz.writer, template, options)
+	err = renderer.DoRender(thiz.Context(), thiz.writer, template, options)
 	if err != nil {
 		panic(fmt.Errorf("Error during render template '%s', %v", template, err))
 	}

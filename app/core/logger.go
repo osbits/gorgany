@@ -1,6 +1,8 @@
 package core
 
 type Logger interface {
+	SetPrefix(prefix string)
+
 	Info(v ...any)
 	Infof(format string, v ...any)
 
