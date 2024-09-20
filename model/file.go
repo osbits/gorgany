@@ -1,52 +1,129 @@
 package model
 
 import (
+	"bytes"
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"path"
 	"strings"
 )
 
-type File struct {
+const RootStorage = "resource/public"
+
+// MultipartFile - this structure describes file which has been gotten by http, it can be stored on project server
+type MultipartFile struct {
 	Name    string
 	Path    string
 	Content io.ReadCloser
 	Size    int64
-	Loaded  bool // if file has been read and contains content
+	Read    bool
+	Saved   bool
 }
 
-func (thiz *File) SetName(name string) {
+func (thiz *MultipartFile) SetName(name string) {
 	thiz.Name = name
 }
 
-func (thiz *File) GetName() string {
+func (thiz *MultipartFile) GetName() string {
 	return thiz.Name
 }
 
-func (thiz *File) GetSize() int64 {
+func (thiz *MultipartFile) GetSize() int64 {
 	return thiz.Size
 }
 
-func (thiz *File) GetContent() io.ReadCloser {
-	return thiz.Content
+func (thiz *MultipartFile) GetContent() (io.ReadCloser, error) {
+	return thiz.Content, nil
 }
 
-func (thiz *File) GetPath() string {
+func (thiz *MultipartFile) GetPath() string {
 	return thiz.Path
 }
 
-func (thiz *File) IsEmpty() bool {
-	if thiz.Name == "" {
-		return true
-	}
-	return false
+func (thiz *MultipartFile) IsRead() bool {
+	return thiz.Read
 }
 
-func (thiz *File) IsLoaded() bool {
-	return thiz.Loaded
+func (thiz *MultipartFile) IsSaved() bool {
+	return thiz.Saved
+}
+
+func (thiz *MultipartFile) SetContent(content []byte) error {
+	thiz.Content = io.NopCloser(bytes.NewBuffer(content))
+	thiz.Size = int64(len(content))
+	return nil
+}
+
+func (thiz *MultipartFile) FullPath() string {
+	return path.Join(RootStorage, thiz.GetPath(), thiz.Name)
+}
+
+func (thiz *MultipartFile) PublicPath() string {
+	return path.Join("public", thiz.Path, thiz.Name)
+}
+
+func (thiz *MultipartFile) Save(p string) error {
+	if thiz.Name == "" {
+		return errors.New("file name is empty")
+	}
+	thiz.Path = p
+
+	err := os.MkdirAll(path.Join(RootStorage, thiz.GetPath()), os.ModePerm)
+	if err != nil {
+		return err
+	}
+
+	rawFile, err := os.Create(thiz.FullPath())
+	if err != nil {
+		return err
+	}
+
+	if thiz.Content != nil {
+		_, err = io.Copy(rawFile, thiz.Content)
+	}
+
+	thiz.Saved = true
+
+	return nil
+}
+
+func (thiz *MultipartFile) IsExists() bool {
+	_, err := os.Stat(thiz.FullPath())
+	return err == nil
+}
+
+func (thiz *MultipartFile) Delete() error {
+	if thiz.Name == "" {
+		return errors.New("file name is empty")
+	}
+
+	return os.Remove(thiz.FullPath())
+}
+
+// File - this structure describes File which stores in project server storage and links with record in db
+func NewFileFromMultipart(multipartFile MultipartFile) File {
+	return File{
+		MultipartFile: multipartFile,
+	}
+}
+
+type File struct {
+	MultipartFile
+}
+
+func (thiz *File) GetContent() (io.ReadCloser, error) {
+	if thiz.Content == nil {
+		content, err := thiz.readContent()
+		if err != nil {
+			return nil, err
+		}
+		thiz.Content = content
+	}
+	return thiz.Content, nil
 }
 
 func (thiz *File) Scan(value interface{}) error {
@@ -61,7 +138,13 @@ func (thiz *File) Scan(value interface{}) error {
 
 	thiz.Path = p
 	thiz.Name = fileName
-	thiz.Loaded = false
+
+	content, err := thiz.readContent()
+	if err != nil {
+		return err
+	}
+	thiz.Read = true
+	thiz.Content = content
 
 	return nil
 }
@@ -80,11 +163,23 @@ func (thiz File) MarshalJSON() ([]byte, error) {
 
 	fileMap := make(map[string]any)
 	fileMap["name"] = thiz.Name
-	//fileMap["Size"] = thiz.Size todo: fix it
+	fileMap["size"] = thiz.Size
+	fileMap["path"] = thiz.PublicPath()
 
 	jsonFile, err := json.Marshal(fileMap)
 	if err != nil {
 		return nil, nil
 	}
 	return jsonFile, nil
+}
+
+func (thiz *File) readContent() (io.ReadCloser, error) {
+	content, err := os.ReadFile(thiz.FullPath())
+	if err != nil {
+		return nil, err
+	}
+
+	thiz.Read = true
+	thiz.Size = int64(len(content))
+	return io.NopCloser(bytes.NewReader(content)), nil
 }

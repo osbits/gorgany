@@ -29,11 +29,11 @@ func DecodeFiles(filesMap map[string][]*multipart.FileHeader, dest any) ([]io.Cl
 
 		rand.Seed(time.Now().UnixNano())
 		uniqueId := fmt.Sprintf("%d%d%d", rand.Intn(10000), rand.Intn(10000), rand.Intn(10000))
-		file := model.File{
+		file := model.MultipartFile{
 			Name:    uniqueId + "-" + rawFile.Filename,
 			Content: reader,
 			Size:    rawFile.Size,
-			Loaded:  true,
+			Read:    true,
 		}
 		field.Set(reflect.ValueOf(file))
 	}

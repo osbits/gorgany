@@ -338,11 +338,11 @@ func (thiz *Message) GetFile(key string) (core.IFile, error) {
 
 	thiz.io = append(thiz.io, fileRequest)
 
-	return &model.File{
+	return &model.MultipartFile{
 		Name:    header.Filename,
 		Content: fileRequest,
 		Size:    header.Size,
-		Loaded:  true,
+		Read:    true,
 	}, nil
 }
 
@@ -363,7 +363,7 @@ func (thiz *Message) GetFiles(key string) ([]core.IFile, error) {
 
 			thiz.io = append(thiz.io, reader)
 
-			files = append(files, &model.File{Name: file.Filename, Content: reader, Size: file.Size, Loaded: true})
+			files = append(files, &model.MultipartFile{Name: file.Filename, Content: reader, Size: file.Size, Read: true})
 		}
 	}
 	return files, nil
