@@ -7,21 +7,42 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"os"
 	"path"
 	"strings"
 )
 
-const RootStorage = "resource/public"
+const TempStorage = "resource/temp"
+const PublicStorage = "resource/public"
+
+func NewMultipartFile(originalFileName string, reader io.Reader) (*MultipartFile, error) {
+	uniqueId := fmt.Sprintf("%d%d%d", rand.Intn(10000), rand.Intn(10000), rand.Intn(10000))
+
+	file := MultipartFile{}
+	file.SetName(uniqueId + "-" + originalFileName)
+
+	tempFile, err := os.CreateTemp(TempStorage, file.GetName()+".tmp")
+	if err != nil {
+		return nil, err
+	}
+
+	_, err = io.Copy(tempFile, reader)
+	if err != nil {
+		return nil, err
+	}
+
+	file.tempFile = tempFile
+
+	return &file, nil
+}
 
 // MultipartFile - this structure describes file which has been gotten by http, it can be stored on project server
 type MultipartFile struct {
-	Name    string
-	Path    string
-	Content io.ReadCloser
-	Size    int64
-	Read    bool
-	Saved   bool
+	Name           string
+	Path           string
+	StoredFilePath string
+	tempFile       *os.File
 }
 
 func (thiz *MultipartFile) SetName(name string) {
@@ -32,66 +53,96 @@ func (thiz *MultipartFile) GetName() string {
 	return thiz.Name
 }
 
-func (thiz *MultipartFile) GetSize() int64 {
-	return thiz.Size
-}
-
-func (thiz *MultipartFile) GetContent() (io.ReadCloser, error) {
-	return thiz.Content, nil
-}
-
 func (thiz *MultipartFile) GetPath() string {
 	return thiz.Path
 }
 
-func (thiz *MultipartFile) IsRead() bool {
-	return thiz.Read
+func (thiz *MultipartFile) GetSize() (int64, error) {
+	actualFilePath := thiz.getActualFilePath()
+	if actualFilePath == "" {
+		return 0, fmt.Errorf("no file path")
+	}
+
+	info, err := os.Stat(actualFilePath)
+	if err != nil {
+		return 0, err
+	}
+
+	return info.Size(), nil
 }
 
-func (thiz *MultipartFile) IsSaved() bool {
-	return thiz.Saved
+func (thiz *MultipartFile) Read(writer io.Writer) (int64, error) {
+	actualFilePath := thiz.getActualFilePath()
+	if actualFilePath == "" {
+		return 0, fmt.Errorf("no file path")
+	}
+
+	file, err := os.Open(actualFilePath)
+	defer file.Close()
+
+	if err != nil {
+		return 0, err
+	}
+
+	return io.Copy(writer, file)
 }
 
-func (thiz *MultipartFile) SetContent(content []byte) error {
-	thiz.Content = io.NopCloser(bytes.NewBuffer(content))
-	thiz.Size = int64(len(content))
-	return nil
+func (thiz *MultipartFile) Write(p string, reader io.Reader) (int64, error) {
+	if thiz.Name == "" {
+		return 0, errors.New("file name is empty")
+	}
+	thiz.Path = p
+
+	if thiz.StoredFilePath != "" && thiz.StoredFilePath != path.Join(PublicStorage, thiz.Path, thiz.Name) {
+		err := thiz.Delete()
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	err := os.MkdirAll(path.Join(PublicStorage, thiz.Path), os.ModePerm)
+	if err != nil {
+		return 0, err
+	}
+
+	rawFile, err := os.Create(path.Join(PublicStorage, thiz.Path, thiz.Name))
+	if err != nil {
+		return 0, err
+	}
+
+	// We consider that permanent file has not been saved yet, so we are reading content from temp
+	buf := new(bytes.Buffer)
+	_, err = thiz.Read(buf)
+	if err != nil {
+		return 0, err
+	}
+
+	written, err := io.Copy(rawFile, buf)
+	if err != nil {
+		return 0, err
+	}
+
+	thiz.StoredFilePath = path.Join(PublicStorage, thiz.Path, thiz.Name)
+
+	return written, nil
+}
+
+func (thiz *MultipartFile) Writer() (io.WriteCloser, error) {
+	return os.Open(thiz.FullPath())
 }
 
 func (thiz *MultipartFile) FullPath() string {
-	return path.Join(RootStorage, thiz.GetPath(), thiz.Name)
+	return thiz.StoredFilePath
 }
 
 func (thiz *MultipartFile) PublicPath() string {
 	return path.Join("public", thiz.Path, thiz.Name)
 }
 
-func (thiz *MultipartFile) Save(p string) error {
-	if thiz.Name == "" {
-		return errors.New("file name is empty")
-	}
-	thiz.Path = p
-
-	err := os.MkdirAll(path.Join(RootStorage, thiz.GetPath()), os.ModePerm)
-	if err != nil {
-		return err
-	}
-
-	rawFile, err := os.Create(thiz.FullPath())
-	if err != nil {
-		return err
-	}
-
-	if thiz.Content != nil {
-		_, err = io.Copy(rawFile, thiz.Content)
-	}
-
-	thiz.Saved = true
-
-	return nil
-}
-
 func (thiz *MultipartFile) IsExists() bool {
+	if thiz.FullPath() == "" {
+		return false
+	}
 	_, err := os.Stat(thiz.FullPath())
 	return err == nil
 }
@@ -101,7 +152,19 @@ func (thiz *MultipartFile) Delete() error {
 		return errors.New("file name is empty")
 	}
 
-	return os.Remove(thiz.FullPath())
+	if !thiz.IsExists() {
+		return errors.New("file does not exist")
+	}
+
+	return os.Remove(thiz.StoredFilePath)
+}
+
+func (thiz *MultipartFile) Close() error {
+	stat, err := thiz.tempFile.Stat()
+	if err != nil {
+		return err
+	}
+	return os.Remove(path.Join(TempStorage, stat.Name()))
 }
 
 // File - this structure describes File which stores in project server storage and links with record in db
@@ -111,19 +174,49 @@ func NewFileFromMultipart(multipartFile MultipartFile) File {
 	}
 }
 
+// getActualFilePath - returns full path for temp file if permanent does not exist
+func (thiz *MultipartFile) getActualFilePath() string {
+	if thiz.StoredFilePath == "" {
+		stat, err := thiz.tempFile.Stat()
+		if err != nil {
+			return ""
+		}
+		return path.Join(TempStorage, stat.Name())
+	}
+
+	return thiz.StoredFilePath
+}
+
 type File struct {
 	MultipartFile
 }
 
-func (thiz *File) GetContent() (io.ReadCloser, error) {
-	if thiz.Content == nil {
-		content, err := thiz.readContent()
-		if err != nil {
-			return nil, err
-		}
-		thiz.Content = content
+func (thiz *File) Write(p string, reader io.Reader) (int64, error) {
+	if thiz.Name == "" {
+		return 0, errors.New("file name is empty")
 	}
-	return thiz.Content, nil
+	thiz.Path = p
+
+	if thiz.StoredFilePath != "" && thiz.StoredFilePath != path.Join(PublicStorage, thiz.Path, thiz.Name) {
+		err := thiz.Delete()
+		if err != nil {
+			return 0, err
+		}
+	}
+
+	err := os.MkdirAll(path.Join(PublicStorage, thiz.Path), os.ModePerm)
+	if err != nil {
+		return 0, err
+	}
+
+	rawFile, err := os.Create(path.Join(PublicStorage, thiz.Path, thiz.Name))
+	if err != nil {
+		return 0, err
+	}
+
+	thiz.StoredFilePath = path.Join(PublicStorage, thiz.Path, thiz.Name)
+
+	return io.Copy(rawFile, reader)
 }
 
 func (thiz *File) Scan(value interface{}) error {
@@ -138,13 +231,6 @@ func (thiz *File) Scan(value interface{}) error {
 
 	thiz.Path = p
 	thiz.Name = fileName
-
-	content, err := thiz.readContent()
-	if err != nil {
-		return err
-	}
-	thiz.Read = true
-	thiz.Content = content
 
 	return nil
 }
@@ -161,9 +247,14 @@ func (thiz File) MarshalJSON() ([]byte, error) {
 		return []byte("null"), nil
 	}
 
+	size, err := thiz.GetSize()
+	if err != nil {
+		return nil, err
+	}
+
 	fileMap := make(map[string]any)
 	fileMap["name"] = thiz.Name
-	fileMap["size"] = thiz.Size
+	fileMap["size"] = size
 	fileMap["path"] = thiz.PublicPath()
 
 	jsonFile, err := json.Marshal(fileMap)
@@ -173,13 +264,6 @@ func (thiz File) MarshalJSON() ([]byte, error) {
 	return jsonFile, nil
 }
 
-func (thiz *File) readContent() (io.ReadCloser, error) {
-	content, err := os.ReadFile(thiz.FullPath())
-	if err != nil {
-		return nil, err
-	}
-
-	thiz.Read = true
-	thiz.Size = int64(len(content))
-	return io.NopCloser(bytes.NewReader(content)), nil
+func (thiz *File) Close() error {
+	return nil
 }

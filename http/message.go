@@ -338,12 +338,14 @@ func (thiz *Message) GetFile(key string) (core.IFile, error) {
 
 	thiz.io = append(thiz.io, fileRequest)
 
-	return &model.MultipartFile{
-		Name:    header.Filename,
-		Content: fileRequest,
-		Size:    header.Size,
-		Read:    true,
-	}, nil
+	file, err := model.NewMultipartFile(header.Filename, fileRequest)
+	if err != nil {
+		return nil, err
+	}
+
+	thiz.io = append(thiz.io, file)
+
+	return file, nil
 }
 
 func (thiz *Message) GetFiles(key string) ([]core.IFile, error) {
@@ -355,15 +357,19 @@ func (thiz *Message) GetFiles(key string) ([]core.IFile, error) {
 		if mapKey != key {
 			continue
 		}
-		for _, file := range val {
-			reader, err := file.Open()
+		for _, f := range val {
+			reader, err := f.Open()
 			if err != nil {
 				return nil, err
 			}
 
 			thiz.io = append(thiz.io, reader)
 
-			files = append(files, &model.MultipartFile{Name: file.Filename, Content: reader, Size: file.Size, Read: true})
+			file, err := model.NewMultipartFile(f.Filename, reader)
+
+			thiz.io = append(thiz.io, file)
+
+			files = append(files, file)
 		}
 	}
 	return files, nil

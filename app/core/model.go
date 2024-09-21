@@ -24,22 +24,22 @@ type IDomainMeta interface {
 
 type IFile interface {
 	SetName(name string)
-	SetContent(content []byte) error
+
+	Read(writer io.Writer) (int64, error)
+	Write(path string, reader io.Reader) (int64, error)
+	Writer() (io.WriteCloser, error)
 
 	GetName() string
-	GetSize() int64
-	GetContent() (io.ReadCloser, error)
 	GetPath() string
-
-	IsRead() bool
-	IsSaved() bool
+	GetSize() (int64, error)
 
 	FullPath() string
 	PublicPath() string
 
-	Save(path string) error
 	IsExists() bool
 	Delete() error
+
+	Close() error
 }
 
 type ILocalizedString interface {

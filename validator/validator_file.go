@@ -37,7 +37,7 @@ func validateMimeType(fl goValidator.FieldLevel) bool {
 		return false
 	}
 
-	splitName := strings.Split(file.Name, ".")
+	splitName := strings.Split(file.GetName(), ".")
 	m := mime.TypeByExtension("." + splitName[len(splitName)-1])
 	params := strings.Split(fl.Param(), ";")
 	for _, param := range params {
@@ -69,7 +69,11 @@ func validateFileSize(fl goValidator.FieldLevel) bool {
 		panic(err)
 	}
 
-	if file.Size > sizeInTag {
+	size, err := file.GetSize()
+	if err != nil {
+		return false
+	}
+	if size > sizeInTag {
 		return false
 	}
 	return true

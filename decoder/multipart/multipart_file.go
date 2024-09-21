@@ -1,14 +1,11 @@
 package multipart
 
 import (
-	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/model"
 	"io"
-	"math/rand"
 	"mime/multipart"
 	"reflect"
 	"strings"
-	"time"
 )
 
 func DecodeFiles(filesMap map[string][]*multipart.FileHeader, dest any) ([]io.Closer, error) {
@@ -27,14 +24,10 @@ func DecodeFiles(filesMap map[string][]*multipart.FileHeader, dest any) ([]io.Cl
 		}
 		openedFiles = append(openedFiles, reader)
 
-		rand.Seed(time.Now().UnixNano())
-		uniqueId := fmt.Sprintf("%d%d%d", rand.Intn(10000), rand.Intn(10000), rand.Intn(10000))
-		file := model.MultipartFile{
-			Name:    uniqueId + "-" + rawFile.Filename,
-			Content: reader,
-			Size:    rawFile.Size,
-			Read:    true,
-		}
+		file, err := model.NewMultipartFile(rawFile.Filename, reader)
+
+		openedFiles = append(openedFiles, file)
+
 		field.Set(reflect.ValueOf(file))
 	}
 

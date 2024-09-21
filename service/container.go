@@ -314,7 +314,7 @@ func (thiz Container) fill(structure interface{}, chainOfDependencies map[string
 
 					if d, ok := chainOfDependencies[f.Type().String()]; ok {
 						//log.Log("").Warnf("container: circular dependency detected(struct: %s.%s, field: %s(%s)), "+
-						//	"avoid such dependencies, they have an extremely negative impact on the speed of the application.", rtStruct.PkgPath(), rtStruct.Name(), rtStruct.Field(i).Name, f.Type().String())
+						//	"avoid such dependencies, they have an extremely negative impact on the speed of the application.", rtStruct.PkgPath(), rtStruct.Name(), rtStruct.Field(i).name, f.Type().String())
 						ptr := reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem()
 						ptr.Set(reflect.ValueOf(d))
 						continue
