@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"io"
 	"math/rand"
 	"os"
@@ -249,7 +250,8 @@ func (thiz File) MarshalJSON() ([]byte, error) {
 
 	size, err := thiz.GetSize()
 	if err != nil {
-		return nil, err
+		err2.HandleError(err)
+		return []byte("null"), nil
 	}
 
 	fileMap := make(map[string]any)
