@@ -2,9 +2,9 @@ package db
 
 import (
 	"context"
-	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/db"
+	"git.qix.sx/gorgany/gorgany.git/log"
 	"gorm.io/gorm"
 	"time"
 )
@@ -34,7 +34,7 @@ func (thiz SeedCommand) Execute(ctx context.Context) {
 			continue
 		}
 
-		fmt.Printf("Executing %s seeder\n", seeder.Name())
+		log.Log().Infof("Executing %s seeder", seeder.Name())
 		seederCount := 0
 		for _, model := range seeder.CollectInsertModels() {
 			res := gormInstance.Save(model)
@@ -42,9 +42,8 @@ func (thiz SeedCommand) Execute(ctx context.Context) {
 				tx.Rollback()
 				panic(res.Error)
 			}
-			seederCount++
 		}
-		fmt.Printf("Seeder %s successfully executed. Number of inserted records: %d\n", seeder.Name(), seederCount)
+		log.Log().Infof("Seeder %s successfully executed.", seeder.Name())
 		total += seederCount
 
 		gormInstance.Create(&db.Seeder{
@@ -53,7 +52,7 @@ func (thiz SeedCommand) Execute(ctx context.Context) {
 		})
 	}
 	tx.Commit()
-	fmt.Printf("Seeding finished. Total inserted records: %d\n", total)
+	log.Log().Info("Seeding finished.")
 }
 
 func (thiz SeedCommand) isSeederExists(seeder db.Seeder) bool {
