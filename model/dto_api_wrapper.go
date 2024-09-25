@@ -110,7 +110,7 @@ func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (map[string
 	for i := 0; i < element.NumField(); i++ {
 		rvField := element.Field(i)
 		rtField := element.Type().Field(i)
-		isStruct := true
+		isStruct := false
 
 		if !rtField.IsExported() {
 			continue
