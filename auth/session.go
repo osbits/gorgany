@@ -119,7 +119,11 @@ func (thiz *MemorySession) DeleteSessionById(id string) {
 }
 
 func (thiz *MemorySession) GetSessionById(id string) core.ISession {
-	return thiz.sessions[id]
+	thiz.mu.Lock()
+	session := thiz.sessions[id]
+	thiz.mu.Unlock()
+
+	return session
 }
 
 // DbSession, not implemented yet
