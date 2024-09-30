@@ -35,6 +35,8 @@ func (thiz *ApiReturnObject) MarshalJSON() ([]byte, error) {
 		body, err = thiz.buildBodySlice(rvBody)
 	} else if rvBody.Kind() == reflect.Struct {
 		body, err = thiz.buildBodyElement(rvBody)
+	} else if rvBody.Kind() == reflect.Map {
+		body, err = thiz.buildBodyMap(rvBody)
 	} else {
 		body = thiz.Body
 	}
@@ -86,6 +88,8 @@ func (thiz *ApiReturnObject) buildBodySlice(reflectSlice reflect.Value) ([]any, 
 			sliceElement, err = thiz.buildBodySlice(rElement)
 		} else if rElement.Kind() == reflect.Struct {
 			sliceElement, err = thiz.buildBodyElement(rElement)
+		} else if rElement.Kind() == reflect.Map {
+			sliceElement, err = thiz.buildBodyMap(rElement)
 		} else {
 			sliceElement = rElement.Interface()
 		}
@@ -97,6 +101,36 @@ func (thiz *ApiReturnObject) buildBodySlice(reflectSlice reflect.Value) ([]any, 
 		slice = append(slice, sliceElement)
 	}
 	return slice, nil
+}
+
+func (thiz *ApiReturnObject) buildBodyMap(reflectMap reflect.Value) (map[string]any, error) {
+	finalMap := make(map[string]any, 0)
+	for _, key := range reflectMap.MapKeys() {
+		value := reflectMap.MapIndex(key)
+
+		var mapElement any
+		var e error
+		rElement := util.IndirectValue(value)
+		if rElement.Kind() == reflect.Slice {
+			mapElement, e = thiz.buildBodySlice(rElement)
+		} else if rElement.Kind() == reflect.Struct {
+			mapElement, e = thiz.buildBodyElement(rElement)
+		} else if rElement.Kind() == reflect.Map {
+			mapElement, e = thiz.buildBodyMap(rElement)
+		} else {
+			mapElement = rElement.Interface()
+		}
+
+		if e != nil {
+			return nil, e
+		}
+
+		if key.Kind() != reflect.String {
+			continue
+		}
+		finalMap[key.String()] = mapElement
+	}
+	return finalMap, nil
 }
 
 func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (map[string]any, error) {
@@ -139,9 +173,11 @@ func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (map[string
 
 		jsonFieldName := rtField.Name
 		jsonTag := rtField.Tag.Get("json")
-		splitJsonTag := strings.Split(jsonTag, ",")
-		if len(splitJsonTag) > 0 {
-			jsonFieldName = splitJsonTag[0]
+		if jsonTag != "-" && jsonTag != "" {
+			splitJsonTag := strings.Split(jsonTag, ",")
+			if len(splitJsonTag) > 0 {
+				jsonFieldName = splitJsonTag[0]
+			}
 		}
 
 		if util.IndirectType(rtField.Type).Kind() == reflect.Slice {
@@ -150,6 +186,11 @@ func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (map[string
 				return nil, err
 			}
 			body[jsonFieldName] = nestedElement
+			continue
+		}
+
+		if rvField.IsZero() {
+			body[jsonFieldName] = nil
 			continue
 		}
 
@@ -169,11 +210,6 @@ func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (map[string
 
 		if util.IndirectType(rtField.Type).Kind() == reflect.Bool {
 			body[jsonFieldName] = rvField.Interface()
-			continue
-		}
-
-		if rvField.IsZero() {
-			body[jsonFieldName] = nil
 			continue
 		}
 

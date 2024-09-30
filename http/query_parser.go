@@ -38,7 +38,7 @@ func (thiz queryParser) parse(arg interface{}) error {
 
 func (thiz queryParser) initStruct(dest interface{}, inputMap map[string]any) error { // todo: LocolizedString from map does not work, need to fix it on the front side
 	for key, value := range inputMap {
-		err := thiz.processValue(dest, key, value)
+		err := thiz.processValue(dest, value, key)
 		if err != nil {
 			return err
 		}
@@ -46,29 +46,29 @@ func (thiz queryParser) initStruct(dest interface{}, inputMap map[string]any) er
 	return nil
 }
 
-func (thiz queryParser) processValue(dest any, key string, value interface{}) error {
+func (thiz queryParser) processValue(dest any, value interface{}, key string) error {
 	rvDest := reflect.ValueOf(dest)
 	if rvDest.Kind() != reflect.Ptr || !rvDest.IsValid() {
 		return fmt.Errorf("gorgany.http.jsonParser: Destination type must be a pointer")
 	}
 	rvDest = rvDest.Elem()
 
-	found, err := thiz.callBindMethodIfExists(dest, key, value)
-	if err != nil {
-		return err
-	}
-	if found {
-		return nil
-	}
-
-	var field reflect.Value
-	if util.IndirectValue(rvDest).Kind() == reflect.Struct {
-		found, field, _ = util.FindFieldByTag(rvDest, "scheme", key, true)
-		if !found {
+	field := rvDest
+	if key != "" {
+		found, err := thiz.callBindMethodIfExists(dest, key, value)
+		if err != nil {
+			return err
+		}
+		if found {
 			return nil
 		}
-	} else {
-		field = rvDest
+
+		if util.IndirectValue(rvDest).Kind() == reflect.Struct {
+			found, field, _ = util.FindFieldByTag(rvDest, "scheme", key, true)
+			if !found {
+				return nil
+			}
+		}
 	}
 
 	return thiz.setFieldValue(field, key, value)
@@ -85,7 +85,7 @@ func (thiz queryParser) setFieldValue(field reflect.Value, key string, value int
 	case reflect.Map:
 		return thiz.setMap(field, key, value)
 	default:
-		return thiz.setPrimitive(field, key, value)
+		return thiz.setPrimitive(field, value)
 	}
 }
 
@@ -109,7 +109,7 @@ func (thiz queryParser) setSlice(field reflect.Value, key string, value interfac
 
 	for _, v := range s {
 		rv := reflect.New(reflectedElement.Type()).Elem().Addr().Convert(reflect.PointerTo(reflectedElement.Type())).Elem()
-		err := thiz.processValue(rv.Addr().Interface(), key, v)
+		err := thiz.processValue(rv.Addr().Interface(), v, "")
 		if err != nil {
 			return err
 		}
@@ -132,7 +132,7 @@ func (thiz queryParser) setMap(field reflect.Value, key string, value interface{
 	for k, v := range m {
 		mapValueRType := field.Type().Elem()
 		rv := reflect.New(mapValueRType).Elem().Addr().Convert(reflect.PointerTo(mapValueRType)).Elem()
-		err := thiz.processValue(rv.Addr().Interface(), key, v)
+		err := thiz.processValue(rv.Addr().Interface(), v, "")
 		if err != nil {
 			return err
 		}
@@ -160,7 +160,7 @@ func (thiz queryParser) setStruct(field reflect.Value, key string, value interfa
 	return nil
 }
 
-func (thiz queryParser) setPrimitive(field reflect.Value, key string, value interface{}) error {
+func (thiz queryParser) setPrimitive(field reflect.Value, value interface{}) error {
 	if value == nil {
 		return nil
 	}
