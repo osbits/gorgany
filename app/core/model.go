@@ -82,3 +82,7 @@ type NullableValueSetter interface {
 type IFormValue interface {
 	Value() (any, error)
 }
+
+type Enum interface {
+	Values() string
+}

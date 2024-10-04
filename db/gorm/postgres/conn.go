@@ -363,7 +363,13 @@ func (thiz *Builder) List(dest any) error {
 	if rvDest.Kind() != reflect.Ptr {
 		return fmt.Errorf("Dest must be pointer")
 	}
+
 	rvDestSlice := rvDest.Elem()
+
+	if rvDestSlice.Kind() == reflect.Interface {
+		rvDestSlice = rvDestSlice.Elem()
+	}
+
 	if rvDestSlice.Kind() != reflect.Slice {
 		return fmt.Errorf("Dest must be slice")
 	}

@@ -36,7 +36,7 @@ func IndirectValue(v reflect.Value) reflect.Value {
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
-	if v.Kind() == reflect.Interface {
+	if v.Kind() == reflect.Interface && v.IsValid() {
 		originalV := v
 		v = v.Elem()
 		if !v.IsValid() {
@@ -49,13 +49,6 @@ func IndirectValue(v reflect.Value) reflect.Value {
 func IndirectType(v reflect.Type) reflect.Type {
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
-	}
-	if v.Kind() == reflect.Interface {
-		originalV := v
-		v = v.Elem()
-		if v.Kind() == reflect.Invalid {
-			v = originalV
-		}
 	}
 	return v
 }

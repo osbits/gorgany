@@ -31,6 +31,10 @@ func (thiz LocalizedString) Map() map[string]string {
 	return thiz.Data
 }
 
+func (thiz LocalizedString) Value() (any, error) {
+	return thiz.Data, nil
+}
+
 type LocalizedStringEntries map[string]string
 
 func (thiz *LocalizedStringEntries) Scan(value interface{}) error {
