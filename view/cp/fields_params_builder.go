@@ -104,6 +104,22 @@ func buildFieldParams(domain any, isIndexAction bool, overriddenFields map[strin
 
 	sort.Sort(fieldParams)
 
+	for _, field := range fieldParams {
+		relation := domainScheme.Relationships.Relations[field.Name]
+		if relation == nil {
+			continue
+		}
+
+		for _, reference := range relation.References {
+			for _, f := range fieldParams {
+				if f.Name == reference.ForeignKey.Name {
+					f.ignoreInList = true
+					f.ignoreInEdit = true
+				}
+			}
+		}
+	}
+
 	return fieldParams, nil
 }
 
