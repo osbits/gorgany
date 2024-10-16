@@ -14,7 +14,7 @@ import (
 
 func validateFile(field reflect.Value) interface{} {
 	if field.Interface() == nil {
-		return nil
+		return []byte("null")
 	}
 
 	if file, ok := field.Interface().(model.File); ok {
@@ -27,30 +27,26 @@ func validateFile(field reflect.Value) interface{} {
 			Path: file.GetPath(),
 		})
 		if err != nil {
-			return nil
+			return []byte("null")
 		}
 		return content
 	}
 
-	return nil
-	//if file, ok := field.Interface().(core.IFile); ok {
-	//	jsonFile, err := json.Marshal(file)
-	//	if err != nil {
-	//		return nil
-	//	}
-	//	return jsonFile
-	//}
-	//return nil
+	return []byte("null")
 }
 
 func validateMimeType(fl goValidator.FieldLevel) bool {
-	if fl.Field().Interface() == nil {
+	if fl.Field().IsZero() {
 		return true
 	}
 
 	fileContent, ok := fl.Field().Interface().([]byte)
 	if !ok {
 		return false
+	}
+
+	if string(fileContent) == "null" {
+		return true
 	}
 
 	file := &model.AbstractFile{}
@@ -72,12 +68,23 @@ func validateMimeType(fl goValidator.FieldLevel) bool {
 }
 
 func validateFileSize(fl goValidator.FieldLevel) bool {
-	if fl.Field().Interface() == nil {
+	if fl.Field().IsZero() {
 		return true
 	}
 
-	file, ok := fl.Field().Interface().(model.AbstractFile)
+	fileContent, ok := fl.Field().Interface().([]byte)
 	if !ok {
+		return false
+	}
+
+	if string(fileContent) == "null" {
+		return true
+	}
+
+	file := &model.AbstractFile{}
+	err := json.Unmarshal(fileContent, file)
+	if err != nil {
+		err2.HandleError(fmt.Sprintf("Error when unmarshalling file content during validation: %v", err))
 		return false
 	}
 

@@ -12,7 +12,7 @@ func New() *goValidator.Validate {
 	v := goValidator.New()
 
 	v.RegisterCustomTypeFunc(validateFile, model.File{})
-	err := v.RegisterValidation("mime", validateMimeType)
+	err := v.RegisterValidation("mime", validateMimeType, true)
 	if err != nil {
 		panic(err)
 	}
