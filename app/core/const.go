@@ -1,6 +1,9 @@
 package core
 
-import "reflect"
+import (
+	"reflect"
+	"strings"
+)
 
 // HTTP
 
@@ -133,3 +136,40 @@ func GeneralDataTypeOf(kind reflect.Kind) GeneralDataType {
 		return Unknown
 	}
 }
+
+const GrgViewTag = "grgview"
+
+type GrgViewTagKeyValuePair string
+
+func (thiz GrgViewTagKeyValuePair) Key() GrgViewTagKey {
+	return GrgViewTagKey(strings.Split(string(thiz), "=")[0])
+}
+
+func (thiz GrgViewTagKeyValuePair) Value() string {
+	splitKeyValue := strings.Split(string(thiz), "=")
+	if len(splitKeyValue) == 2 {
+		return splitKeyValue[1]
+	}
+	return ""
+}
+
+type GrgViewTagKey string
+
+const (
+	GrgViewIndex GrgViewTagKey = "index"
+	GrgViewList  GrgViewTagKey = "list"
+	GrgViewEdit  GrgViewTagKey = "edit"
+	GrgViewEnum  GrgViewTagKey = "enum"
+	GrgViewType  GrgViewTagKey = "type"
+)
+
+type GrgViewTagValue string
+
+const (
+	GrgViewIgnore       GrgViewTagValue = "ignore"
+	GrgViewShow         GrgViewTagValue = "show"
+	GrgViewViewOnly     GrgViewTagValue = "viewOnly"
+	GrgViewDate         GrgViewTagValue = "DATE"
+	GrgViewDateTime     GrgViewTagValue = "DATE_TIME"
+	GrgViewDateTextarea GrgViewTagValue = "TEXTAREA"
+)

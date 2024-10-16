@@ -38,12 +38,43 @@ func NewMultipartFile(originalFileName string, reader io.Reader) (*MultipartFile
 	return &file, nil
 }
 
+type AbstractFile struct {
+	Name string
+	Path string
+}
+
+func (thiz *AbstractFile) SetName(name string) {
+	thiz.Name = name
+}
+
+func (thiz *AbstractFile) GetName() string {
+	return thiz.Name
+}
+
+func (thiz *AbstractFile) GetPath() string {
+	return thiz.Path
+}
+
+func (thiz *AbstractFile) GetSize() (int64, error) {
+	info, err := os.Stat(thiz.FullPath())
+	if err != nil {
+		return 0, err
+	}
+
+	return info.Size(), nil
+}
+
+func (thiz *AbstractFile) FullPath() string {
+	if thiz.Path == "" {
+		return ""
+	}
+	return path.Join(PublicStorage, thiz.Path, thiz.Name)
+}
+
 // MultipartFile - this structure describes file which has been gotten by http, it can be stored on project server
 type MultipartFile struct {
-	Name           string
-	Path           string
-	StoredFilePath string
-	tempFile       *os.File
+	AbstractFile
+	tempFile *os.File
 }
 
 func (thiz *MultipartFile) SetName(name string) {
@@ -92,14 +123,15 @@ func (thiz *MultipartFile) Write(p string, reader io.Reader) (int64, error) {
 	if thiz.Name == "" {
 		return 0, errors.New("file name is empty")
 	}
-	thiz.Path = p
 
-	if thiz.StoredFilePath != "" && thiz.StoredFilePath != path.Join(PublicStorage, thiz.Path, thiz.Name) {
+	if thiz.Path != "" && thiz.Path != path.Join(PublicStorage, p, thiz.Name) {
 		err := thiz.Delete()
 		if err != nil {
 			return 0, err
 		}
 	}
+
+	thiz.Path = p
 
 	err := os.MkdirAll(path.Join(PublicStorage, thiz.Path), os.ModePerm)
 	if err != nil {
@@ -123,8 +155,6 @@ func (thiz *MultipartFile) Write(p string, reader io.Reader) (int64, error) {
 		return 0, err
 	}
 
-	thiz.StoredFilePath = path.Join(PublicStorage, thiz.Path, thiz.Name)
-
 	return written, nil
 }
 
@@ -133,7 +163,10 @@ func (thiz *MultipartFile) Writer() (io.WriteCloser, error) {
 }
 
 func (thiz *MultipartFile) FullPath() string {
-	return thiz.StoredFilePath
+	if thiz.Path == "" {
+		return ""
+	}
+	return path.Join(PublicStorage, thiz.Path, thiz.Name)
 }
 
 func (thiz *MultipartFile) PublicPath() string {
@@ -157,7 +190,7 @@ func (thiz *MultipartFile) Delete() error {
 		return errors.New("file does not exist")
 	}
 
-	return os.Remove(thiz.StoredFilePath)
+	return os.Remove(thiz.FullPath())
 }
 
 func (thiz *MultipartFile) Close() error {
@@ -168,16 +201,9 @@ func (thiz *MultipartFile) Close() error {
 	return os.Remove(path.Join(TempStorage, stat.Name()))
 }
 
-// File - this structure describes File which stores in project server storage and links with record in db
-func NewFileFromMultipart(multipartFile MultipartFile) File {
-	return File{
-		MultipartFile: multipartFile,
-	}
-}
-
 // getActualFilePath - returns full path for temp file if permanent does not exist
 func (thiz *MultipartFile) getActualFilePath() string {
-	if thiz.StoredFilePath == "" {
+	if thiz.FullPath() == "" {
 		stat, err := thiz.tempFile.Stat()
 		if err != nil {
 			return ""
@@ -185,7 +211,14 @@ func (thiz *MultipartFile) getActualFilePath() string {
 		return path.Join(TempStorage, stat.Name())
 	}
 
-	return thiz.StoredFilePath
+	return thiz.FullPath()
+}
+
+// File - this structure describes File which stores in project server storage and links with record in db
+func NewFileFromMultipart(multipartFile MultipartFile) *File {
+	return &File{
+		MultipartFile: multipartFile,
+	}
 }
 
 type File struct {
@@ -196,14 +229,15 @@ func (thiz *File) Write(p string, reader io.Reader) (int64, error) {
 	if thiz.Name == "" {
 		return 0, errors.New("file name is empty")
 	}
-	thiz.Path = p
 
-	if thiz.StoredFilePath != "" && thiz.StoredFilePath != path.Join(PublicStorage, thiz.Path, thiz.Name) {
+	if thiz.FullPath() != "" && thiz.FullPath() != path.Join(PublicStorage, thiz.Path, thiz.Name) {
 		err := thiz.Delete()
 		if err != nil {
 			return 0, err
 		}
 	}
+
+	thiz.Path = p
 
 	err := os.MkdirAll(path.Join(PublicStorage, thiz.Path), os.ModePerm)
 	if err != nil {
@@ -215,7 +249,7 @@ func (thiz *File) Write(p string, reader io.Reader) (int64, error) {
 		return 0, err
 	}
 
-	thiz.StoredFilePath = path.Join(PublicStorage, thiz.Path, thiz.Name)
+	//thiz.StoredFilePath = path.Join(PublicStorage, thiz.Path, thiz.Name)
 
 	return io.Copy(rawFile, reader)
 }
