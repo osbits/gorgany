@@ -173,3 +173,5 @@ const (
 	GrgViewDateTime     GrgViewTagValue = "DATE_TIME"
 	GrgViewDateTextarea GrgViewTagValue = "TEXTAREA"
 )
+
+const DefaultLoginUrl = "/login"

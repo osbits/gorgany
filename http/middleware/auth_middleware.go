@@ -40,7 +40,11 @@ func (thiz AuthMiddleware) Handle(message core.HttpMessage) bool {
 		message.ResponseJSON(dto.ReturnObject(nil, core.NotAuthorizedHttpStatus, nil), 401)
 		return false
 	}
-	message.Redirect(viper.GetString("auth.login.formUrl"), 302)
+	loginFormUrl := viper.GetString("auth.login.formUrl")
+	if loginFormUrl == "" {
+		loginFormUrl = core.DefaultLoginUrl
+	}
+	message.Redirect(loginFormUrl, 302)
 	return false
 }
 
