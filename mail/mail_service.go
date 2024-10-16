@@ -87,9 +87,6 @@ func (thiz MailService) buildBody(ctx context.Context, mail core.IMail) ([]byte,
 	if len(mail.GetCc()) > 0 {
 		buf.WriteString(fmt.Sprintf("Cc: %s\n", strings.Join(mail.GetCc(), ", ")))
 	}
-	if len(mail.GetBcc()) > 0 {
-		buf.WriteString(fmt.Sprintf("Bcc: %s\n", strings.Join(mail.GetBcc(), ", ")))
-	}
 
 	buf.WriteString("MIME-version: 1.0\n")
 
