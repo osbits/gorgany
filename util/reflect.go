@@ -420,9 +420,14 @@ func FindFieldByTag(s reflect.Value, tag, tagValue string, allowSearchByCamelNam
 
 	}
 
-	s.FieldByNameFunc(func(name string) bool {
-		return CamelCase(name) == tagValue
+	structField, found := rtS.FieldByNameFunc(func(name string) bool {
+		return strings.ToLower(name) == strings.ToLower(tagValue)
 	})
 
-	return false, reflect.Value{}, reflect.StructField{}
+	if !found {
+		return false, reflect.Value{}, reflect.StructField{}
+	}
+
+	field := s.Field(structField.Index[0])
+	return found, field, structField
 }

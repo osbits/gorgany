@@ -87,11 +87,23 @@ func (thiz *EngineRenderer) registerDefaultOptions(localRenderingContext *localR
 		appName = "Gorgany"
 	}
 
+	nav := make([]map[string]any, 0)
+	navItems := viper.GetStringSlice("cp.nav")
+	for _, navItem := range navItems {
+		url := router.GetRouter().UrlByNameSequence(fmt.Sprintf("cp.%s.index", navItem))
+		navLink := util.CreateLink(url, localRenderingContext.Locale(), false)
+		nav = append(nav, map[string]any{
+			"DomainName": navItem,
+			"Link":       navLink,
+		})
+	}
+
 	opts["AppName"] = appName
 	opts["CurrentLocale"] = localRenderingContext.Locale()
 	opts["AvailableLocales"] = localRenderingContext.AvailableLocalesOnFront()
 	opts["AllLocales"] = i18n.AllLocales()
 	opts["Ctx"] = localRenderingContext.ctx
+	opts["Nav"] = nav
 
 	return util.MergeMaps(opts, thiz.variables)
 }

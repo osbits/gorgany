@@ -3,6 +3,8 @@ package util
 import (
 	"fmt"
 	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 	"regexp"
 	"strings"
 )
@@ -54,10 +56,32 @@ func CamelCase(s string) string {
 		return ""
 	}
 
+	lowerCase := cases.Lower(language.English)
+	titleCase := cases.Title(language.English)
 	for i := range words {
-		words[i] = strings.ToLower(words[i])
+		words[i] = lowerCase.String(words[i])
 		if i > 0 {
-			words[i] = strings.Title(words[i])
+			words[i] = titleCase.String(words[i])
+		}
+	}
+
+	return strings.Join(words, "")
+}
+
+func StudlyCase(s string) string {
+	words := strings.FieldsFunc(s, func(r rune) bool {
+		return r == ' ' || r == '-' || r == '_'
+	})
+
+	if len(words) == 0 {
+		return ""
+	}
+
+	titleCase := cases.Title(language.English)
+	for i := range words {
+		words[i] = titleCase.String(words[i])
+		if i > 0 {
+			words[i] = titleCase.String(words[i])
 		}
 	}
 

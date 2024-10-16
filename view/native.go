@@ -3,12 +3,17 @@ package view
 import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/log"
 	template2 "html/template"
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
+	"runtime"
 )
+
+const InternalTemplatePath = "../resource/template"
 
 func NewNativeEngine(viewDir, ext string) core.IViewEngine {
 	return &NativeEngine{
@@ -27,7 +32,17 @@ func (thiz NativeEngine) Render(output io.Writer, templateName string, opts map[
 
 	content, err := os.ReadFile(templatePath)
 	if err != nil {
-		return fmt.Errorf("Error during read file %s, %v", templatePath, err)
+		if os.IsNotExist(err) {
+			_, callerFilename, _, _ := runtime.Caller(0)
+			dir := filepath.Dir(callerFilename)
+			templatePath = path.Join(dir, InternalTemplatePath, fmt.Sprintf("%s.%s", templateName, thiz.ext))
+			content, err = os.ReadFile(templatePath)
+			if err != nil {
+				return fmt.Errorf("Error during read file %s, %v", templatePath, err)
+			}
+		} else {
+			return fmt.Errorf("Error during read file %s, %v", templatePath, err)
+		}
 	}
 
 	processedContent, imports := thiz.processImports(string(content))
@@ -67,12 +82,25 @@ func (thiz NativeEngine) processImports(templateContent string) (string, []strin
 		if len(_import) < 2 {
 			return ""
 		}
-		path := path.Join(thiz.viewDir, fmt.Sprintf("%s.%s", _import[1], thiz.ext))
-		content, err := os.ReadFile(path)
+
+		templatePath := path.Join(thiz.viewDir, fmt.Sprintf("%s.%s", _import[1], thiz.ext))
+		content, err := os.ReadFile(templatePath)
 		if err != nil {
-			fmt.Println(err)
-			return ""
+			if os.IsNotExist(err) {
+				_, callerFilename, _, _ := runtime.Caller(0)
+				dir := filepath.Dir(callerFilename)
+				templatePath = path.Join(dir, InternalTemplatePath, fmt.Sprintf("%s.%s", _import[1], thiz.ext))
+				content, err = os.ReadFile(templatePath)
+				if err != nil {
+					log.Log().Errorf("Error during read file %s, %v", templatePath, err)
+					return ""
+				}
+			} else {
+				log.Log().Errorf("Error during read file %s, %v", templatePath, err)
+				return ""
+			}
 		}
+
 		imports = append(imports, string(content))
 		return ""
 	})
