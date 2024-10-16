@@ -30,7 +30,7 @@ func (thiz AccessCheckerMiddleware) Handle(message core.HttpMessage) bool {
 	allowed := accessCheckerCommand.IsAccessAllowed(message.Context())
 	if !allowed {
 		if message.IsApiNamespace() {
-			message.ResponseJSON(dto.ReturnObject(nil, core.ForbiddenHttpStatus, nil), 200)
+			message.ResponseJSON(dto.ReturnObject(nil, core.ForbiddenHttpStatus, nil), 403)
 			return false
 		}
 		//todo

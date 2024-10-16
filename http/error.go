@@ -58,7 +58,7 @@ func processDefaultError(err error, message core.HttpMessage) {
 	error2.PrintError(err)
 	if app.GetRunMode() == gorgany.Dev {
 		if message.GetHeader().Get("Content-Type") == core.ApplicationJson.String() || message.IsApiNamespace() {
-			message.ResponseJSON(dto.ReturnObject(nil, core.InternalErrorHttpStatus, err.Error()), 200)
+			message.ResponseJSON(dto.ReturnObject(nil, core.InternalErrorHttpStatus, err.Error()), 500)
 			return
 		}
 		message.Response(fmt.Sprintf("Oops... 500 error.\n %v \n%s", err, error2.GetStacktrace()), 500)
@@ -72,7 +72,7 @@ func processValidationErrors(error error, message core.HttpMessage) {
 	concreteError := error.(*error2.ValidationErrors)
 	req := message.GetRequest()
 	if message.GetHeader().Get("Content-Type") == core.ApplicationJson.String() || message.IsApiNamespace() {
-		message.ResponseJSON(dto.ReturnObject(nil, core.ValidationHttpStatus, error), 200)
+		message.ResponseJSON(dto.ReturnObject(nil, core.ValidationHttpStatus, error), 422)
 		return
 	}
 	message.RedirectWithParams(req.Referer(), 301, map[string]any{"validation": concreteError})

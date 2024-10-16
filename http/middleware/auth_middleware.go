@@ -37,7 +37,7 @@ func (thiz AuthMiddleware) Handle(message core.HttpMessage) bool {
 	}
 
 	if message.GetHeader().Get("Content-Type") == core.ApplicationJson.String() || message.GetPathParam("namespace") == "api" {
-		message.ResponseJSON(dto.ReturnObject(nil, core.NotAuthorizedHttpStatus, nil), 200)
+		message.ResponseJSON(dto.ReturnObject(nil, core.NotAuthorizedHttpStatus, nil), 401)
 		return false
 	}
 	message.Redirect(viper.GetString("auth.login.formUrl"), 302)
