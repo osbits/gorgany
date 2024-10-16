@@ -19,6 +19,7 @@ import (
 
 type RouteProvider struct {
 	router             core.Router
+	notFoundHandler    core.HandlerFunc
 	applicationContext core.IApplicationContext
 }
 
@@ -32,6 +33,7 @@ func (thiz *RouteProvider) InitProvider(applicationContext core.IApplicationCont
 	thiz.RegisterRouter(router.NewGorganyRouter())
 	thiz.caseSensitiveRoutes()
 	thiz.supportEndSlash()
+	thiz.registerDefaultNotFound()
 }
 
 func (thiz *RouteProvider) RegisterRouter(router core.Router) {
@@ -113,6 +115,10 @@ func (thiz *RouteProvider) RegisterController(controller core.IController) {
 	}
 }
 
+func (thiz *RouteProvider) SetNotFoundHandler(handlerFunc core.HandlerFunc) {
+	thiz.notFoundHandler = handlerFunc
+}
+
 func (thiz *RouteProvider) SetHomeUrl(url string) {
 	internal.GetApplicationContext().(core.IApplicationContext).SetHomeUrl(url)
 }
@@ -192,5 +198,15 @@ func (thiz *RouteProvider) addOptionsMethodToCheckPreflightCORS(pattern string, 
 		}
 
 		corsMiddleware.Handle(message)
+	})
+}
+
+func (thiz *RouteProvider) registerDefaultNotFound() {
+	thiz.notFoundHandler = func(message core.HttpMessage) {
+		message.Response("NOT FOUND", 404)
+	}
+
+	thiz.router.Engine().(chi.Router).NotFound(func(w http2.ResponseWriter, r *http2.Request) {
+		http.Dispatch(thiz.applicationContext, w, r, thiz.notFoundHandler, nil)
 	})
 }
