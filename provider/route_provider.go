@@ -154,7 +154,7 @@ func (thiz *RouteProvider) supportEndSlash() {
 	thiz.router.Engine().(chi.Router).Use(func(next http2.Handler) http2.Handler {
 		fn := func(w http2.ResponseWriter, r *http2.Request) {
 			path := r.URL.Path
-			if path[len(path)-1] == '/' {
+			if len(path) > 0 && path[len(path)-1] == '/' {
 				r.URL.Path = path[:len(path)-1]
 			}
 
