@@ -56,4 +56,6 @@ type IApplicationContext interface {
 	GetContainer() IContainer
 	RegisterEventBus(bus IEventBus)
 	GetEventBus() IEventBus
+	RegisterValidator(validator IValidator)
+	GetValidator() IValidator
 }

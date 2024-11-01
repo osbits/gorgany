@@ -60,6 +60,7 @@ type AbstractApplicationContext struct {
 	router              core.Router
 	container           core.IContainer
 	eventBus            core.IEventBus
+	validator           core.IValidator
 }
 
 func (thiz *AbstractApplicationContext) SetHomeUrl(url string) {
@@ -265,4 +266,12 @@ func (thiz *AbstractApplicationContext) RegisterEventBus(eventBus core.IEventBus
 
 func (thiz *AbstractApplicationContext) GetEventBus() core.IEventBus {
 	return thiz.eventBus
+}
+
+func (thiz *AbstractApplicationContext) RegisterValidator(validator core.IValidator) {
+	thiz.validator = validator
+}
+
+func (thiz *AbstractApplicationContext) GetValidator() core.IValidator {
+	return thiz.validator
 }

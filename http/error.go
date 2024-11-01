@@ -13,6 +13,7 @@ import (
 
 var defaultErrorHandlerMap = map[string]core.ErrorHandler{
 	"ValidationErrors":     processValidationErrors,
+	"ValidationError":      processValidationError,
 	"InputBodyParseError":  processBodyParsingError,
 	"InputParamParseError": processInputParsingError,
 	"Default":              processDefaultError,
@@ -76,6 +77,14 @@ func processValidationErrors(error error, message core.HttpMessage) {
 		return
 	}
 	message.RedirectWithParams(req.Referer(), 301, map[string]any{"validation": concreteError})
+}
+
+func processValidationError(error error, message core.HttpMessage) {
+	concreteError := error.(*error2.ValidationError)
+	validationErrors := &error2.ValidationErrors{
+		*concreteError,
+	}
+	processValidationErrors(validationErrors, message)
 }
 
 func processInputParsingError(error error, message core.HttpMessage) {

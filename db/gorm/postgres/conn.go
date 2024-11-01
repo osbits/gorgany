@@ -414,7 +414,7 @@ func (thiz *Builder) Insert(model any) error {
 }
 
 func (thiz *Builder) Save(model any) error {
-	err := validator.ValidateStruct(model)
+	err := validator.GetValidator().ValidateStruct(model)
 	if err != nil {
 		return err
 	}

@@ -1,6 +1,7 @@
 package err
 
 import (
+	"errors"
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/log"
 	"runtime"
@@ -51,6 +52,10 @@ func (thiz *ValidationErrors) AddValidationError(validationError ValidationError
 	*thiz = append(*thiz, validationError)
 }
 
+func (thiz *ValidationErrors) Unwrap() error {
+	return errors.New("validation errors")
+}
+
 type ValidationError struct {
 	Field string `json:"field"`
 	Err   string `json:"err"`
@@ -62,6 +67,10 @@ func (thiz ValidationError) String() string {
 
 func (thiz ValidationError) Error() string {
 	return thiz.String()
+}
+
+func (thiz ValidationError) Unwrap() error {
+	return fmt.Errorf("%w: %s", &ValidationErrors{}, thiz.Err)
 }
 
 // InputParamParseError

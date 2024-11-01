@@ -4,7 +4,8 @@ import (
 	"flag"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/log"
-	"github.com/go-playground/validator/v10"
+	"git.qix.sx/gorgany/gorgany.git/validator"
+	goValidator "github.com/go-playground/validator/v10"
 	"os"
 	"reflect"
 	"regexp"
@@ -53,16 +54,16 @@ func (thiz Resolver) ResolveCommand(commandName string) core.ICommand {
 		rvField.Set(reflect.ValueOf(flagConfig.Value).Elem())
 	}
 
-	validate := validator.New()
-	err := validate.Struct(command)
+	validate := validator.GetValidator()
+	err := validate.ValidateStruct(command)
 	if err != nil {
 		commandFlags.PrintDefaults()
 
-		if _, ok := err.(*validator.InvalidValidationError); ok {
+		if _, ok := err.(*goValidator.InvalidValidationError); ok {
 			log.Log("").Panicf("Invalid validation error: %v", err)
 		}
 
-		for _, err := range err.(validator.ValidationErrors) {
+		for _, err := range err.(goValidator.ValidationErrors) {
 			log.Log("").Panicf("Invalid argument for %s flag, %v", flags[err.Field()].Name, err)
 		}
 	}

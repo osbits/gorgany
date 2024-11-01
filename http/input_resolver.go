@@ -70,7 +70,7 @@ func (thiz inputResolver) resolve() ([]reflect.Value, error) {
 			//	return nil, err
 			//}
 
-			if err := gorganyValidator.ValidateStruct(arg); err != nil {
+			if err := gorganyValidator.GetValidator().ValidateStruct(arg); err != nil {
 				return nil, err
 			}
 		}

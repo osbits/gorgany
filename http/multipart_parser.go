@@ -212,17 +212,40 @@ func (thiz multipartParser) callBindMethodIfExists(command any, fieldName string
 		return false, nil
 	}
 
-	if _, ok := value.(map[string]any); ok {
-		method.Call([]reflect.Value{reflect.ValueOf(value)})
-	} else {
-		castedValue, err := util.ResolvePrimitive(method.Type().In(0).Kind(), fmt.Sprintf("%v", value))
+	var processedValue any
+	if _, ok := value.(map[string]any); !ok {
+		var err error
+		processedValue, err = util.ResolvePrimitive(method.Type().In(0).Kind(), fmt.Sprintf("%v", value))
 		if err != nil {
 			return false, &error2.ValidationErrors{
 				error2.ValidationError{Field: structField.Name, Err: err.Error()},
 			}
 		}
-		method.Call([]reflect.Value{reflect.ValueOf(castedValue)})
 	}
+
+	outputs := method.Call([]reflect.Value{reflect.ValueOf(processedValue)})
+	if len(outputs) > 0 {
+		if outputs[0].IsZero() {
+			return true, nil
+		}
+
+		output, ok := outputs[0].Interface().(error)
+		if !ok {
+			return false, fmt.Errorf("Bind method must return error or nothing")
+		}
+
+		var validationErrors *error2.ValidationErrors
+		if errors.As(output, &validationErrors) {
+			return false, output
+		}
+
+		return false, &error2.ValidationErrors{error2.ValidationError{
+			Field: fieldName,
+			Err:   output.Error(),
+		}}
+	}
+
+	return true, nil
 	return true, nil
 }
 

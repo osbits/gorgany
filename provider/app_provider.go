@@ -5,6 +5,7 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/log"
 	"git.qix.sx/gorgany/gorgany.git/service"
+	"git.qix.sx/gorgany/gorgany.git/validator"
 	"git.qix.sx/gorgany/gorgany.git/view"
 	"reflect"
 )
@@ -36,6 +37,8 @@ func (thiz *AppProvider) InitProvider(applicationContext core.IApplicationContex
 	err.HandleErrorWithStacktrace(applicationContext.GetContainer().SingletonLazy(func() core.IAuthStrategy {
 		return applicationContext.GetAuthStrategy()
 	}))
+
+	applicationContext.RegisterValidator(validator.New())
 }
 
 func (thiz *AppProvider) RegisterProvider(provider core.IProvider) {

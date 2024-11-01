@@ -1,14 +1,20 @@
 package validator
 
 import (
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 	error2 "git.qix.sx/gorgany/gorgany.git/err"
+	"git.qix.sx/gorgany/gorgany.git/internal"
 	"git.qix.sx/gorgany/gorgany.git/model"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	goValidator "github.com/go-playground/validator/v10"
 	"reflect"
 )
 
-func New() *goValidator.Validate {
+func GetValidator() core.IValidator {
+	return internal.GetApplicationContext().GetValidator()
+}
+
+func New() core.IValidator {
 	v := goValidator.New()
 
 	v.RegisterCustomTypeFunc(validateFile, model.File{})
@@ -39,14 +45,18 @@ func New() *goValidator.Validate {
 		panic(err)
 	}
 
-	return v
+	return &Validator{
+		Validate: v,
+	}
 }
 
-func ValidateStruct(s any) error {
-	validate := New()
+type Validator struct {
+	*goValidator.Validate
+}
 
-	overriddenFields := getOverriddenFields(s, "", nil)
-	err := validate.StructExcept(s, overriddenFields...)
+func (v *Validator) ValidateStruct(s any) error {
+	overriddenFields := v.getOverriddenFields(s, "", nil)
+	err := v.StructExcept(s, overriddenFields...)
 	if err != nil {
 		if _, ok := err.(*goValidator.InvalidValidationError); ok {
 			return err
@@ -68,7 +78,7 @@ func ValidateStruct(s any) error {
 	return nil
 }
 
-func getOverriddenFields(s any, parentKey string, parentFields map[string]bool) []string {
+func (v *Validator) getOverriddenFields(s any, parentKey string, parentFields map[string]bool) []string {
 	if parentFields == nil {
 		parentFields = make(map[string]bool)
 	}
@@ -101,7 +111,7 @@ func getOverriddenFields(s any, parentKey string, parentFields map[string]bool) 
 		} else {
 			parentKey = parentKey + "." + fieldName
 		}
-		overriddenFields = append(overriddenFields, getOverriddenFields(field.Addr().Interface(), parentKey, parentFields)...)
+		overriddenFields = append(overriddenFields, v.getOverriddenFields(field.Addr().Interface(), parentKey, parentFields)...)
 	}
 
 	return overriddenFields
