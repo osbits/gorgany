@@ -11,7 +11,13 @@ import (
 )
 
 func GetValidator() core.IValidator {
-	return internal.GetApplicationContext().GetValidator()
+	validator := internal.GetApplicationContext().GetValidator()
+	if validator == nil {
+		validator = New()
+		internal.GetApplicationContext().RegisterValidator(validator)
+	}
+
+	return validator
 }
 
 func New() core.IValidator {
