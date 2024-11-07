@@ -28,21 +28,21 @@ func (thiz *ApiReturnObject) MarshalJSON() ([]byte, error) {
 	tmpStruct.Code = thiz.HttpStatus.Code
 
 	var body any
-	var err error
+	var e error
 
 	rvBody := util.IndirectValue(reflect.ValueOf(thiz.Body))
 	if rvBody.Kind() == reflect.Slice {
-		body, err = thiz.buildBodySlice(rvBody)
+		body, e = thiz.buildBodySlice(rvBody)
 	} else if rvBody.Kind() == reflect.Struct {
-		body, err = thiz.buildBodyElement(rvBody)
+		body, e = thiz.buildBodyElement(rvBody)
 	} else if rvBody.Kind() == reflect.Map {
-		body, err = thiz.buildBodyMap(rvBody)
+		body, e = thiz.buildBodyMap(rvBody)
 	} else {
 		body = thiz.Body
 	}
 
-	if err != nil {
-		return nil, err
+	if e != nil {
+		return nil, e
 	}
 
 	tmpStruct.Body = body
@@ -81,21 +81,21 @@ func (thiz *ApiReturnObject) buildBodySlice(reflectSlice reflect.Value) ([]any, 
 	for i := 0; i < reflectSlice.Len(); i++ {
 
 		var sliceElement any
-		var err error
+		var e error
 
 		rElement := util.IndirectValue(reflectSlice.Index(i))
 		if rElement.Kind() == reflect.Slice {
-			sliceElement, err = thiz.buildBodySlice(rElement)
+			sliceElement, e = thiz.buildBodySlice(rElement)
 		} else if rElement.Kind() == reflect.Struct {
-			sliceElement, err = thiz.buildBodyElement(rElement)
+			sliceElement, e = thiz.buildBodyElement(rElement)
 		} else if rElement.Kind() == reflect.Map {
-			sliceElement, err = thiz.buildBodyMap(rElement)
+			sliceElement, e = thiz.buildBodyMap(rElement)
 		} else {
 			sliceElement = rElement.Interface()
 		}
 
-		if err != nil {
-			return nil, err
+		if e != nil {
+			return nil, e
 		}
 
 		slice = append(slice, sliceElement)
@@ -153,9 +153,9 @@ func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (map[string
 		if util.IndirectType(rtField.Type).Kind() == reflect.Struct {
 			if _, ok := rvField.Interface().(core.LimitedFieldsMarshaller); ok {
 				if rtField.Anonymous {
-					nestedElement, err := thiz.buildBodyElement(util.IndirectValue(rvField))
-					if err != nil {
-						return nil, err
+					nestedElement, e := thiz.buildBodyElement(util.IndirectValue(rvField))
+					if e != nil {
+						return nil, e
 					}
 					body = util.MergeMaps(body, nestedElement)
 				}
@@ -181,24 +181,28 @@ func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (map[string
 		}
 
 		if util.IndirectType(rtField.Type).Kind() == reflect.Slice {
-			nestedElement, err := thiz.buildBodySlice(util.IndirectValue(rvField))
-			if err != nil {
-				return nil, err
+			nestedElement, e := thiz.buildBodySlice(util.IndirectValue(rvField))
+			if e != nil {
+				return nil, e
 			}
 			body[jsonFieldName] = nestedElement
 			continue
 		}
 
 		if rvField.IsZero() {
-			body[jsonFieldName] = nil
+			if rvField.IsValid() {
+				body[jsonFieldName] = rvField.Interface()
+			} else {
+				body[jsonFieldName] = nil
+			}
 			continue
 		}
 
 		if isStruct {
 			if _, ok := rvField.Interface().(core.LimitedFieldsMarshaller); ok {
-				nestedElement, err := thiz.buildBodyElement(util.IndirectValue(rvField))
-				if err != nil {
-					return nil, err
+				nestedElement, e := thiz.buildBodyElement(util.IndirectValue(rvField))
+				if e != nil {
+					return nil, e
 				}
 				body[jsonFieldName] = nestedElement
 				continue
