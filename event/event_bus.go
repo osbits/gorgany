@@ -1,6 +1,7 @@
 package event
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
@@ -68,7 +69,7 @@ func (thiz *EventBus) SubscribeAsync(event string, subscriber core.ISubscriber) 
 	return nil
 }
 
-func (thiz *EventBus) Publish(event string, args ...map[string]any) error {
+func (thiz *EventBus) Publish(ctx context.Context, event string, args ...map[string]any) error {
 	subscriptionConfig, ok := thiz.subscribers[event]
 	if !ok {
 		return fmt.Errorf("event_bus: subscription `%s` not found", event)
@@ -87,9 +88,9 @@ func (thiz *EventBus) Publish(event string, args ...map[string]any) error {
 
 	subscriber := subscriberRaw.(core.ISubscriber)
 	if subscriptionConfig.async {
-		thiz.doPublishAsync(subscriber)
+		thiz.doPublishAsync(ctx, subscriber)
 	} else {
-		thiz.doPublish(subscriber)
+		thiz.doPublish(ctx, subscriber)
 	}
 
 	return nil
@@ -105,11 +106,11 @@ func (thiz *EventBus) WaitAsync() {
 	thiz.waitGroup.Wait()
 }
 
-func (thiz *EventBus) doPublish(subscriber core.ISubscriber) {
-	subscriber.Handle()
+func (thiz *EventBus) doPublish(ctx context.Context, subscriber core.ISubscriber) {
+	subscriber.Handle(ctx)
 }
 
-func (thiz *EventBus) doPublishAsync(subscriber core.ISubscriber) {
+func (thiz *EventBus) doPublishAsync(ctx context.Context, subscriber core.ISubscriber) {
 	thiz.waitGroup.Add(1)
 	go func() {
 		defer func() {
@@ -119,6 +120,6 @@ func (thiz *EventBus) doPublishAsync(subscriber core.ISubscriber) {
 				err.HandleErrorWithStacktrace(r)
 			}
 		}()
-		subscriber.Handle()
+		subscriber.Handle(ctx)
 	}()
 }
