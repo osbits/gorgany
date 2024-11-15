@@ -13,4 +13,5 @@ type IValidator interface {
 
 	RegisterValidation(tag string, fn validator.Func, callValidationEvenIfNull ...bool) error
 	RegisterStructValidation(fn validator.StructLevelFunc, types ...interface{})
+	RegisterCustomTypeFunc(fn validator.CustomTypeFunc, types ...interface{})
 }
