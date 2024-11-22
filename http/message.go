@@ -27,6 +27,16 @@ import (
 	"time"
 )
 
+type ResponseWriterWrapper struct {
+	http.ResponseWriter
+	StatusCode int
+}
+
+func (thiz *ResponseWriterWrapper) WriteHeader(code int) {
+	thiz.StatusCode = code
+	thiz.ResponseWriter.WriteHeader(code)
+}
+
 type Message struct {
 	applicationContext core.IApplicationContext
 
@@ -283,7 +293,7 @@ func (thiz Message) GetRawQuery() string {
 	return thiz.request.URL.RawQuery
 }
 
-func (thiz Message) GetQuery() decoder.QueryParams {
+func (thiz Message) GetQuery() core.QueryParams {
 	err := thiz.parseQueryParams()
 	if err != nil {
 		err2.HandleError(err)

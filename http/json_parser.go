@@ -14,7 +14,7 @@ import (
 
 // json parser
 type jsonParser struct {
-	message *Message
+	message core.HttpMessage
 }
 
 func (thiz jsonParser) parse(dest interface{}) error {

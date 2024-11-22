@@ -98,3 +98,7 @@ func (thiz QueryParams) GetArrayMap(key string) []map[string]string {
 	}
 	return []map[string]string{}
 }
+
+func (thiz QueryParams) AsMap() map[string]any {
+	return thiz
+}

@@ -11,33 +11,32 @@ import (
 type AccessCheckerMiddleware struct {
 }
 
-func (thiz AccessCheckerMiddleware) Handle(message core.HttpMessage) bool {
-	var accessCheckerCommand core.HttpAccessCommand
+func (thiz AccessCheckerMiddleware) Handle(next func(core.HttpMessage)) func(core.HttpMessage) {
+	return func(message core.HttpMessage) {
+		var accessCheckerCommand core.HttpAccessCommand
 
-	args := message.GetInputParameters()
-	for _, arg := range args {
-		if !util.IndirectType(arg.Type()).Implements(reflect.TypeOf((*core.HttpAccessCommand)(nil)).Elem()) {
-			continue
+		args := message.GetInputParameters()
+		for _, arg := range args {
+			if !util.IndirectType(arg.Type()).Implements(reflect.TypeOf((*core.HttpAccessCommand)(nil)).Elem()) {
+				continue
+			}
+			accessCheckerCommand = arg.Interface().(core.HttpAccessCommand)
 		}
-		accessCheckerCommand = arg.Interface().(core.HttpAccessCommand)
-	}
 
-	if accessCheckerCommand == nil {
-		log.Log().Warnf("AccessCheckerMiddleware is enabled for \u001B[0;32m%s\u001B[0m, but instance of \u001B[0;33mcore.HttpAccessCommand\u001B[0m is not injected to handler", message.GetRequest().URL.Path)
-		return true
-	}
-
-	allowed := accessCheckerCommand.IsAccessAllowed(message.Context())
-	if !allowed {
-		if message.IsApiNamespace() {
-			message.ResponseJSON(dto.ReturnObject(nil, core.ForbiddenHttpStatus, nil), 403)
-			return false
+		if accessCheckerCommand == nil {
+			log.Log().Warnf("AccessCheckerMiddleware is enabled for \u001B[0;32m%s\u001B[0m, but instance of \u001B[0;33mcore.HttpAccessCommand\u001B[0m is not injected to handler", message.GetRequest().URL.Path)
+			next(message)
+			return
 		}
-		//todo
-	}
-	return true
-}
 
-func (thiz AccessCheckerMiddleware) Priority() core.MiddlewarePriority {
-	return core.Medium
+		allowed := accessCheckerCommand.IsAccessAllowed(message.Context())
+		if !allowed {
+			if message.IsApiNamespace() {
+				message.ResponseJSON(dto.ReturnObject(nil, core.ForbiddenHttpStatus, nil), 403)
+				return
+			}
+			//todo
+		}
+		next(message)
+	}
 }

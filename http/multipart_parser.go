@@ -16,7 +16,7 @@ import (
 
 // multipart parser
 type multipartParser struct {
-	message *Message
+	message core.HttpMessage
 }
 
 func (thiz multipartParser) parse(arg interface{}) error {
@@ -44,7 +44,7 @@ func (thiz multipartParser) parse(arg interface{}) error {
 	openedFiles, err := multipart.DecodeFiles(multipartForm.File, arg)
 	defer func() {
 		if len(openedFiles) > 0 {
-			thiz.message.io = append(thiz.message.io, openedFiles...)
+			thiz.message.(*Message).io = append(thiz.message.(*Message).io, openedFiles...)
 		}
 	}()
 

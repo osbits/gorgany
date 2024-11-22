@@ -13,7 +13,7 @@ import (
 
 type inputResolver struct {
 	reflectedHandler reflect.Value
-	message          *Message
+	message          core.HttpMessage
 }
 
 func (thiz inputResolver) resolve() ([]reflect.Value, error) {
@@ -78,13 +78,13 @@ func (thiz inputResolver) resolve() ([]reflect.Value, error) {
 		args = append(args, reflect.Indirect(reflect.ValueOf(arg)))
 	}
 
-	thiz.message.inputParameters = args
+	thiz.message.(*Message).inputParameters = args
 
 	return args, nil
 }
 
 func (thiz inputResolver) collectPathParams() []string {
-	routeParams := chi.RouteContext(thiz.message.request.Context()).URLParams
+	routeParams := chi.RouteContext(thiz.message.GetRequest().Context()).URLParams
 
 	pathParams := make([]string, 0)
 	for i := range routeParams.Values {
@@ -100,7 +100,7 @@ type bodyParser interface {
 	parse(arg interface{}) error
 }
 
-func resolveBodyParser(command core.HttpCommand, message *Message) bodyParser {
+func resolveBodyParser(command core.HttpCommand, message core.HttpMessage) bodyParser {
 	if command.ContentType() == core.ApplicationJson {
 		return jsonParser{message: message}
 	} else if command.ContentType() == core.MultipartFormData {

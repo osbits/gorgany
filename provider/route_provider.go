@@ -4,15 +4,15 @@ import (
 	"context"
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
-	err2 "git.qix.sx/gorgany/gorgany.git/err"
+	grgerr "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/http"
-	middleware2 "git.qix.sx/gorgany/gorgany.git/http/middleware"
+	"git.qix.sx/gorgany/gorgany.git/http/middleware"
 	"git.qix.sx/gorgany/gorgany.git/http/router"
 	"git.qix.sx/gorgany/gorgany.git/internal"
 	"git.qix.sx/gorgany/gorgany.git/service"
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
-	http2 "net/http"
+	gohttp "net/http"
 	"reflect"
 	"strings"
 )
@@ -43,7 +43,7 @@ func (thiz *RouteProvider) RegisterRouter(router core.Router) {
 
 func (thiz *RouteProvider) RegisterController(controller core.IController) {
 	if err := service.GetContainer().Make(controller); err != nil {
-		err2.HandleError(err)
+		grgerr.HandleError(err)
 		return
 	}
 
@@ -89,22 +89,22 @@ func (thiz *RouteProvider) RegisterController(controller core.IController) {
 
 			switch routeConfig.Method {
 			case core.GET:
-				routerEngine.Get(pattern, func(w http2.ResponseWriter, r *http2.Request) {
+				routerEngine.Get(pattern, func(w gohttp.ResponseWriter, r *gohttp.Request) {
 					http.Dispatch(thiz.applicationContext, w, r, handler, middlewares)
 				})
 				break
 			case core.PUT:
-				routerEngine.Put(pattern, func(w http2.ResponseWriter, r *http2.Request) {
+				routerEngine.Put(pattern, func(w gohttp.ResponseWriter, r *gohttp.Request) {
 					http.Dispatch(thiz.applicationContext, w, r, handler, middlewares)
 				})
 				break
 			case core.DELETE:
-				routerEngine.Delete(pattern, func(w http2.ResponseWriter, r *http2.Request) {
+				routerEngine.Delete(pattern, func(w gohttp.ResponseWriter, r *gohttp.Request) {
 					http.Dispatch(thiz.applicationContext, w, r, handler, middlewares)
 				})
 				break
 			case core.POST:
-				routerEngine.Post(pattern, func(w http2.ResponseWriter, r *http2.Request) {
+				routerEngine.Post(pattern, func(w gohttp.ResponseWriter, r *gohttp.Request) {
 					http.Dispatch(thiz.applicationContext, w, r, handler, middlewares)
 				})
 				break
@@ -136,8 +136,8 @@ func (thiz *RouteProvider) buildLangRegex() string {
 
 func (thiz *RouteProvider) caseSensitiveRoutes() {
 	if !viper.GetBool("app.server.caseSensitiveRoutes") {
-		thiz.router.Engine().(chi.Router).Use(func(next http2.Handler) http2.Handler {
-			fn := func(w http2.ResponseWriter, r *http2.Request) {
+		thiz.router.Engine().(chi.Router).Use(func(next gohttp.Handler) gohttp.Handler {
+			fn := func(w gohttp.ResponseWriter, r *gohttp.Request) {
 				ctx := r.Context()
 				ctx = context.WithValue(ctx, core.OriginalURLPathKey, r.URL.Path)
 				r = r.WithContext(ctx)
@@ -145,14 +145,14 @@ func (thiz *RouteProvider) caseSensitiveRoutes() {
 				r.URL.Path = strings.ToLower(r.URL.Path)
 				next.ServeHTTP(w, r)
 			}
-			return http2.HandlerFunc(fn)
+			return gohttp.HandlerFunc(fn)
 		})
 	}
 }
 
 func (thiz *RouteProvider) supportEndSlash() {
-	thiz.router.Engine().(chi.Router).Use(func(next http2.Handler) http2.Handler {
-		fn := func(w http2.ResponseWriter, r *http2.Request) {
+	thiz.router.Engine().(chi.Router).Use(func(next gohttp.Handler) gohttp.Handler {
+		fn := func(w gohttp.ResponseWriter, r *gohttp.Request) {
 			path := r.URL.Path
 			if len(path) > 0 && path[len(path)-1] == '/' {
 				r.URL.Path = path[:len(path)-1]
@@ -160,7 +160,7 @@ func (thiz *RouteProvider) supportEndSlash() {
 
 			next.ServeHTTP(w, r)
 		}
-		return http2.HandlerFunc(fn)
+		return gohttp.HandlerFunc(fn)
 	})
 }
 
@@ -169,11 +169,11 @@ func (thiz *RouteProvider) addOptionsMethodToCheckPreflightCORS(pattern string, 
 	var corsMiddleware core.IMiddleware
 
 	findInMiddlewares := func(middlewares []core.IMiddleware) core.IMiddleware {
-		for _, middleware := range middlewares {
-			corsMiddlewareEmpty := &middleware2.Cors{}
-			rtM := reflect.TypeOf(middleware)
+		for _, m := range middlewares {
+			corsMiddlewareEmpty := &middleware.Cors{}
+			rtM := reflect.TypeOf(m)
 			if rtM.AssignableTo(reflect.TypeOf(corsMiddlewareEmpty)) {
-				return middleware
+				return m
 			}
 		}
 		return nil
@@ -188,16 +188,18 @@ func (thiz *RouteProvider) addOptionsMethodToCheckPreflightCORS(pattern string, 
 		return
 	}
 
-	routerEngine.Options(pattern, func(w http2.ResponseWriter, r *http2.Request) {
+	routerEngine.Options(pattern, func(w gohttp.ResponseWriter, r *gohttp.Request) {
 		message := &http.Message{}
 		err := service.GetContainer().Make(message, map[string]any{"writer": w, "request": r})
 		if err != nil {
-			err2.HandleErrorWithStacktrace(err)
+			grgerr.HandleErrorWithStacktrace(err)
 			w.WriteHeader(500)
 			return
 		}
 
-		corsMiddleware.Handle(message)
+		corsMiddleware.Handle(func(message core.HttpMessage) {
+			message.Response("", gohttp.StatusOK)
+		})
 	})
 }
 
@@ -206,7 +208,7 @@ func (thiz *RouteProvider) registerDefaultNotFound() {
 		message.Response("NOT FOUND", 404)
 	}
 
-	thiz.router.Engine().(chi.Router).NotFound(func(w http2.ResponseWriter, r *http2.Request) {
+	thiz.router.Engine().(chi.Router).NotFound(func(w gohttp.ResponseWriter, r *gohttp.Request) {
 		http.Dispatch(thiz.applicationContext, w, r, thiz.notFoundHandler, nil)
 	})
 }

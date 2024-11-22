@@ -13,8 +13,7 @@ func (thiz Controllers) AddController(controller IController) {
 }
 
 type IMiddleware interface {
-	Handle(message HttpMessage) bool
-	Priority() MiddlewarePriority
+	Handle(func(message HttpMessage)) func(message HttpMessage)
 }
 
 type Router interface {

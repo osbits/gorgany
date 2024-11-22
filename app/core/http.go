@@ -26,6 +26,7 @@ type HttpMessage interface {
 	Redirect(url string, redirectCode int)
 	OneTimeParams() map[string]any
 	GetBearerToken() string
+	GetQuery() QueryParams
 	GetQueryParam(key string) string
 	GetQueryParams(key string) []string
 	GetQueryParamsMap(key string) []map[string]string
@@ -83,4 +84,11 @@ type HttpAccessCommand interface {
 
 type MapInitiator interface {
 	ValueOfMap(params map[string]string) error
+}
+
+type QueryParams interface {
+	GetString(key string) string
+	GetArray(key string) []string
+	GetArrayMap(key string) []map[string]string
+	AsMap() map[string]any
 }

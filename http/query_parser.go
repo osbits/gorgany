@@ -13,13 +13,13 @@ import (
 )
 
 type queryParser struct {
-	message *Message
+	message core.HttpMessage
 }
 
 func (thiz queryParser) parse(arg interface{}) error {
 	queryParams := thiz.message.GetQuery()
 
-	err := thiz.initStruct(arg, queryParams)
+	err := thiz.initStruct(arg, queryParams.AsMap())
 	if err != nil {
 		validationErrors := make(error2.ValidationErrors, 0)
 		if errors.As(err, &schema.MultiError{}) {
