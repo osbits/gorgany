@@ -17,6 +17,7 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"git.qix.sx/gorgany/gorgany.git/view"
 	"github.com/go-chi/chi"
+	"github.com/google/uuid"
 	"github.com/spf13/viper"
 	"io"
 	"mime/multipart"
@@ -30,11 +31,23 @@ import (
 type ResponseWriterWrapper struct {
 	http.ResponseWriter
 	StatusCode int
+	Body       io.ReadCloser
+	Headers    http.Header
 }
 
 func (thiz *ResponseWriterWrapper) WriteHeader(code int) {
 	thiz.StatusCode = code
 	thiz.ResponseWriter.WriteHeader(code)
+}
+
+func (thiz *ResponseWriterWrapper) Header() http.Header {
+	thiz.Headers = thiz.ResponseWriter.Header()
+	return thiz.ResponseWriter.Header()
+}
+
+func (thiz *ResponseWriterWrapper) Write(b []byte) (int, error) {
+	thiz.Body = io.NopCloser(bytes.NewBuffer(b))
+	return thiz.ResponseWriter.Write(b)
 }
 
 type Message struct {
@@ -404,6 +417,7 @@ func (thiz *Message) Context() context.Context {
 	mCtx.cookieManager = thiz.cookieManager
 	mCtx.headers = thiz.GetHeader()
 	mCtx.request = thiz.GetRequest()
+	mCtx.requestId = uuid.New().String()
 	//mCtx.applicationContext = thiz.applicationContext
 
 	parentRequestCtx := thiz.GetRequest().Context()
@@ -416,6 +430,19 @@ func (thiz *Message) Context() context.Context {
 	mCtx.session = thiz.GetSession()
 
 	return thiz.ctx
+}
+
+func (thiz *Message) WithContext(ctx context.Context) {
+	if _, ok := ctx.Value(core.ApplicationContextKey).(core.IApplicationContext); !ok {
+		err2.HandleError("It's now allowed to set new context without core.IApplicationContext")
+		return
+	}
+
+	if _, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext); !ok {
+		err2.HandleError("It's now allowed to set new context without core.IMessageContet")
+		return
+	}
+	thiz.ctx = ctx
 }
 
 func (thiz *Message) GetSession() core.ISession {

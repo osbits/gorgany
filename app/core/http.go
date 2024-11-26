@@ -37,6 +37,7 @@ type HttpMessage interface {
 	GetFiles(key string) ([]IFile, error)
 	IsApiNamespace() bool
 	Context() context.Context
+	WithContext(ctx context.Context)
 	GetInputParameters() []reflect.Value
 	GetRawQuery() string
 	GetSession() ISession
@@ -52,6 +53,7 @@ type IMessageContext interface {
 	GetPathParam(name string) string
 	GetSession() ISession
 	GetRequest() *http.Request
+	GetRequestId() string
 
 	GetRequestContext() context.Context
 }

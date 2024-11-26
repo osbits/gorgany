@@ -17,6 +17,8 @@ type messageContext struct {
 	session       core.ISession
 	request       *http.Request
 
+	requestId string
+
 	requestCtx context.Context
 }
 
@@ -55,4 +57,8 @@ func (thiz *messageContext) GetRequest() *http.Request {
 
 func (thiz *messageContext) GetRequestContext() context.Context {
 	return thiz.requestCtx
+}
+
+func (thiz *messageContext) GetRequestId() string {
+	return thiz.requestId
 }
