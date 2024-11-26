@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/viper"
 	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	url2 "net/url"
 	"reflect"
@@ -418,6 +419,7 @@ func (thiz *Message) Context() context.Context {
 	mCtx.headers = thiz.GetHeader()
 	mCtx.request = thiz.GetRequest()
 	mCtx.requestId = uuid.New().String()
+	mCtx.ip = thiz.GetIp()
 	//mCtx.applicationContext = thiz.applicationContext
 
 	parentRequestCtx := thiz.GetRequest().Context()
@@ -499,6 +501,26 @@ func (thiz *Message) addOptionsToView(options map[string]any) map[string]any {
 	}
 
 	return options
+}
+
+func (thiz *Message) GetIp() string {
+	xff := thiz.request.Header.Get("X-Forwarded-For")
+	if xff != "" {
+		ips := strings.Split(xff, ",")
+		return strings.TrimSpace(ips[0])
+	}
+
+	xri := thiz.request.Header.Get("X-Real-IP")
+	if xri != "" {
+		return xri
+	}
+
+	ip, _, err := net.SplitHostPort(thiz.request.RemoteAddr)
+	if err != nil {
+		return ""
+	}
+
+	return ip
 }
 
 func (thiz *Message) setSession() {

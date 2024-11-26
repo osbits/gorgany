@@ -18,6 +18,7 @@ type messageContext struct {
 	request       *http.Request
 
 	requestId string
+	ip        string
 
 	requestCtx context.Context
 }
@@ -61,4 +62,8 @@ func (thiz *messageContext) GetRequestContext() context.Context {
 
 func (thiz *messageContext) GetRequestId() string {
 	return thiz.requestId
+}
+
+func (thiz *messageContext) GetIp() string {
+	return thiz.ip
 }

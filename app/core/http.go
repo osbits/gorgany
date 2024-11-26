@@ -42,6 +42,7 @@ type HttpMessage interface {
 	GetRawQuery() string
 	GetSession() ISession
 	GetCookieManager() ICookieManager
+	GetIp() string
 }
 
 type IMessageContext interface {
@@ -54,6 +55,7 @@ type IMessageContext interface {
 	GetSession() ISession
 	GetRequest() *http.Request
 	GetRequestId() string
+	GetIp() string
 
 	GetRequestContext() context.Context
 }
