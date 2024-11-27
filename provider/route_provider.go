@@ -85,7 +85,7 @@ func (thiz *RouteProvider) RegisterController(controller core.IController) {
 				pattern = pattern[:len(pattern)-1]
 			}
 
-			thiz.addOptionsMethodToCheckPreflightCORS(pattern, handler, middlewares)
+			thiz.addOptionsMethodToCheckPreflightCORS(pattern, middlewares)
 
 			switch routeConfig.Method {
 			case core.GET:
@@ -164,7 +164,7 @@ func (thiz *RouteProvider) supportEndSlash() {
 	})
 }
 
-func (thiz *RouteProvider) addOptionsMethodToCheckPreflightCORS(pattern string, handler any, middlewares []core.IMiddleware) {
+func (thiz *RouteProvider) addOptionsMethodToCheckPreflightCORS(pattern string, middlewares []core.IMiddleware) {
 	routerEngine := thiz.router.Engine().(chi.Router)
 	var corsMiddleware core.IMiddleware
 
@@ -197,9 +197,11 @@ func (thiz *RouteProvider) addOptionsMethodToCheckPreflightCORS(pattern string, 
 			return
 		}
 
-		corsMiddleware.Handle(func(message core.HttpMessage) {
+		handler := corsMiddleware.Handle(func(message core.HttpMessage) {
 			message.Response("", gohttp.StatusOK)
 		})
+
+		handler(message)
 	})
 }
 
