@@ -480,6 +480,7 @@ func (thiz *Message) Close() error {
 		}
 	}
 	thiz.request.Body.Close()
+	thiz.writer.(*ResponseWriterWrapper).Body.Close()
 
 	return nil
 }
