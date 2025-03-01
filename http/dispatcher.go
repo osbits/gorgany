@@ -7,6 +7,7 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/service"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"github.com/go-chi/chi"
+	"io"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -44,7 +45,15 @@ func Dispatch(applicationContext core.IApplicationContext, w http.ResponseWriter
 		}
 	}()
 
-	err := service.GetContainer().Make(message, map[string]any{"writer": &ResponseWriterWrapper{ResponseWriter: w, StatusCode: 200}, "request": r})
+	err := service.GetContainer().Make(message, map[string]any{"writer": &ResponseWriterWrapper{
+		Flusher:        w.(http.Flusher),
+		Hijacker:       w.(http.Hijacker),
+		ReaderFrom:     w.(io.ReaderFrom),
+		ResponseWriter: w,
+		StringWriter:   w.(io.StringWriter),
+		Writer:         w.(io.Writer),
+		StatusCode:     200,
+	}, "request": r})
 	if err != nil {
 		err2.HandleErrorWithStacktrace(err)
 		w.WriteHeader(500)

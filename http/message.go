@@ -30,7 +30,13 @@ import (
 )
 
 type ResponseWriterWrapper struct {
+	http.Flusher
+	http.Hijacker
+	io.ReaderFrom
 	http.ResponseWriter
+	io.StringWriter
+	io.Writer
+
 	StatusCode int
 	Body       io.ReadCloser
 	Headers    http.Header
