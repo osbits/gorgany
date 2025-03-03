@@ -486,7 +486,10 @@ func (thiz *Message) Close() error {
 		}
 	}
 	thiz.request.Body.Close()
-	thiz.writer.(*ResponseWriterWrapper).Body.Close()
+
+	if thiz.writer.(*ResponseWriterWrapper).Body != nil {
+		thiz.writer.(*ResponseWriterWrapper).Body.Close()
+	}
 
 	return nil
 }
