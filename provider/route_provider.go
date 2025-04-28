@@ -62,7 +62,14 @@ func (thiz *RouteProvider) RegisterController(controller core.IController) {
 			panic(fmt.Sprintf("Handler must be function. Controller: %s, route: %s", reflectedController.String(), routeConfig.Path))
 		}
 
-		middlewares := routeConfig.Middlewares
+		middlewares := make([]core.IMiddleware, 0)
+		for _, m := range middlewares {
+			if err := service.GetContainer().Make(m); err != nil {
+				grgerr.HandleError(err)
+				return
+			}
+			middlewares = append(middlewares, m)
+		}
 
 		thiz.router.RegisterRoute(routeConfig)
 		route := routeConfig.Path
@@ -124,6 +131,10 @@ func (thiz *RouteProvider) SetHomeUrl(url string) {
 }
 
 func (thiz *RouteProvider) RegisterMiddleware(middleware core.IMiddleware) {
+	if err := service.GetContainer().Make(middleware); err != nil {
+		grgerr.HandleError(err)
+		return
+	}
 	thiz.applicationContext.RegisterMiddleware(middleware)
 }
 

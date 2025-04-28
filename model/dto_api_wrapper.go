@@ -31,8 +31,10 @@ func (thiz *ApiReturnObject) MarshalJSON() ([]byte, error) {
 	var body any
 	var e error
 
-	rvBody := util.IndirectValue(reflect.ValueOf(thiz.Body))
-	body, e = thiz.callBuilderFunc(rvBody)
+	if thiz.Body != nil {
+		rvBody := util.IndirectValue(reflect.ValueOf(thiz.Body))
+		body, e = thiz.callBuilderFunc(rvBody)
+	}
 
 	if e != nil {
 		return nil, e
