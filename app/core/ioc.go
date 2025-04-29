@@ -10,7 +10,6 @@ type IContainer interface {
 	BindLazy(resolver interface{}) error
 	NamedBind(name string, resolver interface{}) error
 	NamedBindLazy(name string, resolver interface{}) error
-	Call(function interface{}) error
 	Resolve(abstraction interface{}) error
 	NamedResolve(abstraction interface{}, name string) error
 	Make(structure interface{}, values ...map[string]interface{}) error
