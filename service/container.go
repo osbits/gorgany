@@ -3,11 +3,10 @@ package service
 import (
 	"errors"
 	"fmt"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"reflect"
 	"sync"
 	"unsafe"
-
-	"git.qix.sx/gorgany/gorgany.git/app/core"
 )
 
 // binding holds resolver and cached instance for singletons
@@ -81,29 +80,20 @@ func (c *Container) bind(resolver interface{}, name string, isSingleton, isLazy 
 	if instType.Kind() != reflect.Ptr && instType.Kind() != reflect.Interface {
 		instType = reflect.PtrTo(instType)
 	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if _, ok := c.bindings[instType]; !ok {
-		c.bindings[instType] = make(map[string]*binding)
-	}
-
 	var preInst interface{}
 	if !isLazy {
-		// For non-lazy bindings, create the instance now
 		inst, err := c.invoke(resolver, make(map[reflect.Type]interface{}))
 		if err != nil {
 			return err
 		}
 		preInst = inst
 	}
-
-	c.bindings[instType][name] = &binding{
-		resolver:    resolver,
-		concrete:    preInst,
-		isSingleton: isSingleton,
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.bindings[instType]; !ok {
+		c.bindings[instType] = make(map[string]*binding)
 	}
+	c.bindings[instType][name] = &binding{resolver: resolver, concrete: preInst, isSingleton: isSingleton}
 	return nil
 }
 
@@ -219,29 +209,35 @@ func (c *Container) resolve(t reflect.Type, name string, chain map[reflect.Type]
 }
 
 func (c *Container) getInstance(b *binding, chain map[reflect.Type]interface{}) (interface{}, error) {
+	if b.isSingleton && b.concrete != nil {
+		return b.concrete, nil
+	}
+
 	if !b.isSingleton {
 		return c.invoke(b.resolver, chain)
 	}
 
-	// Double-checked locking pattern for singleton
+	c.mu.RLock()
 	if b.concrete != nil {
-		return b.concrete, nil
+		instance := b.concrete
+		c.mu.RUnlock()
+		return instance, nil
 	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Check again after acquiring lock
-	if b.concrete != nil {
-		return b.concrete, nil
-	}
+	c.mu.RUnlock()
 
 	inst, err := c.invoke(b.resolver, chain)
 	if err != nil {
 		return nil, err
 	}
 
-	b.concrete = inst
+	c.mu.Lock()
+	if b.concrete == nil {
+		b.concrete = inst
+	} else {
+		inst = b.concrete
+	}
+	c.mu.Unlock()
+
 	return inst, nil
 }
 
@@ -319,23 +315,22 @@ func (c *Container) fill(target interface{}, chain map[reflect.Type]interface{})
 		default:
 			continue
 		}
+
 		inst, err := c.resolve(keyType, "", chain)
 		if err != nil {
 			return err
 		}
+
 		if err := c.fill(inst, chain); err != nil {
 			return err
 		}
+
 		val := reflect.ValueOf(inst)
 		if ftype.Kind() == reflect.Interface {
-			if fv.CanSet() {
-				fv.Set(val)
-			} else {
-				ptr := unsafe.Pointer(fv.UnsafeAddr())
-				mutable := reflect.NewAt(ftype, ptr).Elem()
-				if mutable.IsValid() && mutable.CanSet() {
-					mutable.Set(val)
-				}
+			ptr := unsafe.Pointer(fv.UnsafeAddr())
+			mutable := reflect.NewAt(ftype, ptr).Elem()
+			if mutable.IsValid() && mutable.CanSet() {
+				mutable.Set(val)
 			}
 		} else {
 			var toSet reflect.Value
@@ -354,6 +349,7 @@ func (c *Container) fill(target interface{}, chain map[reflect.Type]interface{})
 			}
 		}
 	}
+
 	if initObj, ok := target.(core.Initiator); ok {
 		addr := reflect.ValueOf(target).Pointer()
 		c.initMu.Lock()

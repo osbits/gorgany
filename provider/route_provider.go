@@ -62,9 +62,6 @@ func (p *RouteProvider) Boot(c core.IContainer) {
 		}
 		wc.SetNotFound(p.notFound)
 
-		var authContext core.IWebContext
-		c.Resolve(&authContext)
-
 		wc.SetNewMessage(func(w gohttp.ResponseWriter, r *gohttp.Request) (core.HttpMessage, error) {
 			msg := &http.Message{}
 			if err := c.Make(msg, map[string]interface{}{

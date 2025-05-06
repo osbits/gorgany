@@ -8,7 +8,7 @@ import (
 
 // concrete session
 func NewSession(id string, expiry time.Time) *Session {
-	return &Session{}
+	return &Session{id: id, expiry: expiry}
 }
 
 type Session struct {
