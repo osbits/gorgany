@@ -4,7 +4,6 @@ import (
 	"flag"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/log"
-	"git.qix.sx/gorgany/gorgany.git/validator"
 	goValidator "github.com/go-playground/validator/v10"
 	"os"
 	"reflect"
@@ -24,17 +23,12 @@ type FlagConfig struct { //`command:"flag,default=value,name=name"`
 type Flags map[string]*FlagConfig //[fieldName]FlagConfig
 
 type Resolver struct {
-	applicationContext core.IApplicationContext
-}
-
-func NewCommandResolver(applicationContext core.IApplicationContext) *Resolver {
-	return &Resolver{
-		applicationContext: applicationContext,
-	}
+	consoleContext core.IConsoleContext `container:"inject"`
+	validator      core.IValidator      `container:"inject"`
 }
 
 func (thiz Resolver) ResolveCommand(commandName string) core.ICommand {
-	command := thiz.applicationContext.GetCommand(commandName)
+	command := thiz.consoleContext.GetCommand(commandName)
 	if command == nil {
 		log.Log("").Panicf("Command %s does not exist", commandName)
 	}
@@ -54,8 +48,7 @@ func (thiz Resolver) ResolveCommand(commandName string) core.ICommand {
 		rvField.Set(reflect.ValueOf(flagConfig.Value).Elem())
 	}
 
-	validate := validator.GetValidator()
-	err := validate.ValidateStruct(command)
+	err := thiz.validator.ValidateStruct(command)
 	if err != nil {
 		commandFlags.PrintDefaults()
 

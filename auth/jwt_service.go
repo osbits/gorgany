@@ -14,6 +14,7 @@ func NewJwtService() *JwtService {
 }
 
 type JwtService struct {
+	userService core.IUserService `container:"inject"`
 }
 
 func (thiz JwtService) GenerateJwt(user core.Authenticable, secret string) (string, error) {
@@ -59,7 +60,7 @@ func (thiz JwtService) GetUser(token string, secret string) (core.Authenticable,
 		return nil, err
 	}
 
-	return GetAuthEntityService().GetByUsername(claims["username"].(string))
+	return thiz.userService.GetByUsername(claims["username"].(string))
 }
 
 // CurrentUser

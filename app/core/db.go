@@ -12,6 +12,10 @@ const (
 	MongoDb        DbType = "mongo"
 )
 
+type IDBContext interface {
+	RegisterDBConnection(name string, dbConnection GrgDBConnection)
+	GetDBConnection(name string) GrgDBConnection
+}
 type GrgDBConnection interface {
 	Driver() any
 	Builder() IQueryBuilder

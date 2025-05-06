@@ -2,14 +2,9 @@ package auth
 
 import (
 	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/internal"
 	"sync"
 	"time"
 )
-
-func GetSessionStorage() core.ISessionStorage {
-	return internal.GetApplicationContext().GetSessionStorage()
-}
 
 // concrete session
 func NewSession(id string, expiry time.Time) *Session {
@@ -82,12 +77,20 @@ func (thiz *Session) ClearItems() {
 
 // MemorySession memory-bases session manager
 type MemorySession struct {
-	sessions map[string]core.ISession
-	mu       sync.Mutex
+	sessionLifetime time.Duration
+	sessions        map[string]core.ISession
+	mu              sync.Mutex
 }
 
-func NewMemorySession() *MemorySession {
-	return &MemorySession{sessions: make(map[string]core.ISession)}
+func NewMemorySession(sessionLifetime time.Duration) *MemorySession {
+	return &MemorySession{
+		sessions:        make(map[string]core.ISession),
+		sessionLifetime: sessionLifetime,
+	}
+}
+
+func (thiz *MemorySession) SetSessionLifetime(lifetime time.Duration) {
+	thiz.sessionLifetime = lifetime
 }
 
 func (thiz *MemorySession) ClearExpiredSessions() {
@@ -124,6 +127,10 @@ func (thiz *MemorySession) GetSessionById(id string) core.ISession {
 	thiz.mu.Unlock()
 
 	return session
+}
+
+func (thiz *MemorySession) GetSessionLifetime() time.Duration {
+	return thiz.sessionLifetime
 }
 
 // DbSession, not implemented yet

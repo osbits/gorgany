@@ -3,7 +3,6 @@ package auth
 import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/auth"
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/http/router"
 	"git.qix.sx/gorgany/gorgany.git/util"
@@ -15,13 +14,17 @@ func NewLoginController() *LoginController {
 	return &LoginController{}
 }
 
-type LoginController struct{}
+type LoginController struct {
+	webContext  core.IWebContext  `container:"inject"`
+	authContext core.IAuthContext `container:"inject"`
+	userService core.IUserService `container:"inject"`
+	router      core.Router       `container:"inject"`
+}
 
 func (thiz LoginController) ShowLogin(message core.HttpMessage) {
-	appCtx := message.Context().Value(core.ApplicationContextKey).(core.IApplicationContext)
-	homeUrl := appCtx.GetHomeUrl()
+	homeUrl := thiz.webContext.GetHomeUrl()
 
-	if auth.Strategy().IsLoggedIn(message.Context()) {
+	if thiz.authContext.ResolveAuthStrategyByContext(message.Context()).IsLoggedIn(message.Context()) {
 		message.Redirect(homeUrl, 301)
 	}
 
@@ -29,10 +32,9 @@ func (thiz LoginController) ShowLogin(message core.HttpMessage) {
 }
 
 func (thiz LoginController) Login(message core.HttpMessage) {
-	appCtx := message.Context().Value(core.ApplicationContextKey).(core.IApplicationContext)
-	homeUrl := appCtx.GetHomeUrl()
+	homeUrl := thiz.webContext.GetHomeUrl()
 
-	if auth.Strategy().IsLoggedIn(message.Context()) {
+	if thiz.authContext.ResolveAuthStrategyByContext(message.Context()).IsLoggedIn(message.Context()) {
 		message.Redirect(homeUrl, 301)
 	}
 
@@ -40,22 +42,22 @@ func (thiz LoginController) Login(message core.HttpMessage) {
 	values, _ := url.ParseQuery(body)
 	username := values.Get("username")
 	password := values.Get("password")
-	user, err := auth.GetAuthEntityService().GetByUsername(username)
+	user, err := thiz.userService.GetByUsername(username)
 	if err != nil {
 		err2.HandleError(err)
-		message.RedirectWithParams(router.GetRouter().UrlByNameSequence("cp.login.show"), 301, map[string]any{"error": fmt.Sprintf("Unexpected error during find user %s in our storage", username)})
+		message.RedirectWithParams(thiz.router.UrlByNameSequence("cp.login.show"), 301, map[string]any{"error": fmt.Sprintf("Unexpected error during find user %s in our storage", username)})
 		return
 	}
 
 	if user == nil || !util.CompareSaltedHash(user.GetPassword(), password) {
-		message.RedirectWithParams(router.GetRouter().UrlByNameSequence("cp.login.show"), 301, map[string]any{"error": "We were unable to find a user with the specified email address and password"})
+		message.RedirectWithParams(thiz.router.UrlByNameSequence("cp.login.show"), 301, map[string]any{"error": "We were unable to find a user with the specified email address and password"})
 		return
 	}
 
-	_, err = auth.Strategy().Login(user, message.Context())
+	_, err = thiz.authContext.ResolveAuthStrategyByContext(message.Context()).Login(user, message.Context())
 	if err != nil {
 		err2.HandleError(err)
-		message.RedirectWithParams(router.GetRouter().UrlByNameSequence("cp.login.show"), 301, map[string]any{"error": fmt.Sprintf("Unexpected error during find user %s in our storage", username)})
+		message.RedirectWithParams(thiz.router.UrlByNameSequence("cp.login.show"), 301, map[string]any{"error": fmt.Sprintf("Unexpected error during find user %s in our storage", username)})
 		return
 	}
 
@@ -63,8 +65,8 @@ func (thiz LoginController) Login(message core.HttpMessage) {
 }
 
 func (thiz LoginController) Logout(message core.HttpMessage) {
-	auth.Strategy().Logout(message.Context())
-	message.Redirect(router.GetRouter().UrlByNameSequence("cp.login.show"), http.StatusTemporaryRedirect)
+	thiz.authContext.ResolveAuthStrategyByContext(message.Context()).Logout(message.Context())
+	message.Redirect(thiz.router.UrlByNameSequence("cp.login.show"), http.StatusTemporaryRedirect)
 }
 
 func (thiz LoginController) GetRoutes() []core.IRouteConfig {

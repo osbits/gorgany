@@ -86,3 +86,8 @@ type IFormValue interface {
 type Enum interface {
 	Values() string
 }
+
+type IDomainContext interface {
+	RegisterDomain(pkgAndName string, domain any)
+	GetDomains() map[string]any
+}

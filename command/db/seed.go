@@ -10,6 +10,7 @@ import (
 )
 
 type SeedCommand struct {
+	dataContext core.IDataContext `container:"inject"`
 }
 
 func (thiz SeedCommand) GetName() string {
@@ -26,7 +27,7 @@ func (thiz SeedCommand) Execute(ctx context.Context) {
 
 	total := 0
 	tx := gormInstance.Begin()
-	for _, seeder := range ctx.Value(core.ApplicationContextKey).(core.IApplicationContext).GetSeeders() {
+	for _, seeder := range thiz.dataContext.Seeders() {
 		var seederDomain db.Seeder
 		gormInstance.First(&seederDomain, "name = ?", seeder.Name())
 

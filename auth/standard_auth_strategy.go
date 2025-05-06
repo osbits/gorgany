@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/internal"
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
 	"math/rand"
@@ -17,6 +16,7 @@ import (
 
 type StandardAuthStrategy struct {
 	sessionManager core.ISessionStorage `container:"inject"`
+	userService    core.IUserService    `container:"inject"`
 }
 
 func (thiz *StandardAuthStrategy) NewSessionWithoutUser(ctx context.Context) (core.ISession, error) {
@@ -36,7 +36,7 @@ func (thiz *StandardAuthStrategy) NewSessionWithoutUser(ctx context.Context) (co
 
 	session = &Session{
 		id:     hashedToken,
-		expiry: now.Add(time.Second * time.Duration(internal.GetApplicationContext().GetSessionLifetime())),
+		expiry: now.Add(time.Second * thiz.sessionManager.GetSessionLifetime()),
 	}
 	thiz.sessionManager.AddSession(session)
 
@@ -148,7 +148,7 @@ func (thiz *StandardAuthStrategy) CurrentUser(ctx context.Context) (core.Authent
 		return nil, nil
 	}
 
-	return GetAuthEntityService().Get(session.GetUserId())
+	return thiz.userService.Get(session.GetUserId())
 }
 
 func (thiz *StandardAuthStrategy) ResolveSessionId(ctx context.Context) string {

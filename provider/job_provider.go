@@ -3,63 +3,70 @@ package provider
 import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/err"
+	grgerr "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/log"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"github.com/jasonlvhit/gocron"
 	"reflect"
 )
 
-func NewJobProvider() *JobProvider {
-	return &JobProvider{jobs: make(chan core.IJob)}
-}
-
 type JobProvider struct {
-	jobs               chan core.IJob
-	applicationContext core.IApplicationContext
+	ctors []func() core.IJob
 }
 
-func (thiz *JobProvider) InitProvider(applicationContext core.IApplicationContext) {
-	thiz.applicationContext = applicationContext
+func NewJobProvider() *JobProvider {
+	return &JobProvider{ctors: make([]func() core.IJob, 0)}
+}
 
-	if thiz.jobs == nil {
-		thiz.jobs = make(chan core.IJob)
+func (p *JobProvider) AddJob(ctor func() core.IJob) {
+	p.ctors = append(p.ctors, ctor)
+}
+
+func (p *JobProvider) Register(c core.IContainer) {
+	c.SingletonLazy(func() *gocron.Scheduler {
+		return gocron.NewScheduler()
+	})
+
+	for _, ctor := range p.ctors {
+		c.TransientLazy(func(ctor func() core.IJob) func() core.IJob {
+			return ctor
+		}(ctor))
 	}
-	thiz.startScheduler()
 }
 
-func (thiz *JobProvider) RegisterJob(job core.IJob) {
-	thiz.jobs <- job
-}
+func (p *JobProvider) Boot(c core.IContainer) {
+	sched := &gocron.Scheduler{}
+	if err := c.Make(sched); err != nil {
+		grgerr.HandleError(fmt.Errorf("job Boot: cannot Make Scheduler: %w", err))
+		return
+	}
 
-func (thiz *JobProvider) startScheduler() {
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				err.HandleErrorWithStacktrace(fmt.Sprintf("Error when scheduling job: %v", r))
-			}
-		}()
+	for _, ctor := range p.ctors {
 
-		cronScheduler := gocron.Start()
-		for j := range thiz.jobs {
-			rtJob := util.IndirectType(reflect.TypeOf(j))
-			jobName := rtJob.Name()
-			e := j.InitSchedule().Do(thiz.startJob, jobName, j.Handle)
-			if e != nil {
-				log.Log("").Errorf("Unable to start job %s", jobName)
-			}
+		job := ctor()
+
+		if err := c.Make(job); err != nil {
+			grgerr.HandleError(fmt.Errorf("job Boot: cannot make job %T: %w", job, err))
+			return
 		}
-		<-cronScheduler
-	}()
-}
 
-func (thiz *JobProvider) startJob(jobName string, handler func()) {
-	defer func() {
-		if r := recover(); r != nil {
-			err.HandleErrorWithStacktrace(fmt.Sprintf("Error when executing job %s: %v", jobName, r))
+		rt := util.IndirectType(reflect.TypeOf(job))
+		name := rt.Name()
+
+		schedule := job.InitSchedule()
+
+		handler := func() {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Log("").Errorf("Error executing job %s: %v", name, r)
+				}
+			}()
+			log.Log("").Infof("Start job %s", name)
+			job.Handle()
+			log.Log("").Infof("End job %s", name)
 		}
-	}()
-	log.Log("").Infof("Start job %s", jobName)
-	handler()
-	log.Log("").Infof("End job %s", jobName)
+		schedule.Do(handler)
+	}
+
+	go sched.Start()
 }

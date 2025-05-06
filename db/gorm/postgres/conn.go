@@ -9,7 +9,6 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/err"
 	model2 "git.qix.sx/gorgany/gorgany.git/service/cache"
 	"git.qix.sx/gorgany/gorgany.git/util"
-	"git.qix.sx/gorgany/gorgany.git/validator"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 	"reflect"
@@ -56,7 +55,8 @@ type Builder struct {
 	groupBy         []string
 	having          core.IHaving
 
-	copyGorm *gorm.DB
+	validator core.IValidator `container:"inject"`
+	copyGorm  *gorm.DB
 }
 
 func NewBuilder(gormInstance core.GrgDBConnection) *Builder {
@@ -414,7 +414,7 @@ func (thiz *Builder) Insert(model any) error {
 }
 
 func (thiz *Builder) Save(model any) error {
-	err := validator.GetValidator().ValidateStruct(model)
+	err := thiz.validator.ValidateStruct(model)
 	if err != nil {
 		return err
 	}

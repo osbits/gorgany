@@ -38,7 +38,7 @@ func (thiz GorganyRouter) RegisterRoute(route core.IRouteConfig) {
 }
 
 func (thiz GorganyRouter) UrlByName(name string, params map[string]any) string {
-	route := GetRouter().RouteByName(name)
+	route := thiz.RouteByName(name)
 	if route == nil {
 		return "/"
 	}
@@ -47,7 +47,7 @@ func (thiz GorganyRouter) UrlByName(name string, params map[string]any) string {
 }
 
 func (thiz GorganyRouter) UrlByNameSequence(name string, params ...any) string {
-	route := GetRouter().RouteByName(name)
+	route := thiz.RouteByName(name)
 	if route == nil {
 		return "/"
 	}

@@ -6,12 +6,10 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/app"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	error2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/internal"
-	"git.qix.sx/gorgany/gorgany.git/service/dto"
 	"reflect"
 )
 
-var defaultErrorHandlerMap = map[string]core.ErrorHandler{
+var defaultHandlers = map[string]core.ErrorHandler{
 	"ValidationErrors":     processValidationErrors,
 	"ValidationError":      processValidationError,
 	"InputBodyParseError":  processBodyParsingError,
@@ -20,23 +18,24 @@ var defaultErrorHandlerMap = map[string]core.ErrorHandler{
 	"JwtAuthError":         processJwtAuthError,
 }
 
-func getErrorHandler(key string) core.ErrorHandler {
-	customHandlers := internal.GetApplicationContext().GetErrorHandlers()
+var customHandlers = make(map[string]core.ErrorHandler)
 
-	if errorHandler, ok := customHandlers[key]; ok {
-		return errorHandler
+func SetErrorHandlers(handlers map[string]core.ErrorHandler) {
+	customHandlers = handlers
+}
+
+func GetErrorHandler(errName string) core.ErrorHandler {
+	if h, ok := customHandlers[errName]; ok {
+		return h
+	}
+	if h, ok := defaultHandlers[errName]; ok {
+		return h
+	}
+	if h, ok := customHandlers["Default"]; ok {
+		return h
 	}
 
-	if defaultHandler, ok := defaultErrorHandlerMap[key]; ok {
-		return defaultHandler
-	}
-
-	defaultHandler, ok := customHandlers["Default"]
-	if !ok {
-		return processDefaultError
-	} else {
-		return defaultHandler
-	}
+	return processDefaultError
 }
 
 func Catch(err error, message core.HttpMessage) {
@@ -46,7 +45,7 @@ func Catch(err error, message core.HttpMessage) {
 	}
 
 	errName := reflectedErr.Name()
-	errorHandler := getErrorHandler(errName)
+	errorHandler := GetErrorHandler(errName)
 	if errorHandler == nil {
 		processDefaultError(err, message)
 		return
@@ -58,10 +57,6 @@ func Catch(err error, message core.HttpMessage) {
 func processDefaultError(err error, message core.HttpMessage) {
 	error2.PrintError(err)
 	if app.GetRunMode() == gorgany.Dev {
-		if message.GetHeader().Get("Content-Type") == core.ApplicationJson.String() || message.IsApiNamespace() {
-			message.ResponseJSON(dto.ReturnObject(nil, core.InternalErrorHttpStatus, err.Error()), 500)
-			return
-		}
 		message.Response(fmt.Sprintf("Oops... 500 error.\n %v \n%s", err, error2.GetStacktrace()), 500)
 		return
 	}
@@ -72,10 +67,6 @@ func processDefaultError(err error, message core.HttpMessage) {
 func processValidationErrors(error error, message core.HttpMessage) {
 	concreteError := error.(*error2.ValidationErrors)
 	req := message.GetRequest()
-	if message.GetHeader().Get("Content-Type") == core.ApplicationJson.String() || message.IsApiNamespace() {
-		message.ResponseJSON(dto.ReturnObject(nil, core.ValidationHttpStatus, error), 422)
-		return
-	}
 	message.RedirectWithParams(req.Referer(), 301, map[string]any{"validation": concreteError})
 }
 
@@ -100,10 +91,6 @@ func processBodyParsingError(error error, message core.HttpMessage) {
 }
 
 func processJwtAuthError(err error, message core.HttpMessage) {
-	if message.GetHeader().Get("Content-Type") == core.ApplicationJson.String() || message.IsApiNamespace() {
-		message.ResponseJSON(dto.ReturnObject(nil, core.NotAuthorizedHttpStatus, "Invalid JWT"), 401)
-		return
-	}
 	message.Response("", 401)
 	return
 }

@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/auth"
 	"git.qix.sx/gorgany/gorgany.git/service/dto"
 	"github.com/spf13/viper"
 )
@@ -10,6 +9,7 @@ import (
 type AuthMiddleware struct {
 	Roles          []core.UserRole
 	AuthStrategies []string
+	AuthContext    core.IAuthContext `container:"inject"`
 }
 
 func (thiz AuthMiddleware) Handle(next func(core.HttpMessage)) func(core.HttpMessage) {
@@ -19,7 +19,7 @@ func (thiz AuthMiddleware) Handle(next func(core.HttpMessage)) func(core.HttpMes
 		}
 
 		for _, strategy := range thiz.AuthStrategies {
-			if !auth.Strategy(strategy).IsLoggedIn(message.Context()) {
+			if !thiz.AuthContext.Strategy(strategy).IsLoggedIn(message.Context()) {
 				continue
 			}
 			if thiz.Roles == nil || len(thiz.Roles) == 0 {
@@ -27,7 +27,7 @@ func (thiz AuthMiddleware) Handle(next func(core.HttpMessage)) func(core.HttpMes
 				return
 			}
 
-			user, err := auth.Strategy(strategy).CurrentUser(message.Context())
+			user, err := thiz.AuthContext.Strategy(strategy).CurrentUser(message.Context())
 			if err != nil {
 				panic(err) //todo
 			}

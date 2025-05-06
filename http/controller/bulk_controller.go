@@ -22,13 +22,14 @@ type RequestClosure struct {
 
 // BulkController - it used only for internal requests
 type BulkController struct {
+	Router core.Router `container:"inject"`
 }
 
 func (thiz BulkController) Parallel(message core.HttpMessage, cmd command.BulkCommand) {
 	requestClosures := make([]RequestClosure, 0)
 
 	for _, request := range cmd.Requests {
-		url := router.GetRouter().UrlByName(request.Name, request.Params)
+		url := thiz.Router.UrlByName(request.Name, request.Params)
 		if url == "" {
 			message.ResponseJSON(dto.ReturnObject(nil, core.BadRequestHttpStatus, fmt.Sprintf("Url [%s] not found", request.Name)), 200)
 			return
@@ -64,7 +65,7 @@ func (thiz BulkController) Parallel(message core.HttpMessage, cmd command.BulkCo
 	chRequests := make(chan RequestClosure)
 
 	mu := sync.Mutex{}
-	results := make(map[string]*model.ApiReturnObject, 0)
+	results := make(map[string]*model.ApiReturnObject)
 	workers := 5
 
 	for i := 0; i < workers; i++ {

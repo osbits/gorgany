@@ -5,6 +5,11 @@ import (
 	"gorm.io/gorm"
 )
 
+type IConsoleContext interface {
+	RegisterCommand(command ICommand)
+	GetCommand(name string) ICommand
+}
+
 type ICommand interface {
 	Execute(ctx context.Context)
 	GetName() string
@@ -13,6 +18,13 @@ type ICommand interface {
 type ICommands []ICommand
 
 type MigrationClosure func(db *gorm.DB) error
+
+type IDataContext interface {
+	Migrations() []IMigration
+	AddMigration(migration IMigration)
+	Seeders() []ISeeder
+	AddSeeder(seeder ISeeder)
+}
 
 type IMigration interface {
 	Up() MigrationClosure

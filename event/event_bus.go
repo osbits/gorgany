@@ -6,8 +6,6 @@ import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/internal"
-	"git.qix.sx/gorgany/gorgany.git/service"
 	"reflect"
 	"sync"
 )
@@ -23,10 +21,6 @@ func NewEventBus() core.IEventBus {
 		waitGroup:   new(sync.WaitGroup),
 		subscribers: make(map[string]SubscriptionConfig),
 	}
-}
-
-func GetEventBus() core.IEventBus {
-	return internal.GetApplicationContext().GetEventBus()
 }
 
 type EventBus struct {
@@ -77,13 +71,8 @@ func (thiz *EventBus) Publish(ctx context.Context, event string, args ...map[str
 	subscriberRaw := subscriptionConfig.subscriber
 	rtSubscriber := reflect.TypeOf(subscriberRaw)
 
-	var err error
 	if rtSubscriber.Kind() != reflect.Ptr {
 		return errors.New("event_bus: Subscriber must be a pointer")
-	}
-	err = service.GetContainer().Make(subscriberRaw, args...)
-	if err != nil {
-		return err
 	}
 
 	subscriber := subscriberRaw.(core.ISubscriber)

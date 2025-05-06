@@ -2,31 +2,46 @@ package provider
 
 import (
 	"git.qix.sx/gorgany/gorgany.git/app/core"
+	grgerr "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/log"
 	"git.qix.sx/gorgany/gorgany.git/view"
-	"reflect"
 )
 
+type ViewProvider struct {
+	dir, ext string
+}
+
 func NewViewProvider() *ViewProvider {
+	return &ViewProvider{dir: "./resource/view", ext: "gohtml"}
+}
+
+func NewViewProviderWithConfig() *ViewProvider {
 	return &ViewProvider{}
 }
 
-type ViewProvider struct {
-	applicationContext core.IApplicationContext
+func (p *ViewProvider) SetDir(dir string) {
+	p.dir = dir
 }
 
-func (thiz *ViewProvider) InitProvider(applicationContext core.IApplicationContext) {
-	thiz.applicationContext = applicationContext
-
-	thiz.RegisterViewEngine(view.NewNativeEngine("./resource/view", "gohtml"))
+func (p *ViewProvider) SetExt(ext string) {
+	p.ext = ext
 }
 
-func (thiz *ViewProvider) RegisterViewEngine(engine core.IViewEngine) {
-	rtEngine := reflect.TypeOf(engine)
-	if rtEngine.Kind() == reflect.Ptr {
-		rtEngine = rtEngine.Elem()
+func (p *ViewProvider) Register(c core.IContainer) {
+	c.SingletonLazy(func() core.IViewEngine {
+		return view.NewNativeEngine(p.dir, p.ext)
+	})
+
+	c.SingletonLazy(func(engine core.IViewEngine) *view.EngineRenderer {
+		return &view.EngineRenderer{}
+	})
+}
+
+func (p *ViewProvider) Boot(c core.IContainer) {
+	err := c.Invoke(func(engine core.IViewEngine) {
+		log.Log("").Infof("View engine initialized: %T", engine)
+	})
+	if err != nil {
+		grgerr.HandleError(err)
 	}
-
-	thiz.applicationContext.RegisterViewEngine(engine)
-	log.Log("").Infof("%s is set as view engine", rtEngine.Name())
 }

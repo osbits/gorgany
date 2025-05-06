@@ -2,11 +2,29 @@ package core
 
 import (
 	"context"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/url"
 	"reflect"
 )
+
+type IWebContext interface {
+	GetHomeUrl() string
+	SetHomeUrl(url string)
+	GetRouter() Router
+	SetRouter(router Router)
+	GetNewMessageFactory() func(w http.ResponseWriter, r *http.Request) (HttpMessage, error)
+	SetNewMessage(newMessage func(w http.ResponseWriter, r *http.Request) (HttpMessage, error))
+	GetControllers() []IController
+	SetControllers(controllers []IController)
+	AddController(controller IController)
+	GetMiddlewares() []IMiddleware
+	SetMiddleware(middleware []IMiddleware)
+	AddMiddleware(controller IMiddleware)
+	GetNotFound() HandlerFunc
+	SetNotFound(notFound HandlerFunc)
+}
 
 type HttpMessage interface {
 	GetRequest() *http.Request
@@ -43,6 +61,7 @@ type HttpMessage interface {
 	GetSession() ISession
 	GetCookieManager() ICookieManager
 	GetIp() string
+	io.Closer
 }
 
 type IMessageContext interface {

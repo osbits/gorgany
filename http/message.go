@@ -5,20 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/auth"
-	"git.qix.sx/gorgany/gorgany.git/db"
-	"git.qix.sx/gorgany/gorgany.git/decoder"
-	err2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/internal"
-	"git.qix.sx/gorgany/gorgany.git/log"
-	"git.qix.sx/gorgany/gorgany.git/model"
-	"git.qix.sx/gorgany/gorgany.git/service"
-	"git.qix.sx/gorgany/gorgany.git/util"
-	"git.qix.sx/gorgany/gorgany.git/view"
-	"github.com/go-chi/chi"
-	"github.com/google/uuid"
-	"github.com/spf13/viper"
 	"io"
 	"mime/multipart"
 	"net"
@@ -26,7 +12,18 @@ import (
 	url2 "net/url"
 	"reflect"
 	"strings"
-	"time"
+
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/db"
+	"git.qix.sx/gorgany/gorgany.git/decoder"
+	err2 "git.qix.sx/gorgany/gorgany.git/err"
+	"git.qix.sx/gorgany/gorgany.git/log"
+	"git.qix.sx/gorgany/gorgany.git/model"
+	"git.qix.sx/gorgany/gorgany.git/util"
+	"git.qix.sx/gorgany/gorgany.git/view"
+	"github.com/go-chi/chi"
+	"github.com/google/uuid"
+	"github.com/spf13/viper"
 )
 
 type ResponseWriterWrapper struct {
@@ -58,14 +55,13 @@ func (thiz *ResponseWriterWrapper) Write(b []byte) (int, error) {
 }
 
 type Message struct {
-	applicationContext core.IApplicationContext
-
 	writer  http.ResponseWriter
 	request *http.Request
 
 	cachedQuery    *decoder.QueryParams
 	currentSession core.ISession
 
+	authContext    core.IAuthContext    `container:"inject"`
 	sessionStorage core.ISessionStorage `container:"inject"`
 	cookieManager  *CookieManager
 
@@ -73,13 +69,14 @@ type Message struct {
 
 	inputParameters []reflect.Value
 
+	engineRenderer *view.EngineRenderer `container:"inject"`
+
 	io []io.Closer
 }
 
 func (thiz *Message) Init() {
 	thiz.io = make([]io.Closer, 0)
 	thiz.cookieManager = NewCookieManager(thiz.writer, thiz.request)
-	thiz.setSession()
 }
 
 func (thiz *Message) GetRequest() *http.Request {
@@ -130,16 +127,8 @@ func (thiz *Message) Render(template string, options map[string]any) {
 		options[key] = values
 	}
 
-	renderer := &view.EngineRenderer{}
-	err := service.GetContainer().Make(renderer)
-	if err != nil {
-		err2.HandleError(err)
-		thiz.writer.WriteHeader(http.StatusInternalServerError)
-		return
-	}
-
 	options = thiz.addOptionsToView(options)
-	err = renderer.DoRender(thiz.Context(), thiz.writer, template, options)
+	err := thiz.engineRenderer.DoRender(thiz.Context(), thiz.writer, template, options)
 	if err != nil {
 		panic(fmt.Errorf("Error during render template '%s', %v", template, err))
 	}
@@ -431,8 +420,7 @@ func (thiz *Message) Context() context.Context {
 	parentRequestCtx := thiz.GetRequest().Context()
 	mCtx.requestCtx = parentRequestCtx
 
-	appCtx := context.WithValue(parentRequestCtx, core.ApplicationContextKey, thiz.applicationContext)
-	msgCtx := context.WithValue(appCtx, core.MessageContextKey, mCtx)
+	msgCtx := context.WithValue(parentRequestCtx, core.MessageContextKey, mCtx)
 	thiz.ctx = context.WithValue(msgCtx, core.DbSessionContextKey, db.Connection().WithContext(msgCtx)) // todo: Currently it can be only GORM Postgres DB
 
 	mCtx.session = thiz.GetSession()
@@ -441,11 +429,6 @@ func (thiz *Message) Context() context.Context {
 }
 
 func (thiz *Message) WithContext(ctx context.Context) {
-	if _, ok := ctx.Value(core.ApplicationContextKey).(core.IApplicationContext); !ok {
-		err2.HandleError("It's now allowed to set new context without core.IApplicationContext")
-		return
-	}
-
 	if _, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext); !ok {
 		err2.HandleError("It's now allowed to set new context without core.IMessageContet")
 		return
@@ -458,7 +441,7 @@ func (thiz *Message) GetSession() core.ISession {
 		return thiz.currentSession
 	}
 
-	authStrategy := auth.ResolveAuthStrategyByContext(thiz.Context())
+	authStrategy := thiz.authContext.ResolveAuthStrategyByContext(thiz.Context())
 	if authStrategy == nil {
 		return nil
 	}
@@ -499,12 +482,12 @@ func (thiz Message) GetInputParameters() []reflect.Value {
 }
 
 func (thiz *Message) addOptionsToView(options map[string]any) map[string]any {
-	authStrategy := auth.ResolveAuthStrategyByContext(thiz.Context())
+	authStrategy := thiz.authContext.ResolveAuthStrategyByContext(thiz.Context())
 	if authStrategy == nil {
 		return nil
 	}
 
-	authUser, _ := auth.ResolveAuthStrategyByContext(thiz.Context()).CurrentUser(thiz.Context())
+	authUser, _ := thiz.authContext.ResolveAuthStrategyByContext(thiz.Context()).CurrentUser(thiz.Context())
 
 	if authUser != nil {
 		options["currentUsername"] = authUser.GetUsername()
@@ -533,12 +516,12 @@ func (thiz *Message) GetIp() string {
 	return ip
 }
 
-func (thiz *Message) setSession() {
+func (thiz *Message) SetSession() {
 	if thiz.GetRequest().Method == http.MethodOptions {
 		return
 	}
 
-	currentAuthStrategy := auth.ResolveAuthStrategyByContext(thiz.Context())
+	currentAuthStrategy := thiz.authContext.ResolveAuthStrategyByContext(thiz.Context())
 	if currentAuthStrategy == nil {
 		return
 	}
@@ -546,7 +529,7 @@ func (thiz *Message) setSession() {
 	session := currentAuthStrategy.CurrentSession(thiz.Context())
 
 	if session != nil && !session.IsExpired() {
-		session.SetExpiry(session.GetExpiry().Add(time.Duration(internal.GetApplicationContext().GetSessionLifetime()) * time.Second))
+		session.SetExpiry(session.GetExpiry().Add(thiz.sessionStorage.GetSessionLifetime()))
 		thiz.currentSession = session
 		thiz.makeOneTimeParamsUsed()
 		return

@@ -2,55 +2,84 @@ package provider
 
 import (
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	postgres2 "git.qix.sx/gorgany/gorgany.git/db/gorm/postgres"
-	"git.qix.sx/gorgany/gorgany.git/log"
 	"github.com/spf13/viper"
+
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/db"
+	_postgres "git.qix.sx/gorgany/gorgany.git/db/gorm/postgres"
 )
 
 type DbProvider struct {
-	applicationContext core.IApplicationContext
+	connCtors []func() (string, core.GrgDBConnection)
 }
 
 func NewDbProvider() *DbProvider {
-	return &DbProvider{}
+	p := &DbProvider{}
+
+	p.connCtors = []func() (string, core.GrgDBConnection){
+		func() (string, core.GrgDBConnection) {
+			databases := viper.GetStringMap("databases")
+			for name, cfg := range databases {
+				conf, ok := cfg.(map[string]any)
+				if !ok {
+					panic(fmt.Errorf("incorrect config for database '%s'", name))
+				}
+				driver := core.DbType(conf["driver"].(string))
+				switch driver {
+				case core.GormPostgreSQL:
+					return name, _postgres.NewGormPostgresConnection(conf)
+				case core.MongoDb:
+					// TODO: implement me
+				}
+			}
+			return "", nil
+		},
+	}
+	return p
 }
 
-func (thiz *DbProvider) InitProvider(applicationContext core.IApplicationContext) {
-	thiz.applicationContext = applicationContext
+func (p *DbProvider) AddConnection(name string, ctor func() core.GrgDBConnection) {
+	p.connCtors = append(p.connCtors, func() (string, core.GrgDBConnection) {
+		return name, ctor()
+	})
+}
 
-	databases := viper.GetStringMap("databases")
-	for name, config := range databases {
-		configMap, ok := config.(map[string]any)
-		if !ok {
-			panic(fmt.Errorf("Incorrect config for '%s' database", name))
-		}
-		dbTypeRaw := configMap["driver"].(string)
-		if dbTypeRaw == "" {
-			panic(fmt.Errorf("Incorrect driver for '%s'", name))
-		}
-		dbType := core.DbType(dbTypeRaw)
+func (p *DbProvider) Register(c core.IContainer) {
+	c.SingletonLazy(func() *db.DBContext {
+		return &db.DBContext{}
+	})
 
-		conn := thiz.resolveDb(dbType, configMap)
-		if conn != nil {
-			thiz.RegisterDbConnection(name, conn)
-		} else {
-			log.Log("").Infof("Connection for %s did not initialize\n", dbType)
-		}
+	for _, ctor := range p.connCtors {
+		c.TransientLazy(func(ctor func() (string, core.GrgDBConnection)) func() (string, core.GrgDBConnection) {
+			return ctor
+		}(ctor))
 	}
 }
 
-func (thiz *DbProvider) RegisterDbConnection(name string, connection core.GrgDBConnection) {
-	thiz.applicationContext.RegisterDbConnection(name, connection)
-	log.Log("").Infof("Connection for %s initialized", name)
-}
-
-func (thiz *DbProvider) resolveDb(kind core.DbType, config map[string]any) core.GrgDBConnection {
-	switch kind {
-	case core.GormPostgreSQL:
-		return postgres2.NewGormPostgresConnection(config)
-	case core.MongoDb:
-		//todo implement me
+func (p *DbProvider) Boot(c core.IContainer) error {
+	var ctx *db.DBContext
+	if err := c.Make(&ctx); err != nil {
+		return fmt.Errorf("db Boot: cannot Make DBContext: %w", err)
 	}
+
+	c.Invoke(func(db *db.DBContext) {
+		for _, ctor := range p.connCtors {
+			name, conn := ctor()
+			if conn != nil {
+				ctx.RegisterDBConnection(name, conn)
+			}
+		}
+	})
+
+	db.SetDBContext(ctx)
+	db.SetBuilderFactory(func(name string) core.IQueryBuilder {
+		conn := ctx.GetDBConnection(name)
+		builder := conn.Builder()
+		if err := c.Make(&builder); err != nil {
+			panic(fmt.Errorf("db builder injection error: %w", err))
+		}
+		return builder
+	})
+
 	return nil
 }

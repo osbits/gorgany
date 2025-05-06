@@ -6,7 +6,6 @@ import (
 	error2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/log"
 	"git.qix.sx/gorgany/gorgany.git/util"
-	gorganyValidator "git.qix.sx/gorgany/gorgany.git/validator"
 	"github.com/go-chi/chi"
 	"reflect"
 )
@@ -14,6 +13,7 @@ import (
 type inputResolver struct {
 	reflectedHandler reflect.Value
 	message          core.HttpMessage
+	validator        core.IValidator `container:"inject"`
 }
 
 func (thiz inputResolver) resolve() ([]reflect.Value, error) {
@@ -70,7 +70,7 @@ func (thiz inputResolver) resolve() ([]reflect.Value, error) {
 			//	return nil, err
 			//}
 
-			if err := gorganyValidator.GetValidator().ValidateStruct(arg); err != nil {
+			if err := thiz.validator.ValidateStruct(arg); err != nil {
 				return nil, err
 			}
 		}

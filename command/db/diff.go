@@ -31,6 +31,7 @@ var AllowedTypesToMigrate = []string{"gorm.io/gorm.DeletedAt", gorgany.Framework
 type DiffCommand struct {
 	modelStructAlreadyAdded map[string]bool
 	pivotTables             map[string]bool
+	domainContext           core.IDomainContext `container:"inject"`
 }
 
 func (thiz DiffCommand) GetName() string {
@@ -51,7 +52,7 @@ func (thiz DiffCommand) Execute(ctx context.Context) {
 	})
 
 	moduleName := util.ModuleName()
-	modelsMap := ctx.Value(core.ApplicationContextKey).(core.IApplicationContext).GetDomains()
+	modelsMap := thiz.domainContext.GetDomains()
 
 	pkgInfos, err := util.ScanDir("./pkg/domain")
 	if err != nil {

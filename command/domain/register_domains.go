@@ -13,6 +13,7 @@ import (
 )
 
 type RegisterDomainsCommand struct {
+	domainContext core.IDomainContext `container:"inject"`
 }
 
 func (thiz RegisterDomainsCommand) GetName() string {
@@ -29,7 +30,7 @@ func (thiz RegisterDomainsCommand) Execute(ctx context.Context) {
 
 	moduleName := util.ModuleName()
 
-	registeredModels := ctx.Value(core.ApplicationContextKey).(core.IApplicationContext).GetDomains()
+	registeredModels := thiz.domainContext.GetDomains()
 
 	registers := make([]string, 0)
 	imports := make([]string, 0)

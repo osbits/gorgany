@@ -207,7 +207,7 @@ func (thiz multipartParser) callBindMethodIfExists(command any, fieldName string
 		return false, nil
 	}
 
-	method := rvArg.MethodByName(fmt.Sprintf("Bind%s", structField.Name))
+	method := rvArg.MethodByName(fmt.Sprintf("Transient%s", structField.Name))
 	if !method.IsValid() {
 		return false, nil
 	}
@@ -231,7 +231,7 @@ func (thiz multipartParser) callBindMethodIfExists(command any, fieldName string
 
 		output, ok := outputs[0].Interface().(error)
 		if !ok {
-			return false, fmt.Errorf("Bind method must return error or nothing")
+			return false, fmt.Errorf("Transient method must return error or nothing")
 		}
 
 		var validationErrors *error2.ValidationErrors

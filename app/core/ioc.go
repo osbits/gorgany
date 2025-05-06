@@ -2,14 +2,27 @@ package core
 
 type IContainer interface {
 	Reset()
+
 	Singleton(resolver interface{}) error
 	SingletonLazy(resolver interface{}) error
 	NamedSingleton(name string, resolver interface{}) error
 	NamedSingletonLazy(name string, resolver interface{}) error
-	Bind(resolver interface{}) error
-	BindLazy(resolver interface{}) error
-	NamedBind(name string, resolver interface{}) error
-	NamedBindLazy(name string, resolver interface{}) error
+
+	Transient(resolver interface{}) error
+	TransientLazy(resolver interface{}) error
+	NamedTransient(name string, resolver interface{}) error
+	NamedTransientLazy(name string, resolver interface{}) error
+
+	Invoke(fn interface{}) error
+
+	Resolve(abstraction interface{}) error
+	NamedResolve(abstraction interface{}, name string) error
+
+	Make(structure interface{}, values ...map[string]interface{}) error
+}
+
+type IEmergencyContainer interface {
+	Invoke(fn interface{}) error
 	Resolve(abstraction interface{}) error
 	NamedResolve(abstraction interface{}, name string) error
 	Make(structure interface{}, values ...map[string]interface{}) error

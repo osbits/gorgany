@@ -11,6 +11,7 @@ import (
 )
 
 type MigrateCommand struct {
+	dataContext core.IDataContext `container:"inject"`
 }
 
 func (thiz MigrateCommand) GetName() string {
@@ -50,7 +51,7 @@ func (thiz MigrateCommand) up(ctx context.Context) {
 	}
 
 	isError := false
-	for _, migration := range ctx.Value(core.ApplicationContextKey).(core.IApplicationContext).GetMigrations() {
+	for _, migration := range thiz.dataContext.Migrations() {
 		var migrationDomain db.Migration
 		gormInstance.First(&migrationDomain, "name = ?", migration.Name())
 		if thiz.isMigrationExists(migrationDomain) {

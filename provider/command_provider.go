@@ -5,26 +5,43 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/command"
 	"git.qix.sx/gorgany/gorgany.git/command/db"
 	"git.qix.sx/gorgany/gorgany.git/command/domain"
+	"git.qix.sx/gorgany/gorgany.git/err"
 )
 
 type CommandProvider struct {
-	applicationContext core.IApplicationContext
+	commands []core.ICommand
 }
 
 func NewCommandProvider() *CommandProvider {
-	return &CommandProvider{}
+	return &CommandProvider{
+		commands: []core.ICommand{
+			&command.VersionCommand{},
+			&db.DiffCommand{},
+			&db.MigrateCommand{},
+			&db.SeedCommand{},
+			&domain.RegisterDomainsCommand{},
+		},
+	}
 }
 
-func (thiz *CommandProvider) InitProvider(applicationContext core.IApplicationContext) {
-	thiz.applicationContext = applicationContext
-
-	thiz.RegisterCommand(command.VersionCommand{})
-	thiz.RegisterCommand(db.DiffCommand{})
-	thiz.RegisterCommand(db.MigrateCommand{})
-	thiz.RegisterCommand(db.SeedCommand{})
-	thiz.RegisterCommand(domain.RegisterDomainsCommand{})
+func (thiz *CommandProvider) AddCommand(cmd core.ICommand) {
+	thiz.commands = append(thiz.commands, cmd)
 }
 
-func (thiz *CommandProvider) RegisterCommand(cmd core.ICommand) {
-	thiz.applicationContext.RegisterCommand(cmd)
+func (thiz *CommandProvider) Register(container core.IContainer) {
+	container.SingletonLazy(func() core.IConsoleContext {
+		return &command.ConsoleContext{}
+	})
+}
+
+func (thiz *CommandProvider) Boot(container core.IContainer) {
+	container.Invoke(func(consoleContext *command.ConsoleContext) {
+		for _, c := range thiz.commands {
+			if e := container.Make(c); e != nil {
+				err.HandleError(e)
+				return
+			}
+			consoleContext.RegisterCommand(c)
+		}
+	})
 }
