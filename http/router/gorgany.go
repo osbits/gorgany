@@ -25,6 +25,11 @@ func (thiz GorganyRouter) Engine() http.Handler {
 	return thiz.engine
 }
 
+func (thiz *GorganyRouter) SetEntryPoint(entryPoint http.Handler) {
+	thiz.engine = chi.NewRouter()
+	thiz.engine.Mount("/", entryPoint)
+}
+
 func (thiz GorganyRouter) RegisterRoute(route core.IRouteConfig) {
 	castRoute := route.(*RouteConfig)
 	if castRoute.Name == "" {
@@ -108,10 +113,34 @@ type RouteConfig struct {
 	Name        string
 }
 
+func (thiz RouteConfig) GetPath() string {
+	return thiz.Path
+}
+
+func (thiz RouteConfig) GetMethod() core.Method {
+	return thiz.Method
+}
+
+func (thiz RouteConfig) GetHandler() core.HandlerFunc {
+	return thiz.Handler
+}
+
+func (thiz RouteConfig) GetMiddlewares() []core.IMiddleware {
+	return thiz.Middlewares
+}
+
+func (thiz RouteConfig) GetName() string {
+	return thiz.Name
+}
+
+func (thiz RouteConfig) GetNamespace() string {
+	return thiz.Namespace
+}
+
 func (thiz RouteConfig) Pattern() string {
 	url := thiz.Path
 	if thiz.Namespace != "" {
-		url = fmt.Sprintf("/%s%s", thiz.Namespace, url)
+		url = fmt.Sprintf("/{namespace:%s}%s", thiz.Namespace, url)
 	}
 	return url
 }

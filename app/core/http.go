@@ -10,21 +10,31 @@ import (
 )
 
 type IWebContext interface {
-	GetHomeUrl() string
-	SetHomeUrl(url string)
+	// Router и фабрики
+	SetRouter(r Router)
 	GetRouter() Router
-	SetRouter(router Router)
-	GetNewMessageFactory() func(w http.ResponseWriter, r *http.Request) (HttpMessage, error)
-	SetNewMessage(newMessage func(w http.ResponseWriter, r *http.Request) (HttpMessage, error))
+
+	SetNewMessage(factory MessageFactory)
+	GetNewMessage() MessageFactory
+
+	SetNewInputResolver(factory InputResolverFactory)
+	GetNewInputResolver() InputResolverFactory
+
+	AddController(ctrl IController)
 	GetControllers() []IController
-	SetControllers(controllers []IController)
-	AddController(controller IController)
-	GetMiddlewares() []IMiddleware
-	SetMiddleware(middleware []IMiddleware)
-	AddMiddleware(controller IMiddleware)
+
+	AddMiddleware(reg IMiddlewareConfig)
+	GetMiddlewares() []IMiddlewareConfig
+
+	SetNotFound(h HandlerFunc)
 	GetNotFound() HandlerFunc
-	SetNotFound(notFound HandlerFunc)
+
+	LookupRoute(method, path string) (config IRouteConfig, found bool)
+	CacheRoutes()
 }
+
+type MessageFactory func(http.ResponseWriter, *http.Request) (HttpMessage, error)
+type InputResolverFactory func(HandlerFunc, HttpMessage) (interface{}, error)
 
 type HttpMessage interface {
 	GetRequest() *http.Request

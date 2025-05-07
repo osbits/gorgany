@@ -21,14 +21,14 @@ type Container struct {
 	mu          sync.RWMutex
 	bindings    map[reflect.Type]map[string]*binding
 	initMu      sync.Mutex
-	initialized map[uintptr]bool
+	initialized map[interface{}]bool // Change to interface{} instead of uintptr
 }
 
 // NewContainer creates a new Container
 func NewContainer() *Container {
 	return &Container{
 		bindings:    make(map[reflect.Type]map[string]*binding),
-		initialized: make(map[uintptr]bool),
+		initialized: make(map[interface{}]bool),
 	}
 }
 
@@ -39,7 +39,7 @@ func (c *Container) Reset() {
 	c.bindings = make(map[reflect.Type]map[string]*binding)
 	c.initMu.Lock()
 	defer c.initMu.Unlock()
-	c.initialized = make(map[uintptr]bool)
+	c.initialized = make(map[interface{}]bool)
 }
 
 // Public registration methods
@@ -342,9 +342,9 @@ func (c *Container) fill(target interface{}, chain map[reflect.Type]interface{})
 			if fv.CanSet() {
 				fv.Set(toSet)
 			} else {
-				ptr := reflect.NewAt(ftype, unsafe.Pointer(fv.UnsafeAddr()))
+				ptr := reflect.NewAt(ftype, unsafe.Pointer(fv.UnsafeAddr())).Elem()
 				if ptr.IsValid() && ptr.CanSet() {
-					ptr.Elem().Set(toSet)
+					ptr.Set(toSet)
 				}
 			}
 		}

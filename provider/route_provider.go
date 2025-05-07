@@ -1,20 +1,22 @@
+// provider/route_provider.go
 package provider
 
 import (
 	"fmt"
-	"github.com/go-chi/chi"
 	gohttp "net/http"
+	"reflect"
 
 	"git.qix.sx/gorgany/gorgany.git/app/core"
-	grgerr "git.qix.sx/gorgany/gorgany.git/err"
+	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/http"
 	"git.qix.sx/gorgany/gorgany.git/http/router"
+	"github.com/go-chi/chi"
 )
 
 type RouteProvider struct {
 	routerCtor  func() core.Router
 	controllers []core.IController
-	middleware  []core.IMiddleware
+	middlewares []core.IMiddlewareConfig
 	notFound    core.HandlerFunc
 }
 
@@ -26,8 +28,8 @@ func (p *RouteProvider) AddController(ctrl core.IController) {
 	p.controllers = append(p.controllers, ctrl)
 }
 
-func (p *RouteProvider) AddMiddleware(mw core.IMiddleware) {
-	p.middleware = append(p.middleware, mw)
+func (p *RouteProvider) AddMiddleware(mw core.IMiddlewareConfig) {
+	p.middlewares = append(p.middlewares, mw)
 }
 
 func (p *RouteProvider) SetNotFoundHandler(h core.HandlerFunc) {
@@ -35,6 +37,9 @@ func (p *RouteProvider) SetNotFoundHandler(h core.HandlerFunc) {
 }
 
 func (p *RouteProvider) Register(c core.IContainer) {
+	c.SingletonLazy(func() gohttp.Handler {
+		return &http.Dispatcher{}
+	})
 	c.SingletonLazy(func() core.Router {
 		return router.NewGorganyRouter()
 	})
@@ -44,54 +49,65 @@ func (p *RouteProvider) Register(c core.IContainer) {
 		wc.SetRouter(r)
 		return wc
 	})
+
+	c.TransientLazy(func() *http.Message {
+		return &http.Message{}
+	})
 }
 
 func (p *RouteProvider) Boot(c core.IContainer) {
-	err := c.Invoke(func(wc core.IWebContext) {
-		for _, ctrl := range p.controllers {
-			if err := c.Make(ctrl); err != nil {
-				panic(fmt.Errorf("route Boot: inject controller %T: %w", ctrl, err))
+	_ = c.Invoke(func(wc core.IWebContext) {
+
+		for _, mw := range p.middlewares {
+			middleware := mw.GetMiddleware()
+			err := c.Make(middleware)
+			if err != nil {
+				err2.HandleError(err)
 			}
-			wc.AddController(ctrl)
+
+			configWithInjectedMiddleware := http.NewMiddlewareConfigBuilder().
+				WithPattern(mw.GetPattern()).
+				WithApplyOn404(mw.GetApplyOn404()).
+				WithMiddleware(middleware).
+				WithExcludePattern(mw.GetExcludePattern()).
+				Build()
+
+			wc.AddMiddleware(configWithInjectedMiddleware)
 		}
-		for _, mw := range p.middleware {
-			if err := c.Make(mw); err != nil {
-				panic(fmt.Errorf("route Boot: inject middleware %T: %w", mw, err))
-			}
-			wc.AddMiddleware(mw)
-		}
+
 		wc.SetNotFound(p.notFound)
 
 		wc.SetNewMessage(func(w gohttp.ResponseWriter, r *gohttp.Request) (core.HttpMessage, error) {
 			msg := &http.Message{}
-			if err := c.Make(msg, map[string]interface{}{
-				"writer":  w,
-				"request": r,
-			}); err != nil {
-				return nil, fmt.Errorf("dispatch: cannot make HTTPMessage: %w", err)
+			if err := c.Make(msg, map[string]interface{}{"writer": w, "request": r}); err != nil {
+				return nil, fmt.Errorf("cannot make Message: %w", err)
 			}
 			msg.SetSession()
 			return msg, nil
 		})
+		wc.SetNewInputResolver(func(h core.HandlerFunc, m core.HttpMessage) (interface{}, error) {
+			res := &http.InputResolver{ReflectedHandler: reflect.ValueOf(h), Message: m}
+			_ = c.Make(res)
+			return res, nil
+		})
 
 		engine := wc.GetRouter().Engine().(chi.Router)
-		for _, ctrl := range wc.GetControllers() {
+		for _, ctrl := range p.controllers {
+			err := c.Make(ctrl)
+			if err != nil {
+				err2.HandleError(err)
+			}
+			wc.AddController(ctrl)
 			for _, rc := range ctrl.GetRoutes() {
 				cfg := rc.(*router.RouteConfig)
-				method, pattern, handler := cfg.Method, cfg.Pattern(), cfg.Handler
-				engine.MethodFunc(string(method), pattern, func(w gohttp.ResponseWriter, r *gohttp.Request) {
-					http.Dispatch(wc, w, r, handler)
-				})
+				engine.MethodFunc(string(cfg.Method), cfg.Pattern(), func(w gohttp.ResponseWriter, r *gohttp.Request) {})
+				engine.Options(cfg.Pattern(), func(w gohttp.ResponseWriter, r *gohttp.Request) {})
 			}
 		}
-		if wc.GetNotFound() != nil {
-			engine.NotFound(func(w gohttp.ResponseWriter, r *gohttp.Request) {
-				http.Dispatch(wc, w, r, wc.GetNotFound())
-			})
-		}
-	})
+		wc.CacheRoutes()
 
-	if err != nil {
-		grgerr.HandleError(err)
-	}
+		var dispatcher gohttp.Handler
+		c.Resolve(&dispatcher)
+		wc.GetRouter().(*router.GorganyRouter).SetEntryPoint(dispatcher)
+	})
 }

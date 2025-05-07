@@ -429,8 +429,8 @@ func (thiz *Message) Context() context.Context {
 
 func (thiz *Message) WithContext(ctx context.Context) {
 	if _, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext); !ok {
-		err2.HandleError("It's now allowed to set new context without core.IMessageContet")
-		return
+		parentCtx := thiz.Context()
+		ctx = context.WithValue(parentCtx, core.MessageContextKey, ctx)
 	}
 	thiz.ctx = ctx
 }

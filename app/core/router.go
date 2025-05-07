@@ -12,6 +12,21 @@ func (thiz Controllers) AddController(controller IController) {
 	thiz = append(thiz, controller)
 }
 
+type IMiddlewareConfig interface {
+	GetPattern() string
+	GetExcludePattern() string
+	GetApplyOn404() bool
+	GetMiddleware() IMiddleware
+}
+
+type IMiddlewareConfigBuilder interface {
+	WithPattern(pattern string) IMiddlewareConfigBuilder
+	WithExcludePattern(pattern string) IMiddlewareConfigBuilder
+	WithApplyOn404(applyOn404 bool) IMiddlewareConfigBuilder
+	WithMiddleware(mw IMiddleware) IMiddlewareConfigBuilder
+	Build() IMiddlewareConfig
+}
+
 type IMiddleware interface {
 	Handle(func(message HttpMessage)) func(message HttpMessage)
 }
@@ -26,4 +41,10 @@ type Router interface {
 
 type IRouteConfig interface {
 	Pattern() string
+	GetPath() string
+	GetMethod() Method
+	GetHandler() HandlerFunc
+	GetName() string
+	GetNamespace() string
+	GetMiddlewares() []IMiddleware
 }
