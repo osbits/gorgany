@@ -99,12 +99,13 @@ func (p *RouteProvider) Boot(c core.IContainer) {
 			}
 			wc.AddController(ctrl)
 			for _, rc := range ctrl.GetRoutes() {
-				cfg := rc.(*router.RouteConfig)
-				engine.MethodFunc(string(cfg.Method), cfg.Pattern(), func(w gohttp.ResponseWriter, r *gohttp.Request) {})
-				engine.Options(cfg.Pattern(), func(w gohttp.ResponseWriter, r *gohttp.Request) {})
+				wc.GetRouter().RegisterRoute(rc)
+
+				engine.MethodFunc(string(rc.GetMethod()), rc.Pattern(), func(w gohttp.ResponseWriter, r *gohttp.Request) {})
+				engine.Options(rc.Pattern(), func(w gohttp.ResponseWriter, r *gohttp.Request) {})
 			}
 		}
-		wc.CacheRoutes()
+		wc.GetRouter().CompilePatterns()
 
 		var dispatcher gohttp.Handler
 		c.Resolve(&dispatcher)

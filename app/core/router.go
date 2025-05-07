@@ -37,6 +37,8 @@ type Router interface {
 	Engine() http.Handler
 	RegisterRoute(config IRouteConfig)
 	RouteByName(name string) IRouteConfig
+	LookupRoute(method, path string) (IRouteConfig, bool)
+	CompilePatterns()
 }
 
 type IRouteConfig interface {

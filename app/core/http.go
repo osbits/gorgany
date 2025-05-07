@@ -28,9 +28,6 @@ type IWebContext interface {
 
 	SetNotFound(h HandlerFunc)
 	GetNotFound() HandlerFunc
-
-	LookupRoute(method, path string) (config IRouteConfig, found bool)
-	CacheRoutes()
 }
 
 type MessageFactory func(http.ResponseWriter, *http.Request) (HttpMessage, error)

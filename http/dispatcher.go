@@ -23,7 +23,7 @@ type Dispatcher struct {
 func (d *Dispatcher) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	method, path := r.Method, r.URL.Path
 
-	routeConfig, found := d.webContext.LookupRoute(method, path)
+	routeConfig, found := d.webContext.GetRouter().LookupRoute(method, path)
 
 	// Create and set chi route context
 	rctx := chi.NewRouteContext()
