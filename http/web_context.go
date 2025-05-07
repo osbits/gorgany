@@ -5,7 +5,6 @@ import (
 )
 
 type WebContext struct {
-	router     core.Router
 	msgFactory core.MessageFactory
 	inpFactory core.InputResolverFactory
 
@@ -14,10 +13,6 @@ type WebContext struct {
 	notFound    core.HandlerFunc
 }
 
-// Regular WebContext methods...
-
-func (wc *WebContext) SetRouter(r core.Router)                         { wc.router = r }
-func (wc *WebContext) GetRouter() core.Router                          { return wc.router }
 func (wc *WebContext) SetNewMessage(f core.MessageFactory)             { wc.msgFactory = f }
 func (wc *WebContext) GetNewMessage() core.MessageFactory              { return wc.msgFactory }
 func (wc *WebContext) SetNewInputResolver(f core.InputResolverFactory) { wc.inpFactory = f }

@@ -3,54 +3,189 @@ package router
 import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
+	grghttp "git.qix.sx/gorgany/gorgany.git/http"
 	"github.com/go-chi/chi"
+	"io"
 	"net/http"
+	"reflect"
 	"regexp"
 	"strings"
-	"sync"
 )
 
-func NewGorganyRouter() *GorganyRouter {
-	return &GorganyRouter{
-		engine:       chi.NewRouter(),
-		routesByName: make(map[string]core.IRouteConfig),
+var (
+	placeholderRE = regexp.MustCompile(`\{([^{}]+)\}`)
+	alnumRE       = regexp.MustCompile(`^[A-Za-z0-9]+$`)
+)
+
+type ChiRouterAdapter struct {
+	engine      chi.Router
+	webCtx      core.IWebContext `container:"inject"`
+	filters     []core.IMiddlewareConfig
+	middlewares []core.IMiddlewareConfig
+	namedRoutes map[string]core.IRouteConfig
+}
+
+func (r *ChiRouterAdapter) Init() {
+	r.engine = chi.NewRouter()
+	r.namedRoutes = make(map[string]core.IRouteConfig)
+
+	r.engine.NotFound(func(w http.ResponseWriter, req *http.Request) {
+		msg, _ := r.webCtx.GetNewMessage()(w, req)
+		if nf := r.webCtx.GetNotFound(); nf != nil {
+			reflect.ValueOf(nf).Call([]reflect.Value{reflect.ValueOf(msg)})
+		} else {
+			msg.Response("", 404)
+		}
+	})
+}
+
+func (r *ChiRouterAdapter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	r.engine.ServeHTTP(w, req)
+}
+
+func (r *ChiRouterAdapter) RegisterMiddleware(mwc core.IMiddlewareConfig) {
+	if mwc.GetApplyOn404() {
+		r.filters = append(r.filters, mwc)
+		r.engine.Use(r.adaptFilter(mwc))
+	} else {
+		r.middlewares = append(r.middlewares, mwc)
 	}
 }
 
-type GorganyRouter struct {
-	engine       *chi.Mux
-	routesByName map[string]core.IRouteConfig
+func (r *ChiRouterAdapter) RegisterRoute(rc core.IRouteConfig) {
+	pattern := rc.Pattern()
+	method := string(rc.GetMethod())
 
-	// Route cache for performance optimization
-	routeCache      map[string]core.IRouteConfig
-	routeCacheMutex sync.RWMutex
+	var mws []func(http.Handler) http.Handler
 
-	// Pre-compiled patterns for faster matching
-	compiledPatterns      map[string]*regexp.Regexp
-	compiledPatternsMutex sync.RWMutex
+	for _, cfg := range r.middlewares {
+		if matchesPattern(cfg.GetPattern(), pattern) && !matchesPattern(cfg.GetExcludePattern(), pattern) {
+			mws = append(mws, r.adaptRouteMiddleware(cfg))
+		}
+	}
+
+	for _, mw := range rc.GetMiddlewares() {
+		cfg := grghttp.NewMiddlewareConfigBuilder().
+			WithMiddleware(mw).
+			WithPattern(pattern).
+			Build()
+		mws = append(mws, r.adaptRouteMiddleware(cfg))
+	}
+
+	h := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		msg, err := r.webCtx.GetNewMessage()(&grghttp.ResponseWriterWrapper{
+			Flusher:        w.(http.Flusher),
+			Hijacker:       w.(http.Hijacker),
+			ReaderFrom:     w.(io.ReaderFrom),
+			ResponseWriter: w,
+			StringWriter:   w.(io.StringWriter),
+			Writer:         w.(io.Writer),
+			StatusCode:     200,
+		}, req)
+		if err != nil {
+			w.WriteHeader(500)
+			return
+		}
+		defer msg.Close()
+		resolver, err := r.webCtx.GetNewInputResolver()(rc.GetHandler(), msg)
+		if err != nil {
+			msg.Response("", 500)
+			return
+		}
+		args, err := resolver.(*grghttp.InputResolver).Resolve()
+		if err != nil {
+			msg.Response("", 500)
+			return
+		}
+		reflect.ValueOf(rc.GetHandler()).Call(args)
+	})
+
+	r.engine.
+		With(mws...).
+		MethodFunc(method, pattern, h)
+	r.engine.
+		With(mws...).
+		Options(pattern, h)
 }
 
-func (thiz *GorganyRouter) Engine() http.Handler {
+func (r *ChiRouterAdapter) adaptFilter(cfg core.IMiddlewareConfig) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			path := req.URL.Path
+			if matches(cfg.GetPattern(), path) && !matches(cfg.GetExcludePattern(), path) {
+				msg, _ := r.webCtx.GetNewMessage()(w, req)
+				cfg.GetMiddleware().Handle(func(_ core.HttpMessage) {
+					next.ServeHTTP(w, req)
+				})(msg)
+			} else {
+				next.ServeHTTP(w, req)
+			}
+		})
+	}
+}
+
+func (r *ChiRouterAdapter) adaptRouteMiddleware(cfg core.IMiddlewareConfig) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			msg, _ := r.webCtx.GetNewMessage()(w, req)
+			cfg.GetMiddleware().Handle(func(_ core.HttpMessage) {
+				next.ServeHTTP(w, req)
+			})(msg)
+		})
+	}
+}
+
+func normalizeRoutePattern(routePattern string) string {
+	return placeholderRE.ReplaceAllStringFunc(routePattern, func(ph string) string {
+		content := ph[1 : len(ph)-1]
+		parts := strings.SplitN(content, ":", 2)
+		if len(parts) == 2 {
+			regex := parts[1]
+			if alnumRE.MatchString(regex) {
+				return regex
+			}
+			return "*"
+		}
+		return "*"
+	})
+}
+
+func matchesPattern(pattern, routePattern string) bool {
+	if pattern == "" || pattern == "/**" {
+		return true
+	}
+
+	normalized := normalizeRoutePattern(routePattern)
+
+	if strings.HasSuffix(pattern, "**") {
+
+		prefix := strings.TrimSuffix(pattern[:len(pattern)-2], "/")
+		return normalized == prefix || strings.HasPrefix(normalized, prefix+"/")
+	}
+
+	return pattern == normalized
+}
+
+func matches(pattern, path string) bool {
+	if pattern == "" {
+		return false
+	}
+
+	if pattern == "/**" {
+		return true
+	}
+
+	if len(pattern) > 2 && strings.HasSuffix(pattern, "**") {
+		return strings.HasPrefix(path, pattern[:len(pattern)-2])
+	}
+	return pattern == path
+}
+
+func (thiz *ChiRouterAdapter) Engine() http.Handler {
 	return thiz.engine
 }
 
-func (thiz *GorganyRouter) SetEntryPoint(entryPoint http.Handler) {
-	thiz.engine = chi.NewRouter()
-	thiz.engine.Mount("/", entryPoint)
-}
-
-func (thiz *GorganyRouter) RegisterRoute(route core.IRouteConfig) {
-	if route.GetName() == "" {
-		return
-	}
-
-	if thiz.routesByName == nil {
-		thiz.routesByName = make(map[string]core.IRouteConfig)
-	}
-	thiz.routesByName[route.GetName()] = route
-}
-
-func (thiz *GorganyRouter) UrlByName(name string, params map[string]any) string {
+func (thiz *ChiRouterAdapter) UrlByName(name string, params map[string]any) string {
 	route := thiz.RouteByName(name)
 	if route == nil {
 		return "/"
@@ -59,7 +194,7 @@ func (thiz *GorganyRouter) UrlByName(name string, params map[string]any) string 
 	return thiz.replaceRouteSegments(route.Pattern(), params)
 }
 
-func (thiz *GorganyRouter) UrlByNameSequence(name string, params ...any) string {
+func (thiz *ChiRouterAdapter) UrlByNameSequence(name string, params ...any) string {
 	route := thiz.RouteByName(name)
 	if route == nil {
 		return "/"
@@ -68,11 +203,11 @@ func (thiz *GorganyRouter) UrlByNameSequence(name string, params ...any) string 
 	return thiz.replaceRouteSegmentsSequence(route.Pattern(), params...)
 }
 
-func (thiz *GorganyRouter) RouteByName(name string) core.IRouteConfig {
-	return thiz.routesByName[name]
+func (thiz *ChiRouterAdapter) RouteByName(name string) core.IRouteConfig {
+	return thiz.namedRoutes[name]
 }
 
-func (thiz *GorganyRouter) replaceRouteSegments(routePattern string, params map[string]any) string {
+func (thiz *ChiRouterAdapter) replaceRouteSegments(routePattern string, params map[string]any) string {
 	r := regexp.MustCompile(`{([^}]+)(:[^}]+)?}`)
 
 	result := r.ReplaceAllStringFunc(routePattern, func(match string) string {
@@ -90,109 +225,7 @@ func (thiz *GorganyRouter) replaceRouteSegments(routePattern string, params map[
 	return result
 }
 
-func (thiz *GorganyRouter) LookupRoute(method, path string) (routeConfig core.IRouteConfig, found bool) {
-	// Check cache first
-	cacheKey := method + ":" + path
-	thiz.routeCacheMutex.RLock()
-	if entry, found := thiz.routeCache[cacheKey]; found {
-		thiz.routeCacheMutex.RUnlock()
-		return entry, true
-	}
-	thiz.routeCacheMutex.RUnlock()
-
-	for _, r := range thiz.routesByName {
-		if strings.EqualFold(string(r.GetMethod()), method) && thiz.pathMatch(r.Pattern(), path) {
-			// Cache the result for future requests
-			thiz.routeCacheMutex.Lock()
-			if thiz.routeCache == nil {
-				thiz.routeCache = make(map[string]core.IRouteConfig)
-			}
-			thiz.routeCache[cacheKey] = r
-			thiz.routeCacheMutex.Unlock()
-
-			return r, true
-		}
-	}
-
-	return nil, false
-}
-
-// pathMatch determines if a path matches a pattern, with optimized pattern handling
-func (wc *GorganyRouter) pathMatch(pattern, path string) bool {
-	// Exact match (fastest path)
-	if pattern == path {
-		return true
-	}
-
-	// For patterns with parameters or wildcards
-	if strings.Contains(pattern, "{") || strings.Contains(pattern, "*") {
-		// Get or compile the regex for this pattern
-		regex := wc.getCompiledPattern(pattern)
-		if regex != nil {
-			return regex.MatchString(path)
-		}
-	}
-
-	return false
-}
-
-// getCompiledPattern returns a cached regex pattern or compiles a new one
-func (wc *GorganyRouter) getCompiledPattern(pattern string) *regexp.Regexp {
-	// Check if we already have this pattern compiled
-	wc.compiledPatternsMutex.RLock()
-	regex, exists := wc.compiledPatterns[pattern]
-	wc.compiledPatternsMutex.RUnlock()
-
-	if exists {
-		return regex
-	}
-
-	// Compile the pattern
-	var regexStr string
-
-	if strings.Contains(pattern, "{") && strings.Contains(pattern, "}") {
-		// Parameter pattern like /users/{id}
-		regexPattern := regexp.MustCompile(`\{([^{}]+)\}`)
-		regexStr = "^" + regexPattern.ReplaceAllString(pattern, `([^/]+)`) + "$"
-	} else if strings.HasSuffix(pattern, "/*") {
-		// Wildcard pattern like /api/*
-		basePattern := strings.TrimSuffix(pattern, "/*")
-		regexStr = "^" + regexp.QuoteMeta(basePattern) + "(/.*)?$"
-	} else {
-		return nil // Not a pattern that needs regex
-	}
-
-	compiledRegex, err := regexp.Compile(regexStr)
-	if err != nil {
-		return nil
-	}
-
-	// Store the compiled pattern
-	wc.compiledPatternsMutex.Lock()
-	if wc.compiledPatterns == nil {
-		wc.compiledPatterns = make(map[string]*regexp.Regexp)
-	}
-	wc.compiledPatterns[pattern] = compiledRegex
-	wc.compiledPatternsMutex.Unlock()
-
-	return compiledRegex
-}
-
-// Initialize should be called after all routesByName are added
-func (thiz *GorganyRouter) CompilePatterns() {
-	// Pre-compile patterns for all routesByName
-	thiz.compiledPatterns = make(map[string]*regexp.Regexp)
-	thiz.routeCache = make(map[string]core.IRouteConfig)
-
-	for _, r := range thiz.routesByName {
-		pattern := r.Pattern()
-		if strings.Contains(pattern, "{") || strings.Contains(pattern, "*") {
-			thiz.getCompiledPattern(pattern)
-		}
-	}
-}
-
-func (thiz *GorganyRouter) replaceRouteSegmentsSequence(routePattern string, params ...any) string {
+func (thiz *ChiRouterAdapter) replaceRouteSegmentsSequence(routePattern string, params ...any) string {
 	r := regexp.MustCompile(`{([^}]+)(:[^}]+)?}`)
 
 	paramIndex := -1

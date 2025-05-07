@@ -3,18 +3,15 @@ package provider
 
 import (
 	"fmt"
-	gohttp "net/http"
-	"reflect"
-
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/http"
 	"git.qix.sx/gorgany/gorgany.git/http/router"
-	"github.com/go-chi/chi"
+	gohttp "net/http"
+	"reflect"
 )
 
 type RouteProvider struct {
-	routerCtor  func() core.Router
 	controllers []core.IController
 	middlewares []core.IMiddlewareConfig
 	notFound    core.HandlerFunc
@@ -37,44 +34,24 @@ func (p *RouteProvider) SetNotFoundHandler(h core.HandlerFunc) {
 }
 
 func (p *RouteProvider) Register(c core.IContainer) {
-	c.SingletonLazy(func() gohttp.Handler {
-		return &http.Dispatcher{}
-	})
-	c.SingletonLazy(func() core.Router {
-		return router.NewGorganyRouter()
+	c.SingletonLazy(func() core.IWebContext {
+		return &http.WebContext{}
 	})
 
-	c.SingletonLazy(func(r core.Router) core.IWebContext {
-		wc := &http.WebContext{}
-		wc.SetRouter(r)
-		return wc
-	})
-
-	c.TransientLazy(func() *http.Message {
-		return &http.Message{}
+	c.SingletonLazy(func(wc core.IWebContext) core.Router {
+		return &router.ChiRouterAdapter{}
 	})
 }
 
 func (p *RouteProvider) Boot(c core.IContainer) {
-	_ = c.Invoke(func(wc core.IWebContext) {
-
+	_ = c.Invoke(func(wc core.IWebContext, grgRouter core.Router) {
 		for _, mw := range p.middlewares {
-			middleware := mw.GetMiddleware()
-			err := c.Make(middleware)
-			if err != nil {
+			m := mw.GetMiddleware()
+			if err := c.Make(m); err != nil {
 				err2.HandleError(err)
 			}
-
-			configWithInjectedMiddleware := http.NewMiddlewareConfigBuilder().
-				WithPattern(mw.GetPattern()).
-				WithApplyOn404(mw.GetApplyOn404()).
-				WithMiddleware(middleware).
-				WithExcludePattern(mw.GetExcludePattern()).
-				Build()
-
-			wc.AddMiddleware(configWithInjectedMiddleware)
+			grgRouter.RegisterMiddleware(mw)
 		}
-
 		wc.SetNotFound(p.notFound)
 
 		wc.SetNewMessage(func(w gohttp.ResponseWriter, r *gohttp.Request) (core.HttpMessage, error) {
@@ -91,24 +68,22 @@ func (p *RouteProvider) Boot(c core.IContainer) {
 			return res, nil
 		})
 
-		engine := wc.GetRouter().Engine().(chi.Router)
+		chiAdapter := grgRouter.(*router.ChiRouterAdapter)
 		for _, ctrl := range p.controllers {
-			err := c.Make(ctrl)
-			if err != nil {
+			if err := c.Make(ctrl); err != nil {
 				err2.HandleError(err)
 			}
 			wc.AddController(ctrl)
 			for _, rc := range ctrl.GetRoutes() {
-				wc.GetRouter().RegisterRoute(rc)
+				for i := range rc.GetMiddlewares() {
+					m := rc.GetMiddlewares()[i]
+					if err := c.Make(m); err != nil {
+						err2.HandleError(err)
+					}
+				}
 
-				engine.MethodFunc(string(rc.GetMethod()), rc.Pattern(), func(w gohttp.ResponseWriter, r *gohttp.Request) {})
-				engine.Options(rc.Pattern(), func(w gohttp.ResponseWriter, r *gohttp.Request) {})
+				chiAdapter.RegisterRoute(rc)
 			}
 		}
-		wc.GetRouter().CompilePatterns()
-
-		var dispatcher gohttp.Handler
-		c.Resolve(&dispatcher)
-		wc.GetRouter().(*router.GorganyRouter).SetEntryPoint(dispatcher)
 	})
 }

@@ -32,13 +32,13 @@ type IMiddleware interface {
 }
 
 type Router interface {
+	http.Handler
 	UrlByName(name string, params map[string]any) string
 	UrlByNameSequence(name string, params ...any) string
 	Engine() http.Handler
 	RegisterRoute(config IRouteConfig)
+	RegisterMiddleware(config IMiddlewareConfig)
 	RouteByName(name string) IRouteConfig
-	LookupRoute(method, path string) (IRouteConfig, bool)
-	CompilePatterns()
 }
 
 type IRouteConfig interface {

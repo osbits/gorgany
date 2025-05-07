@@ -174,7 +174,7 @@ func (s *ServerApp) Run() {
 	go func() {
 		s.httpServer = &http.Server{
 			Addr:           fmt.Sprintf(":%d", port),
-			Handler:        router.Engine(),
+			Handler:        router,
 			MaxHeaderBytes: 1 << 20,
 			ReadTimeout:    10 * time.Second,
 			WriteTimeout:   10 * time.Second,

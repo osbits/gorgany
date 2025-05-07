@@ -10,10 +10,6 @@ import (
 )
 
 type IWebContext interface {
-	// Router и фабрики
-	SetRouter(r Router)
-	GetRouter() Router
-
 	SetNewMessage(factory MessageFactory)
 	GetNewMessage() MessageFactory
 
