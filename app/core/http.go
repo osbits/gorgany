@@ -10,6 +10,9 @@ import (
 )
 
 type IWebContext interface {
+	SetHomeUrl(url string)
+	GetHomeUrl() string
+
 	SetNewMessage(factory MessageFactory)
 	GetNewMessage() MessageFactory
 

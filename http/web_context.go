@@ -5,6 +5,7 @@ import (
 )
 
 type WebContext struct {
+	homeUrl    string
 	msgFactory core.MessageFactory
 	inpFactory core.InputResolverFactory
 
@@ -12,6 +13,14 @@ type WebContext struct {
 	middleware  []core.IMiddlewareConfig
 
 	notFound core.HandlerFunc
+}
+
+func (wc *WebContext) SetHomeUrl(url string) {
+	wc.homeUrl = url
+}
+
+func (wc *WebContext) GetHomeUrl() string {
+	return wc.homeUrl
 }
 
 func (wc *WebContext) SetNewMessage(f core.MessageFactory) {
