@@ -14,6 +14,8 @@ type binding struct {
 	resolver    interface{}
 	concrete    interface{}
 	isSingleton bool
+
+	initOnce sync.Once
 }
 
 // Container is the IoC container implementation
@@ -351,13 +353,20 @@ func (c *Container) fill(target interface{}, chain map[reflect.Type]interface{})
 	}
 
 	if initObj, ok := target.(core.Initiator); ok {
-		addr := reflect.ValueOf(target).Pointer()
-		c.initMu.Lock()
-		if !c.initialized[addr] {
-			initObj.Init()
-			c.initialized[addr] = true
+		typ := reflect.TypeOf(target)
+		c.mu.RLock()
+		typeBindings := c.bindings[typ]
+		c.mu.RUnlock()
+		if typeBindings != nil {
+			for _, b := range typeBindings {
+				b.initOnce.Do(func() {
+					initObj.Init()
+				})
+				return nil
+			}
 		}
-		c.initMu.Unlock()
+		initObj.Init()
 	}
+
 	return nil
 }
