@@ -20,14 +20,18 @@ var (
 type ChiRouterAdapter struct {
 	engine      chi.Router
 	webCtx      core.IWebContext `container:"inject"`
-	filters     []core.IMiddlewareConfig
-	middlewares []core.IMiddlewareConfig
 	namedRoutes map[string]core.IRouteConfig
 }
 
 func (r *ChiRouterAdapter) Init() {
 	r.engine = chi.NewRouter()
 	r.namedRoutes = make(map[string]core.IRouteConfig)
+
+	for _, mcf := range r.webCtx.GetMiddlewares() {
+		if mcf.IsFilter() {
+			r.engine.Use(r.adaptFilter(mcf))
+		}
+	}
 
 	r.engine.NotFound(func(w http.ResponseWriter, req *http.Request) {
 		msg, _ := r.webCtx.GetNewMessage()(w, req)
@@ -43,22 +47,13 @@ func (r *ChiRouterAdapter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	r.engine.ServeHTTP(w, req)
 }
 
-func (r *ChiRouterAdapter) RegisterMiddleware(mwc core.IMiddlewareConfig) {
-	if mwc.GetApplyOn404() {
-		r.filters = append(r.filters, mwc)
-		r.engine.Use(r.adaptFilter(mwc))
-	} else {
-		r.middlewares = append(r.middlewares, mwc)
-	}
-}
-
 func (r *ChiRouterAdapter) RegisterRoute(rc core.IRouteConfig) {
 	pattern := rc.Pattern()
 	method := string(rc.GetMethod())
 
 	var mws []func(http.Handler) http.Handler
 
-	for _, cfg := range r.middlewares {
+	for _, cfg := range r.webCtx.GetMiddlewares() {
 		if matchesPattern(cfg.GetPattern(), pattern) && !matchesPattern(cfg.GetExcludePattern(), pattern) {
 			mws = append(mws, r.adaptRouteMiddleware(cfg))
 		}
@@ -69,6 +64,7 @@ func (r *ChiRouterAdapter) RegisterRoute(rc core.IRouteConfig) {
 			WithMiddleware(mw).
 			WithPattern(pattern).
 			Build()
+		r.webCtx.AddMiddleware(cfg)
 		mws = append(mws, r.adaptRouteMiddleware(cfg))
 	}
 

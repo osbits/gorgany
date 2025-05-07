@@ -15,14 +15,14 @@ func (thiz Controllers) AddController(controller IController) {
 type IMiddlewareConfig interface {
 	GetPattern() string
 	GetExcludePattern() string
-	GetApplyOn404() bool
+	IsFilter() bool
 	GetMiddleware() IMiddleware
 }
 
 type IMiddlewareConfigBuilder interface {
 	WithPattern(pattern string) IMiddlewareConfigBuilder
 	WithExcludePattern(pattern string) IMiddlewareConfigBuilder
-	WithApplyOn404(applyOn404 bool) IMiddlewareConfigBuilder
+	AsFilter() IMiddlewareConfigBuilder
 	WithMiddleware(mw IMiddleware) IMiddlewareConfigBuilder
 	Build() IMiddlewareConfig
 }
@@ -33,11 +33,15 @@ type IMiddleware interface {
 
 type Router interface {
 	http.Handler
-	UrlByName(name string, params map[string]any) string
-	UrlByNameSequence(name string, params ...any) string
+	RouteLinker
+
 	Engine() http.Handler
 	RegisterRoute(config IRouteConfig)
-	RegisterMiddleware(config IMiddlewareConfig)
+}
+
+type RouteLinker interface {
+	UrlByName(name string, params map[string]any) string
+	UrlByNameSequence(name string, params ...any) string
 	RouteByName(name string) IRouteConfig
 }
 

@@ -22,8 +22,8 @@ func (thiz *MiddlewareConfigBuilder) WithExcludePattern(pattern string) core.IMi
 	return thiz
 }
 
-func (thiz *MiddlewareConfigBuilder) WithApplyOn404(applyOn404 bool) core.IMiddlewareConfigBuilder {
-	thiz.middlewareConfig.applyOn404 = applyOn404
+func (thiz *MiddlewareConfigBuilder) AsFilter() core.IMiddlewareConfigBuilder {
+	thiz.middlewareConfig.isFilter = true
 	return thiz
 }
 
@@ -42,7 +42,7 @@ func (thiz *MiddlewareConfigBuilder) Build() core.IMiddlewareConfig {
 type MiddlewareConfig struct {
 	pattern        string
 	excludePattern string
-	applyOn404     bool
+	isFilter       bool
 	middleware     core.IMiddleware
 }
 
@@ -54,8 +54,8 @@ func (thiz *MiddlewareConfig) GetExcludePattern() string {
 	return thiz.excludePattern
 }
 
-func (thiz *MiddlewareConfig) GetApplyOn404() bool {
-	return thiz.applyOn404
+func (thiz *MiddlewareConfig) IsFilter() bool {
+	return thiz.isFilter
 }
 
 func (thiz *MiddlewareConfig) GetMiddleware() core.IMiddleware {

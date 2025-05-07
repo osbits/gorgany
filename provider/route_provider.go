@@ -41,6 +41,10 @@ func (p *RouteProvider) Register(c core.IContainer) {
 	c.SingletonLazy(func(wc core.IWebContext) core.Router {
 		return &router.ChiRouterAdapter{}
 	})
+
+	c.SingletonLazy(func(r core.Router) core.RouteLinker {
+		return r
+	})
 }
 
 func (p *RouteProvider) Boot(c core.IContainer) {
@@ -50,8 +54,9 @@ func (p *RouteProvider) Boot(c core.IContainer) {
 			if err := c.Make(m); err != nil {
 				err2.HandleError(err)
 			}
-			grgRouter.RegisterMiddleware(mw)
+			wc.AddMiddleware(mw)
 		}
+
 		wc.SetNotFound(p.notFound)
 
 		wc.SetNewMessage(func(w gohttp.ResponseWriter, r *gohttp.Request) (core.HttpMessage, error) {
@@ -62,6 +67,7 @@ func (p *RouteProvider) Boot(c core.IContainer) {
 			msg.SetSession()
 			return msg, nil
 		})
+
 		wc.SetNewInputResolver(func(h core.HandlerFunc, m core.HttpMessage) (interface{}, error) {
 			res := &http.InputResolver{ReflectedHandler: reflect.ValueOf(h), Message: m}
 			_ = c.Make(res)
