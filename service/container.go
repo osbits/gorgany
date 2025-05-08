@@ -365,6 +365,20 @@ func (c *Container) fill(target interface{}, chain map[reflect.Type]interface{})
 				return nil
 			}
 		}
+
+		for t, bindNames := range c.bindings {
+			if t.Kind() != reflect.Interface {
+				continue
+			}
+			for _, b := range bindNames {
+				if typ.Implements(t) {
+					b.initOnce.Do(func() {
+						initObj.Init()
+					})
+					return nil
+				}
+			}
+		}
 		initObj.Init()
 	}
 

@@ -18,13 +18,18 @@ type jsonParser struct {
 }
 
 func (thiz jsonParser) parse(dest interface{}) error {
-	if len(thiz.message.GetBody()) == 0 { // todo: check it
+	body, err := thiz.message.Request().Body()
+	if err != nil {
+		return fmt.Errorf("error when trying to parse input body: %v", err)
+	}
+
+	if len(body) == 0 { // todo: check it
 		return nil
 	}
 
 	//err := json.Unmarshal(thiz.message.GetBody(), dest)
 	inputMap := make(map[string]interface{})
-	err := json.Unmarshal(thiz.message.GetBody(), &inputMap)
+	err = json.Unmarshal(body, &inputMap)
 	if err != nil {
 		validationErrors := make(error2.ValidationErrors, 0)
 		if errors.Is(err, &json.UnmarshalTypeError{}) {

@@ -2,16 +2,16 @@ package view
 
 import (
 	"context"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/i18n"
 	"git.qix.sx/gorgany/gorgany.git/service"
+	"git.qix.sx/gorgany/gorgany.git/util"
 	"github.com/go-chi/chi"
 	"html/template"
-	"net/http"
-
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/util"
+	"io"
 )
 
+// EngineRenderer implements the core.IEngineRenderer interface
 type EngineRenderer struct {
 	Engine            core.IViewEngine          `container:"inject"`
 	Router            core.Router               `container:"inject"`
@@ -25,7 +25,7 @@ func (er *EngineRenderer) Init() {
 	er.variables = make(map[string]any)
 }
 
-func (er *EngineRenderer) DoRender(ctx context.Context, w http.ResponseWriter, templateName string, opts map[string]any) error {
+func (er *EngineRenderer) DoRender(ctx context.Context, w io.Writer, templateName string, opts map[string]any) error {
 	if opts == nil {
 		opts = make(map[string]any)
 	}

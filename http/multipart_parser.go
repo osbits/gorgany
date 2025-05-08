@@ -20,7 +20,7 @@ type multipartParser struct {
 }
 
 func (thiz multipartParser) parse(arg interface{}) error {
-	multipartForm := thiz.message.GetMultipartFormValues()
+	multipartForm := thiz.message.Request().GetMultipartFormValues()
 
 	queryParams, err := decoder.ParseUrlValues(multipartForm.Value)
 	if err != nil {
@@ -44,7 +44,9 @@ func (thiz multipartParser) parse(arg interface{}) error {
 	openedFiles, err := multipart.DecodeFiles(multipartForm.File, arg)
 	defer func() {
 		if len(openedFiles) > 0 {
-			thiz.message.(*Message).io = append(thiz.message.(*Message).io, openedFiles...)
+			for _, file := range openedFiles {
+				file.Close()
+			}
 		}
 	}()
 
@@ -245,7 +247,6 @@ func (thiz multipartParser) callBindMethodIfExists(command any, fieldName string
 		}}
 	}
 
-	return true, nil
 	return true, nil
 }
 

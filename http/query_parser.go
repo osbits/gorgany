@@ -17,7 +17,7 @@ type queryParser struct {
 }
 
 func (thiz queryParser) parse(arg interface{}) error {
-	queryParams := thiz.message.GetQuery()
+	queryParams := thiz.message.Request().Query()
 
 	err := thiz.initStruct(arg, queryParams.AsMap())
 	if err != nil {

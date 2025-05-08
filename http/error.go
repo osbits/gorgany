@@ -57,17 +57,17 @@ func Catch(err error, message core.HttpMessage) {
 func processDefaultError(err error, message core.HttpMessage) {
 	error2.PrintError(err)
 	if app.GetRunMode() == gorgany.Dev {
-		message.Response(fmt.Sprintf("Oops... 500 error.\n %v \n%s", err, error2.GetStacktrace()), 500)
+		message.Response().Text(fmt.Sprintf("Oops... 500 error.\n %v \n%s", err, error2.GetStacktrace()), 500)
 		return
 	}
 
-	message.Response("Oops... Internal error.", 500)
+	message.Response().Text("Oops... Internal error.", 500)
 }
 
 func processValidationErrors(error error, message core.HttpMessage) {
 	concreteError := error.(*error2.ValidationErrors)
-	req := message.GetRequest()
-	message.RedirectWithParams(req.Referer(), 301, map[string]any{"validation": concreteError})
+	req := message.Request().RawRequest()
+	message.RedirectWithFlash(req.Referer(), 301, map[string]any{"validation": concreteError})
 }
 
 func processValidationError(error error, message core.HttpMessage) {
@@ -80,17 +80,17 @@ func processValidationError(error error, message core.HttpMessage) {
 
 func processInputParsingError(error error, message core.HttpMessage) {
 	error2.PrintError(error)
-	message.Response("", 404)
+	message.Response().Text("", 404)
 	return
 }
 
 func processBodyParsingError(error error, message core.HttpMessage) {
 	error2.PrintError(error)
-	message.Response("", 400)
+	message.Response().Text("", 400)
 	return
 }
 
 func processJwtAuthError(err error, message core.HttpMessage) {
-	message.Response("", 401)
+	message.Response().Text("", 401)
 	return
 }

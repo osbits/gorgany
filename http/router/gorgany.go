@@ -27,24 +27,25 @@ func (r *ChiRouterAdapter) Init() {
 	r.engine = chi.NewRouter()
 	r.namedRoutes = make(map[string]core.IRouteConfig)
 
-	for _, mcf := range r.webCtx.GetMiddlewares() {
-		if mcf.IsFilter() {
-			r.engine.Use(r.adaptFilter(mcf))
-		}
-	}
-
 	r.engine.NotFound(func(w http.ResponseWriter, req *http.Request) {
 		msg, _ := r.webCtx.GetNewMessage()(w, req)
 		if nf := r.webCtx.GetNotFound(); nf != nil {
 			reflect.ValueOf(nf).Call([]reflect.Value{reflect.ValueOf(msg)})
 		} else {
-			msg.Response("", 404)
+			msg.Response().Bytes(nil, 404)
 		}
 	})
 }
 
 func (r *ChiRouterAdapter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	r.engine.ServeHTTP(w, req)
+}
+
+func (r *ChiRouterAdapter) RegisterMiddleware(mw core.IMiddlewareConfig) {
+	r.webCtx.AddMiddleware(mw)
+	if mw.IsFilter() {
+		r.engine.Use(r.adaptFilter(mw))
+	}
 }
 
 func (r *ChiRouterAdapter) RegisterRoute(rc core.IRouteConfig) {
@@ -54,6 +55,10 @@ func (r *ChiRouterAdapter) RegisterRoute(rc core.IRouteConfig) {
 	var mws []func(http.Handler) http.Handler
 
 	for _, cfg := range r.webCtx.GetMiddlewares() {
+		if cfg.IsFilter() {
+			continue
+		}
+
 		if matchesPattern(cfg.GetPattern(), pattern) && !matchesPattern(cfg.GetExcludePattern(), pattern) {
 			mws = append(mws, r.adaptRouteMiddleware(cfg))
 		}
@@ -85,12 +90,12 @@ func (r *ChiRouterAdapter) RegisterRoute(rc core.IRouteConfig) {
 		defer msg.Close()
 		resolver, err := r.webCtx.GetNewInputResolver()(rc.GetHandler(), msg)
 		if err != nil {
-			msg.Response("", 500)
+			msg.Response().Bytes(nil, 500)
 			return
 		}
 		args, err := resolver.(*grghttp.InputResolver).Resolve()
 		if err != nil {
-			msg.Response("", 500)
+			msg.Response().Bytes(nil, 500)
 			return
 		}
 		reflect.ValueOf(rc.GetHandler()).Call(args)
@@ -102,6 +107,7 @@ func (r *ChiRouterAdapter) RegisterRoute(rc core.IRouteConfig) {
 	r.engine.
 		With(mws...).
 		Options(pattern, h)
+	r.namedRoutes[rc.GetName()] = rc
 }
 
 func (r *ChiRouterAdapter) adaptFilter(cfg core.IMiddlewareConfig) func(http.Handler) http.Handler {

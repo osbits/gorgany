@@ -38,13 +38,13 @@ func (p *RouteProvider) Register(c core.IContainer) {
 		return &http.WebContext{}
 	})
 
-	c.SingletonLazy(func(wc core.IWebContext) core.Router {
+	c.SingletonLazy(func() core.Router {
 		return &router.ChiRouterAdapter{}
 	})
-
-	c.SingletonLazy(func(r core.Router) core.RouteLinker {
-		return r
-	})
+	//
+	//c.SingletonLazy(func(r core.Router) core.RouteLinker {
+	//	return r
+	//})
 }
 
 func (p *RouteProvider) Boot(c core.IContainer) {
@@ -54,7 +54,7 @@ func (p *RouteProvider) Boot(c core.IContainer) {
 			if err := c.Make(m); err != nil {
 				err2.HandleError(err)
 			}
-			wc.AddMiddleware(mw)
+			grgRouter.RegisterMiddleware(mw)
 		}
 
 		wc.SetNotFound(p.notFound)
@@ -64,7 +64,6 @@ func (p *RouteProvider) Boot(c core.IContainer) {
 			if err := c.Make(msg, map[string]interface{}{"writer": w, "request": r}); err != nil {
 				return nil, fmt.Errorf("cannot make Message: %w", err)
 			}
-			msg.SetSession()
 			return msg, nil
 		})
 

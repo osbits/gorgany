@@ -39,15 +39,15 @@ func (thiz AuthMiddleware) Handle(next func(core.HttpMessage)) func(core.HttpMes
 			}
 		}
 
-		if message.GetHeader().Get("Content-Type") == core.ApplicationJson.String() || message.GetPathParam("namespace") == "api" {
-			message.ResponseJSON(dto.ReturnObject(nil, core.NotAuthorizedHttpStatus, nil), 401)
+		if message.Request().Header().Get("Content-Type") == core.ApplicationJson.String() || message.Request().PathParam("namespace") == "api" {
+			message.Response().JSON(dto.ReturnObject(nil, core.NotAuthorizedHttpStatus, nil), 401)
 			return
 		}
 		loginFormUrl := viper.GetString("auth.login.formUrl")
 		if loginFormUrl == "" {
 			loginFormUrl = core.DefaultLoginUrl
 		}
-		message.Redirect(loginFormUrl, 302)
+		message.Response().Redirect(loginFormUrl, 302)
 		return
 	}
 }

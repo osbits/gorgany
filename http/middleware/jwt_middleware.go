@@ -16,7 +16,12 @@ func (thiz JwtMiddleware) Handle(next func(core.HttpMessage)) func(core.HttpMess
 	return func(message core.HttpMessage) {
 		jwtService := auth.NewJwtService()
 
-		token := message.GetBearerToken()
+		token := message.Request().Header().Get("Authorization")
+		// Remove "Bearer " prefix if present
+		if len(token) > 7 && token[:7] == "Bearer " {
+			token = token[7:]
+		}
+
 		if token == "" {
 			panic(error2.NewJwtAuthError())
 		}
@@ -42,7 +47,7 @@ func (thiz JwtMiddleware) Handle(next func(core.HttpMessage)) func(core.HttpMess
 			}
 		}
 
-		message.ResponseJSON(dto.ReturnObject(nil, core.ForbiddenHttpStatus, nil), 403)
+		message.Response().JSON(dto.ReturnObject(nil, core.ForbiddenHttpStatus, nil), 403)
 		return
 	}
 }

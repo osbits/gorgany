@@ -17,12 +17,12 @@ type PublicController struct {
 }
 
 func (thiz PublicController) load(message core.HttpMessage) {
-	r := message.GetRequest()
+	r := message.Request().RawRequest()
 	url := r.URL
 	path := url.Path
 	file, err := os.ReadFile(path2.Join("resource", path))
 	if err != nil {
-		message.Response("", 404)
+		message.Response().Text("", 404)
 		return
 	}
 
@@ -31,8 +31,8 @@ func (thiz PublicController) load(message core.HttpMessage) {
 	splittedName := strings.Split(fileName, ".")
 	ext := splittedName[len(splittedName)-1]
 	kind := mime.TypeByExtension("." + ext)
-	message.ResponseHeader().Set("content-type", kind)
-	message.ResponseBytes(file, 200)
+	message.Response().TextHeader().Set("content-type", kind)
+	message.Response().TextBytes(file, 200)
 }
 
 func (thiz PublicController) GetRoutes() []core.IRouteConfig {

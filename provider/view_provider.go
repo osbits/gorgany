@@ -32,7 +32,7 @@ func (p *ViewProvider) Register(c core.IContainer) {
 		return view.NewNativeEngine(p.dir, p.ext)
 	})
 
-	c.SingletonLazy(func(engine core.IViewEngine) *view.EngineRenderer {
+	c.SingletonLazy(func() core.IEngineRenderer {
 		return &view.EngineRenderer{}
 	})
 }

@@ -200,11 +200,11 @@ func AllowAll() *Cors {
 // as necessary.
 func (c *Cors) Handle(next func(core.HttpMessage)) func(core.HttpMessage) {
 	return func(message core.HttpMessage) {
-		if message.GetRequest().Method == http.MethodOptions && message.GetHeader().Get("Access-Control-Request-Method") != "" {
+		if message.Request().RawRequest().Method == http.MethodOptions && message.Request().Header().Get("Access-Control-Request-Method") != "" {
 			c.logf("Handler: Preflight request")
-			isPreflightHandled := c.handlePreflight(message.GetWriter(), message.GetRequest())
+			isPreflightHandled := c.handlePreflight(message.Response().RawWriter(), message.Request().RawRequest())
 			if !isPreflightHandled {
-				message.Response("", 400)
+				message.Response().Text("", 400)
 				return
 			}
 
@@ -216,19 +216,19 @@ func (c *Cors) Handle(next func(core.HttpMessage)) func(core.HttpMessage) {
 				next(message)
 				return
 			} else {
-				message.Response("", http.StatusOK)
+				message.Response().Text("", http.StatusOK)
 				return
 			}
 		} else {
 			c.logf("Handler: Actual request")
 
-			handled := c.handleActualRequest(message.GetWriter(), message.GetRequest())
+			handled := c.handleActualRequest(message.Response().RawWriter(), message.Request().RawRequest())
 			if handled {
 				next(message)
 				return
 			}
 
-			message.Response("", 403)
+			message.Response().Text("", 403)
 		}
 	}
 }

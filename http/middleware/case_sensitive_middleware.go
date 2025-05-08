@@ -12,7 +12,7 @@ type CaseSensitiveMiddleware struct {
 
 func (thiz CaseSensitiveMiddleware) Handle(next func(core.HttpMessage)) func(core.HttpMessage) {
 	return func(message core.HttpMessage) {
-		r := message.GetRequest()
+		r := message.Request().RawRequest()
 		ctx := message.Context()
 
 		ctx = context.WithValue(ctx, core.OriginalURLPathKey, r.URL.Path)

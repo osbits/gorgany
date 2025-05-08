@@ -78,13 +78,13 @@ func (thiz *InputResolver) Resolve() ([]reflect.Value, error) {
 		args = append(args, reflect.Indirect(reflect.ValueOf(arg)))
 	}
 
-	thiz.Message.(*Message).inputParameters = args
+	//thiz.Message.(*Message).inputParameters = args
 
 	return args, nil
 }
 
 func (thiz *InputResolver) collectPathParams() []string {
-	routeParams := chi.RouteContext(thiz.Message.GetRequest().Context()).URLParams
+	routeParams := chi.RouteContext(thiz.Message.Request().RawRequest().Context()).URLParams
 
 	pathParams := make([]string, 0)
 	for i := range routeParams.Values {
