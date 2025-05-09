@@ -93,6 +93,19 @@ func (m *MockAuthStrategy) CurrentSession(ctx context.Context) core.ISession {
 	return args.Get(0).(core.ISession)
 }
 
+func (m *MockAuthStrategy) ShouldRotateSession(session core.ISession) bool {
+	args := m.Called(session)
+	return args.Bool(0)
+}
+
+func (m *MockAuthStrategy) RotateSession(ctx context.Context, oldSession core.ISession) (core.ISession, error) {
+	args := m.Called(ctx, oldSession)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(core.ISession), args.Error(1)
+}
+
 type MockAuthContext struct {
 	mock.Mock
 }
@@ -209,6 +222,20 @@ func (m *MockSession) ClearItem(attribute string) {
 
 func (m *MockSession) ClearItems() {
 	m.Called()
+}
+
+func (m *MockSession) GetLastActivity() time.Time {
+	args := m.Called()
+	return args.Get(0).(time.Time)
+}
+
+func (m *MockSession) SetLastActivity(t time.Time) {
+	m.Called(t)
+}
+
+func (m *MockSession) GetCreatedAt() time.Time {
+	args := m.Called()
+	return args.Get(0).(time.Time)
 }
 
 type MockDBContext struct {
@@ -355,6 +382,7 @@ func TestMessage_RedirectWithFlash(t *testing.T) {
 	mockSession.On("SetExpiry", mock.Anything).Return()
 	mockSession.On("GetItem", core.OneTimeSessionAttributeKey).Return("")
 	mockSession.On("SetItem", core.OneTimeSessionAttributeKey, mock.Anything).Return()
+	mockSession.On("SetLastActivity", mock.Anything).Return()
 
 	// Setup session storage
 	mockSessionStorage.On("GetSessionLifetime").Return(time.Duration(3600) * time.Second)
@@ -383,7 +411,7 @@ func TestMessage_RedirectWithFlash(t *testing.T) {
 
 	// Verify flash data was set
 	var oneTimeParams model.OneTimeParams
-	flashJSON := mockSession.Calls[3].Arguments[1].(string)
+	flashJSON := mockSession.Calls[4].Arguments[1].(string)
 	err := json.Unmarshal([]byte(flashJSON), &oneTimeParams)
 	assert.NoError(t, err)
 	assert.True(t, oneTimeParams.Start)
@@ -454,6 +482,7 @@ func TestMessage_Init(t *testing.T) {
 	mockSession.On("IsExpired").Return(false)
 	mockSession.On("SetExpiry", mock.Anything).Return()
 	mockSession.On("GetItem", core.OneTimeSessionAttributeKey).Return("")
+	mockSession.On("SetLastActivity", mock.Anything).Return()
 
 	// Setup session storage
 	mockSessionStorage.On("GetSessionLifetime").Return(time.Duration(3600) * time.Second)
@@ -518,6 +547,7 @@ func TestMessage_Init_WithPathParams(t *testing.T) {
 	mockSession.On("IsExpired").Return(false)
 	mockSession.On("SetExpiry", mock.Anything).Return()
 	mockSession.On("GetItem", core.OneTimeSessionAttributeKey).Return("")
+	mockSession.On("SetLastActivity", mock.Anything).Return()
 
 	// Setup session storage
 	mockSessionStorage.On("GetSessionLifetime").Return(time.Duration(3600) * time.Second)
@@ -584,6 +614,7 @@ func TestMessage_Close(t *testing.T) {
 	mockSession.On("IsExpired").Return(false)
 	mockSession.On("SetExpiry", mock.Anything).Return()
 	mockSession.On("GetItem", core.OneTimeSessionAttributeKey).Return("")
+	mockSession.On("SetLastActivity", mock.Anything).Return()
 
 	// Setup session storage
 	mockSessionStorage.On("GetSessionLifetime").Return(time.Duration(3600) * time.Second)
