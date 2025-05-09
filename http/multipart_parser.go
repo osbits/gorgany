@@ -44,9 +44,10 @@ func (thiz multipartParser) parse(arg interface{}) error {
 	openedFiles, err := multipart.DecodeFiles(multipartForm.File, arg)
 	defer func() {
 		if len(openedFiles) > 0 {
-			for _, file := range openedFiles {
-				file.Close()
-			}
+			// todo: need to fix the closing (removing) of temp files
+			//for _, file := range openedFiles {
+			//	file.Close()
+			//}
 		}
 	}()
 
