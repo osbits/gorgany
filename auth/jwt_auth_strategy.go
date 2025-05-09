@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"github.com/golang-jwt/jwt/v5"
@@ -71,4 +72,12 @@ func (thiz *JwtAuthStrategy) IsRequestMadeWithStrategy(ctx context.Context) bool
 	}
 
 	return true
+}
+
+func (thiz *JwtAuthStrategy) ShouldRotateSession(session core.ISession) bool {
+	return false // JWT sessions don't need rotation
+}
+
+func (thiz *JwtAuthStrategy) RotateSession(ctx context.Context, oldSession core.ISession) (core.ISession, error) {
+	return oldSession, nil // JWT sessions don't need rotation
 }

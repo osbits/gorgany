@@ -1,22 +1,31 @@
 package auth
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"sync"
 	"time"
+
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 )
 
 // concrete session
 func NewSession(id string, expiry time.Time) *Session {
-	return &Session{id: id, expiry: expiry}
+	now := time.Now()
+	return &Session{
+		id:           id,
+		expiry:       expiry,
+		createdAt:    now,
+		lastActivity: now,
+	}
 }
 
 type Session struct {
-	id         string
-	expiry     time.Time
-	username   string
-	attributes map[string]string
-	mu         sync.Mutex
+	id           string
+	expiry       time.Time
+	userId       string
+	attributes   map[string]string
+	createdAt    time.Time
+	lastActivity time.Time
+	mu           sync.Mutex
 }
 
 func (thiz *Session) GetId() string {
@@ -44,11 +53,11 @@ func (thiz *Session) GetItem(key string) string {
 }
 
 func (thiz *Session) GetUserId() string {
-	return thiz.username
+	return thiz.userId
 }
 
 func (thiz *Session) SetUserId(id string) {
-	thiz.username = id
+	thiz.userId = id
 }
 
 func (thiz *Session) IsExpired() bool {
@@ -143,4 +152,22 @@ func NewDbSession() *DbSession {
 
 func (thiz *DbSession) NewSession(username string) string {
 	return ""
+}
+
+func (thiz *Session) GetCreatedAt() time.Time {
+	thiz.mu.Lock()
+	defer thiz.mu.Unlock()
+	return thiz.createdAt
+}
+
+func (thiz *Session) GetLastActivity() time.Time {
+	thiz.mu.Lock()
+	defer thiz.mu.Unlock()
+	return thiz.lastActivity
+}
+
+func (thiz *Session) SetLastActivity(t time.Time) {
+	thiz.mu.Lock()
+	thiz.lastActivity = t
+	thiz.mu.Unlock()
 }

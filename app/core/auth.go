@@ -35,6 +35,10 @@ type IAuthStrategy interface {
 	IsRequestMadeWithStrategy(ctx context.Context) bool
 	// CurrentSession retrieves the current session from the context
 	CurrentSession(ctx context.Context) ISession
+	// ShouldRotateSession checks if the session should be rotated
+	ShouldRotateSession(session ISession) bool
+	// RotateSession creates a new session and deletes the old one
+	RotateSession(ctx context.Context, oldSession ISession) (ISession, error)
 }
 
 // ISessionStorage defines the interface for session storage management
@@ -70,6 +74,12 @@ type ISession interface {
 	IsExpired() bool
 	// SetExpiry sets the expiration time for this session
 	SetExpiry(t time.Time)
+	// GetCreatedAt returns when the session was created
+	GetCreatedAt() time.Time
+	// GetLastActivity returns when the session was last active
+	GetLastActivity() time.Time
+	// SetLastActivity sets the session's last activity time
+	SetLastActivity(t time.Time)
 }
 
 // Authenticable defines the interface for authenticatable entities

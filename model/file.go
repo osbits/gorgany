@@ -1,40 +1,91 @@
 package model
 
 import (
-	"bytes"
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
-	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"io"
 	"math/rand"
 	"os"
 	"path"
+	"path/filepath"
 	"strings"
+	"time"
+
+	err2 "git.qix.sx/gorgany/gorgany.git/err"
 )
 
-const TempStorage = "resource/temp"
-const PublicStorage = "resource/public"
+const (
+	TempStorage   = "resource/temp"
+	PublicStorage = "resource/public"
+)
+
+// ensureDirectories creates necessary directories if they don't exist
+func ensureDirectories() error {
+	dirs := []string{TempStorage, PublicStorage}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create directory %s: %w", dir, err)
+		}
+	}
+	return nil
+}
 
 func NewMultipartFile(originalFileName string, reader io.Reader) (*MultipartFile, error) {
-	uniqueId := fmt.Sprintf("%d%d%d", rand.Intn(10000), rand.Intn(10000), rand.Intn(10000))
-
-	file := MultipartFile{}
-	file.SetName(uniqueId + "-" + originalFileName)
-
-	tempFile, err := os.CreateTemp(TempStorage, file.GetName()+".tmp")
-	if err != nil {
+	if err := ensureDirectories(); err != nil {
 		return nil, err
 	}
 
-	_, err = io.Copy(tempFile, reader)
+	// Generate a unique filename using timestamp and random number
+	timestamp := time.Now().UnixNano()
+	random := rand.Intn(10000)
+	uniqueId := fmt.Sprintf("%d%d", timestamp, random)
+
+	// Sanitize the original filename
+	ext := filepath.Ext(originalFileName)
+	baseName := strings.TrimSuffix(originalFileName, ext)
+	sanitizedName := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+			return r
+		}
+		return '-'
+	}, baseName)
+
+	fileName := fmt.Sprintf("%s-%s%s", uniqueId, sanitizedName, ext)
+
+	file := MultipartFile{}
+	file.SetName(fileName)
+
+	// Create temp file
+	tempPath := filepath.Join(TempStorage, fileName)
+	tempFile, err := os.Create(tempPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create temp file: %w", err)
+	}
+
+	// Copy content to temp file
+	if _, err := io.Copy(tempFile, reader); err != nil {
+		tempFile.Close()
+		os.Remove(tempPath) // Clean up on error
+		return nil, fmt.Errorf("failed to write to temp file: %w", err)
+	}
+
+	// Ensure the file is written to disk
+	if err := tempFile.Sync(); err != nil {
+		tempFile.Close()
+		os.Remove(tempPath) // Clean up on error
+		return nil, fmt.Errorf("failed to sync temp file: %w", err)
+	}
+
+	// Reset file position for future reads
+	if _, err := tempFile.Seek(0, 0); err != nil {
+		tempFile.Close()
+		os.Remove(tempPath) // Clean up on error
+		return nil, fmt.Errorf("failed to seek temp file: %w", err)
 	}
 
 	file.tempFile = tempFile
-
 	return &file, nil
 }
 
@@ -110,11 +161,10 @@ func (thiz *MultipartFile) Read(writer io.Writer) (int64, error) {
 	}
 
 	file, err := os.Open(actualFilePath)
-	defer file.Close()
-
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to open file: %w", err)
 	}
+	defer file.Close()
 
 	return io.Copy(writer, file)
 }
@@ -124,35 +174,51 @@ func (thiz *MultipartFile) Write(p string, reader io.Reader) (int64, error) {
 		return 0, errors.New("file name is empty")
 	}
 
-	if thiz.Path != "" && thiz.Path != path.Join(PublicStorage, p, thiz.Name) {
-		err := thiz.Delete()
-		if err != nil {
-			return 0, err
+	// Ensure target directory exists
+	targetDir := path.Join(PublicStorage, p)
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return 0, fmt.Errorf("failed to create target directory: %w", err)
+	}
+
+	// If file already exists in a different location, delete it
+	if thiz.Path != "" && thiz.Path != p {
+		if err := thiz.Delete(); err != nil {
+			return 0, fmt.Errorf("failed to delete existing file: %w", err)
 		}
 	}
 
 	thiz.Path = p
+	targetPath := path.Join(targetDir, thiz.Name)
 
-	err := os.MkdirAll(path.Join(PublicStorage, thiz.Path), os.ModePerm)
+	// Create the target file
+	targetFile, err := os.Create(targetPath)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("failed to create target file: %w", err)
+	}
+	defer targetFile.Close()
+
+	// Copy content
+	var written int64
+	if thiz.tempFile != nil {
+		// Read from temp file
+		if _, err := thiz.tempFile.Seek(0, 0); err != nil {
+			return 0, fmt.Errorf("failed to seek temp file: %w", err)
+		}
+		written, err = io.Copy(targetFile, thiz.tempFile)
+	} else {
+		// Read from provided reader
+		written, err = io.Copy(targetFile, reader)
 	}
 
-	rawFile, err := os.Create(path.Join(PublicStorage, thiz.Path, thiz.Name))
 	if err != nil {
-		return 0, err
+		os.Remove(targetPath) // Clean up on error
+		return 0, fmt.Errorf("failed to write file: %w", err)
 	}
 
-	// We consider that permanent file has not been saved yet, so we are reading content from temp
-	buf := new(bytes.Buffer)
-	_, err = thiz.Read(buf)
-	if err != nil {
-		return 0, err
-	}
-
-	written, err := io.Copy(rawFile, buf)
-	if err != nil {
-		return 0, err
+	// Ensure the file is written to disk
+	if err := targetFile.Sync(); err != nil {
+		os.Remove(targetPath) // Clean up on error
+		return 0, fmt.Errorf("failed to sync file: %w", err)
 	}
 
 	return written, nil
@@ -194,11 +260,27 @@ func (thiz *MultipartFile) Delete() error {
 }
 
 func (thiz *MultipartFile) Close() error {
-	stat, err := thiz.tempFile.Stat()
-	if err != nil {
-		return err
+	if thiz.tempFile == nil {
+		return nil
 	}
-	return os.Remove(path.Join(TempStorage, stat.Name()))
+
+	// Close the file
+	if err := thiz.tempFile.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	// Get the temp file path
+	tempPath := thiz.getActualFilePath()
+	if tempPath == "" {
+		return nil
+	}
+
+	// Remove the temp file
+	if err := os.Remove(tempPath); err != nil {
+		return fmt.Errorf("failed to remove temp file: %w", err)
+	}
+
+	return nil
 }
 
 // getActualFilePath - returns full path for temp file if permanent does not exist

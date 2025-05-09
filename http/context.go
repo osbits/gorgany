@@ -2,11 +2,12 @@ package http
 
 import (
 	"context"
+	"net/http"
+	"net/url"
+
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"github.com/go-chi/chi"
-	"net/http"
-	"net/url"
 )
 
 type messageContext struct {

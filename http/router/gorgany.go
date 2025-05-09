@@ -1,15 +1,18 @@
 package router
 
 import (
+	"context"
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	grghttp "git.qix.sx/gorgany/gorgany.git/http"
-	"github.com/go-chi/chi"
+	"git.qix.sx/gorgany/gorgany.git/err"
 	"io"
 	"net/http"
 	"reflect"
 	"regexp"
 	"strings"
+
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	grghttp "git.qix.sx/gorgany/gorgany.git/http"
+	"github.com/go-chi/chi"
 )
 
 var (
@@ -26,6 +29,29 @@ type ChiRouterAdapter struct {
 func (r *ChiRouterAdapter) Init() {
 	r.engine = chi.NewRouter()
 	r.namedRoutes = make(map[string]core.IRouteConfig)
+
+	r.engine.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			wrapper := &grghttp.ResponseWriterWrapper{
+				Flusher:        w.(http.Flusher),
+				Hijacker:       w.(http.Hijacker),
+				ReaderFrom:     w.(io.ReaderFrom),
+				ResponseWriter: w,
+				StringWriter:   w.(io.StringWriter),
+				Writer:         w.(io.Writer),
+				StatusCode:     200,
+			}
+			msg, err := r.webCtx.GetNewMessage()(wrapper, req)
+			if err != nil {
+				w.WriteHeader(500)
+				return
+			}
+
+			ctx := context.WithValue(req.Context(), core.FullMessageInstanceContextKey, msg)
+			defer msg.Close()
+			next.ServeHTTP(wrapper, req.WithContext(ctx))
+		})
+	})
 
 	r.engine.NotFound(func(w http.ResponseWriter, req *http.Request) {
 		msg, _ := r.webCtx.GetNewMessage()(w, req)
@@ -74,20 +100,16 @@ func (r *ChiRouterAdapter) RegisterRoute(rc core.IRouteConfig) {
 	}
 
 	h := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		msg, err := r.webCtx.GetNewMessage()(&grghttp.ResponseWriterWrapper{
-			Flusher:        w.(http.Flusher),
-			Hijacker:       w.(http.Hijacker),
-			ReaderFrom:     w.(io.ReaderFrom),
-			ResponseWriter: w,
-			StringWriter:   w.(io.StringWriter),
-			Writer:         w.(io.Writer),
-			StatusCode:     200,
-		}, req)
-		if err != nil {
+		msgRaw := req.Context().Value(core.FullMessageInstanceContextKey)
+
+		var msg core.HttpMessage
+		var ok bool
+
+		if msg, ok = msgRaw.(core.HttpMessage); !ok {
+			err.HandleError(fmt.Errorf("route: %s, Message not found in context", req.URL.Path))
 			w.WriteHeader(500)
-			return
 		}
-		defer msg.Close()
+
 		resolver, err := r.webCtx.GetNewInputResolver()(rc.GetHandler(), msg)
 		if err != nil {
 			msg.Response().Bytes(nil, 500)
@@ -115,7 +137,16 @@ func (r *ChiRouterAdapter) adaptFilter(cfg core.IMiddlewareConfig) func(http.Han
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			path := req.URL.Path
 			if matches(cfg.GetPattern(), path) && !matches(cfg.GetExcludePattern(), path) {
-				msg, _ := r.webCtx.GetNewMessage()(w, req)
+				msgRaw := req.Context().Value(core.FullMessageInstanceContextKey)
+
+				var msg core.HttpMessage
+				var ok bool
+
+				if msg, ok = msgRaw.(core.HttpMessage); !ok {
+					err.HandleError(fmt.Errorf("route: %s, Message not found in context", req.URL.Path))
+					w.WriteHeader(500)
+				}
+
 				cfg.GetMiddleware().Handle(func(_ core.HttpMessage) {
 					next.ServeHTTP(w, req)
 				})(msg)
@@ -129,7 +160,16 @@ func (r *ChiRouterAdapter) adaptFilter(cfg core.IMiddlewareConfig) func(http.Han
 func (r *ChiRouterAdapter) adaptRouteMiddleware(cfg core.IMiddlewareConfig) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			msg, _ := r.webCtx.GetNewMessage()(w, req)
+			msgRaw := req.Context().Value(core.FullMessageInstanceContextKey)
+
+			var msg core.HttpMessage
+			var ok bool
+
+			if msg, ok = msgRaw.(core.HttpMessage); !ok {
+				err.HandleError(fmt.Errorf("route: %s, Message not found in context", req.URL.Path))
+				w.WriteHeader(500)
+			}
+
 			cfg.GetMiddleware().Handle(func(_ core.HttpMessage) {
 				next.ServeHTTP(w, req)
 			})(msg)

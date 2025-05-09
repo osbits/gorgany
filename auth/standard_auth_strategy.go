@@ -2,16 +2,22 @@ package auth
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/http"
+	"time"
+
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"github.com/google/uuid"
 	"github.com/spf13/viper"
-	"math/rand"
-	"net/http"
-	"time"
+)
+
+const (
+	sessionRotationInterval = 24 * time.Hour
+	sessionActivityTimeout  = 10 * time.Second
 )
 
 type StandardAuthStrategy struct {
@@ -23,20 +29,25 @@ func (thiz *StandardAuthStrategy) NewSessionWithoutUser(ctx context.Context) (co
 	uid := uuid.NewString()
 	now := time.Now()
 
-	rand.Seed(now.UnixNano())
+	randomBytes := make([]byte, 32)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return nil, fmt.Errorf("failed to generate random bytes: %w", err)
+	}
 
-	rawToken := fmt.Sprintf("%s%v%d", uid, now.UnixNano(), rand.Intn(10000000))
-	hashedTokenBytes := md5.Sum([]byte(rawToken))
+	rawToken := fmt.Sprintf("%s%v%s", uid, now.UnixNano(), hex.EncodeToString(randomBytes))
+	hashedTokenBytes := sha256.Sum256([]byte(rawToken))
 	hashedToken := hex.EncodeToString(hashedTokenBytes[:])
 
 	session := thiz.sessionManager.GetSessionById(hashedToken)
 	if session != nil {
-		return nil, fmt.Errorf("session %s already exists", hashedToken)
+		return nil, fmt.Errorf("session creation failed")
 	}
 
 	session = &Session{
-		id:     hashedToken,
-		expiry: now.Add(time.Second * thiz.sessionManager.GetSessionLifetime()),
+		id:           hashedToken,
+		expiry:       now.Add(time.Second * thiz.sessionManager.GetSessionLifetime()),
+		createdAt:    now,
+		lastActivity: now,
 	}
 	thiz.sessionManager.AddSession(session)
 
@@ -58,37 +69,75 @@ func (thiz *StandardAuthStrategy) NewSessionWithoutUser(ctx context.Context) (co
 	return session, nil
 }
 
-func (thiz *StandardAuthStrategy) Login(user core.Authenticable, ctx context.Context) (core.ISession, error) {
-	session := thiz.CurrentSession(ctx)
+func (thiz *StandardAuthStrategy) ShouldRotateSession(session core.ISession) bool {
+	if session == nil {
+		return true
+	}
 
-	if session == nil || (session.GetUserId() != "" && !session.IsExpired()) {
-		var err error
-		session, err = thiz.NewSessionWithoutUser(ctx)
-		if err != nil {
-			return nil, err
-		}
+	now := time.Now()
+
+	// Don't rotate expired sessions
+	if now.Sub(session.GetExpiry()) > 0 {
+		return false
+	}
+
+	// Rotate if session has been inactive for too long
+	if now.Sub(session.GetLastActivity()) > sessionActivityTimeout {
+		return true
+	}
+
+	// Force rotation every 24 hours
+	if now.Sub(session.GetCreatedAt()) > sessionRotationInterval {
+		return true
+	}
+
+	return false
+}
+
+func (thiz *StandardAuthStrategy) RotateSession(ctx context.Context, oldSession core.ISession) (core.ISession, error) {
+	// Create new session
+	newSession, err := thiz.NewSessionWithoutUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// If there was an old session, copy its user ID
+	if oldSession != nil {
+		newSession.SetUserId(oldSession.GetUserId())
+		// Delete the old session
+		thiz.sessionManager.DeleteSession(oldSession)
+	}
+
+	return newSession, nil
+}
+
+func (thiz *StandardAuthStrategy) Login(user core.Authenticable, ctx context.Context) (core.ISession, error) {
+	// Always create a new session on login
+	session, err := thiz.NewSessionWithoutUser(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	session.SetUserId(user.GetId())
+	session.SetLastActivity(time.Now())
 
 	messageContext, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext)
 	if !ok {
 		return nil, fmt.Errorf("Ctx is not core.IMessageContext instance")
 	}
-	if cookie := messageContext.GetCookieManager().GetCookie(core.SessionCookieName); cookie == nil {
-		cookie = &http.Cookie{
-			Name:     core.SessionCookieName,
-			Value:    session.GetId(),
-			Path:     "/",
-			MaxAge:   0,
-			Secure:   true,
-			HttpOnly: true,
-			SameSite: http.SameSiteNoneMode,
-			Domain:   viper.GetString("auth.session.cookie.domain"),
-		}
 
-		messageContext.GetCookieManager().SetCookie(cookie)
+	cookie := &http.Cookie{
+		Name:     core.SessionCookieName,
+		Value:    session.GetId(),
+		Path:     "/",
+		MaxAge:   0,
+		Secure:   true,
+		HttpOnly: true,
+		SameSite: http.SameSiteNoneMode,
+		Domain:   viper.GetString("auth.session.cookie.domain"),
 	}
+
+	messageContext.GetCookieManager().SetCookie(cookie)
 
 	return session, nil
 }
@@ -144,7 +193,13 @@ func (thiz *StandardAuthStrategy) CurrentUser(ctx context.Context) (core.Authent
 		return nil, nil
 	}
 
-	if session.IsExpired() || session.GetUserId() == "" {
+	// Add consistent session validation
+	if session.IsExpired() {
+		thiz.sessionManager.DeleteSession(session)
+		return nil, nil
+	}
+
+	if session.GetUserId() == "" {
 		return nil, nil
 	}
 
@@ -173,7 +228,23 @@ func (thiz *StandardAuthStrategy) ResolveSessionId(ctx context.Context) string {
 }
 
 func (thiz *StandardAuthStrategy) CurrentSession(ctx context.Context) core.ISession {
-	return thiz.sessionManager.GetSessionById(thiz.ResolveSessionId(ctx))
+	session := thiz.sessionManager.GetSessionById(thiz.ResolveSessionId(ctx))
+
+	if session == nil {
+		return nil
+	}
+
+	// Check if session needs rotation
+	if thiz.ShouldRotateSession(session) {
+		newSession, err := thiz.RotateSession(ctx, session)
+		if err != nil {
+			err2.HandleError(err)
+			return nil
+		}
+		return newSession
+	}
+
+	return session
 }
 
 func (thiz *StandardAuthStrategy) IsRequestMadeWithStrategy(ctx context.Context) bool {

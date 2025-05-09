@@ -194,7 +194,6 @@ func (s *HTTPRequestScope) FormFile(key string) (core.IFile, error) {
 		f.Close()
 		return nil, err
 	}
-	mf.Close()
 	return mf, nil
 }
 
@@ -282,10 +281,16 @@ func sanitize(name string) string {
 
 // ----------------- HTTPResponseScope -----------------
 
-type HTTPResponseScope struct{ W http.ResponseWriter }
+type HTTPResponseScope struct {
+	W http.ResponseWriter
+	r *http.Request
+}
 
-func NewHTTPResponseScope(w http.ResponseWriter) *HTTPResponseScope {
-	return &HTTPResponseScope{W: w}
+func NewHTTPResponseScope(w http.ResponseWriter, r *http.Request) *HTTPResponseScope {
+	return &HTTPResponseScope{
+		W: w,
+		r: r,
+	}
 }
 func (s *HTTPResponseScope) SetHeader(k, v string) { s.W.Header().Set(k, v) }
 func (s *HTTPResponseScope) Header() http.Header   { return s.W.Header() }
@@ -304,7 +309,7 @@ func (s *HTTPResponseScope) Bytes(b []byte, c int) {
 	s.W.Write(b)
 }
 func (s *HTTPResponseScope) Redirect(u string, c int) {
-	http.Redirect(s.W, nil, u, c)
+	http.Redirect(s.W, s.r, u, c)
 }
 
 func (s *HTTPResponseScope) RawWriter() http.ResponseWriter {
@@ -363,6 +368,7 @@ func (s *HTTPSessionScope) Setup() {
 	if session != nil && !session.IsExpired() {
 		session.SetExpiry(now.Add(s.Storage.GetSessionLifetime() * time.Second))
 		s.markFlashUsed(session)
+		session.SetLastActivity(time.Now())
 		s.Storage.AddSession(session)
 		s.current = session
 		return
@@ -454,7 +460,7 @@ func (m *Message) Init() {
 	mCtx := &messageContext{}
 
 	m.Req = NewHTTPRequestScope(m.request)
-	m.Res = NewHTTPResponseScope(m.writer)
+	m.Res = NewHTTPResponseScope(m.writer, m.request)
 
 	cookieManager := NewCookieManager(m.writer, m.request)
 

@@ -143,6 +143,9 @@ func (c *Container) NamedResolve(abstraction interface{}, name string) error {
 }
 
 func (c *Container) Invoke(fn interface{}) error {
+	if reflect.TypeOf(fn).Kind() != reflect.Func {
+		return errors.New("container: invalid function")
+	}
 	_, err := c.invoke(fn, make(map[reflect.Type]interface{}))
 	return err
 }
@@ -255,11 +258,15 @@ func (c *Container) invoke(fn interface{}, chain map[reflect.Type]interface{}) (
 
 	inst := results[0].Interface()
 
-	if len(results) == 2 {
-		if e, ok := results[1].Interface().(error); ok && e != nil {
+	for i := 0; i < len(results); i++ {
+		if results[i].IsZero() {
+			continue
+		}
+		if e, ok := results[i].Interface().(error); ok && e != nil {
 			return inst, e
 		}
 	}
+
 	if err := c.fill(inst, chain); err != nil {
 		return inst, err
 	}
@@ -301,6 +308,22 @@ func (c *Container) fill(target interface{}, chain map[reflect.Type]interface{})
 	rt := s.Type()
 	for i := 0; i < rt.NumField(); i++ {
 		field := rt.Field(i)
+		if field.Anonymous {
+			fType := field.Type
+			if fType.Kind() == reflect.Ptr {
+				if err := c.fill(s.Field(i).Interface(), chain); err != nil {
+					return err
+				}
+			} else if fType.Kind() == reflect.Struct {
+				ptr := reflect.NewAt(fType, unsafe.Pointer(s.Field(i).UnsafeAddr()))
+				if err := c.fill(ptr.Interface(), chain); err != nil {
+					return err
+				}
+			}
+
+			continue
+		}
+
 		if tag, ok := field.Tag.Lookup("container"); !ok || tag != "inject" {
 			continue
 		}

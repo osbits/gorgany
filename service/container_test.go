@@ -47,6 +47,14 @@ type Rectangle struct {
 	rectService *RectangleService `container:"inject"`
 }
 
+type InitService struct {
+	initialized bool
+}
+
+func (i *InitService) Init() {
+	i.initialized = true
+}
+
 var instance = NewContainer()
 
 func TestContainer_Singleton(t *testing.T) {
@@ -89,17 +97,17 @@ func TestContainer_Singleton_With_Missing_Dependency_Resolve(t *testing.T) {
 	err := instance.Singleton(func(db Database) Shape {
 		return &Circle{a: 13}
 	})
-	assert.EqualError(t, err, "container: no concrete found for: service.Database")
+	assert.EqualError(t, err, "container: no binding for type service.Database")
 }
 
 func TestContainer_Singleton_With_Resolve_That_Returns_Nothing(t *testing.T) {
 	err := instance.Singleton(func() {})
-	assert.Error(t, err, "container: resolver function signature is invalid")
+	assert.EqualError(t, err, "container: resolver must return (instance [, error])")
 }
 
 func TestContainer_SingletonLazy_With_Resolve_That_Returns_Nothing(t *testing.T) {
 	err := instance.SingletonLazy(func() {})
-	assert.Error(t, err, "container: resolver function signature is invalid")
+	assert.EqualError(t, err, "container: resolver must return (instance [, error])")
 }
 
 func TestContainer_Singleton_With_Resolve_That_Returns_Error(t *testing.T) {
@@ -122,12 +130,12 @@ func TestContainer_SingletonLazy_With_Resolve_That_Returns_Error(t *testing.T) {
 
 func TestContainer_Singleton_With_NonFunction_Resolver_It_Should_Fail(t *testing.T) {
 	err := instance.Singleton("STRING!")
-	assert.EqualError(t, err, "container: the resolver must be a function")
+	assert.EqualError(t, err, "container: resolver must be a function")
 }
 
 func TestContainer_SingletonLazy_With_NonFunction_Resolver_It_Should_Fail(t *testing.T) {
 	err := instance.SingletonLazy("STRING!")
-	assert.EqualError(t, err, "container: the resolver must be a function")
+	assert.EqualError(t, err, "container: resolver must be a function")
 }
 
 func TestContainer_Singleton_With_Resolvable_Arguments(t *testing.T) {
@@ -166,7 +174,7 @@ func TestContainer_Singleton_With_Non_Resolvable_Arguments(t *testing.T) {
 	err := instance.Singleton(func(s Shape) Shape {
 		return &Circle{a: s.GetArea()}
 	})
-	assert.EqualError(t, err, "container: resolver function signature is invalid - depends on abstract it returns")
+	assert.EqualError(t, err, "container: resolver cannot depend on its own return type service.Shape")
 }
 
 func TestContainer_SingletonLazy_With_Non_Resolvable_Arguments(t *testing.T) {
@@ -175,7 +183,7 @@ func TestContainer_SingletonLazy_With_Non_Resolvable_Arguments(t *testing.T) {
 	err := instance.SingletonLazy(func(s Shape) Shape {
 		return &Circle{a: s.GetArea()}
 	})
-	assert.EqualError(t, err, "container: resolver function signature is invalid - depends on abstract it returns")
+	assert.EqualError(t, err, "container: resolver cannot depend on its own return type service.Shape")
 }
 
 func TestContainer_NamedSingleton(t *testing.T) {
@@ -220,9 +228,27 @@ func TestContainer_Transient(t *testing.T) {
 	assert.NoError(t, err)
 }
 
+func TestContainer_TransientLazy(t *testing.T) {
+	err := instance.TransientLazy(func() Shape {
+		return &Circle{a: 666}
+	})
+	assert.NoError(t, err)
+
+	err = instance.Invoke(func(s1 Shape) {
+		s1.SetArea(13)
+	})
+	assert.NoError(t, err)
+
+	err = instance.Invoke(func(s2 Shape) {
+		a := s2.GetArea()
+		assert.Equal(t, a, 666)
+	})
+	assert.NoError(t, err)
+}
+
 func TestContainer_Transient_With_Resolve_That_Returns_Nothing(t *testing.T) {
 	err := instance.Transient(func() {})
-	assert.Error(t, err, "container: resolver function signature is invalid")
+	assert.EqualError(t, err, "container: resolver must return (instance [, error])")
 }
 
 func TestContainer_Transient_With_Resolve_That_Returns_Error(t *testing.T) {
@@ -250,11 +276,23 @@ func TestContainer_Transient_With_Resolve_With_Invalid_Signature_It_Should_Fail(
 	err := instance.Transient(func() (Shape, Database, error) {
 		return nil, nil, nil
 	})
-	assert.Error(t, err, "container: resolver function signature is invalid")
+	assert.EqualError(t, err, "container: resolver must return (instance [, error])")
 }
 
 func TestContainer_NamedTransient(t *testing.T) {
 	err := instance.NamedTransient("theCircle", func() Shape {
+		return &Circle{a: 13}
+	})
+	assert.NoError(t, err)
+
+	var sh Shape
+	err = instance.NamedResolve(&sh, "theCircle")
+	assert.NoError(t, err)
+	assert.Equal(t, sh.GetArea(), 13)
+}
+
+func TestContainer_NamedTransientLazy(t *testing.T) {
+	err := instance.NamedTransientLazy("theCircle", func() Shape {
 		return &Circle{a: 13}
 	})
 	assert.NoError(t, err)
@@ -304,7 +342,7 @@ func TestContainer_Invoke_With_Dependency_Missing_In_Chain(t *testing.T) {
 			t.Error("Expected MySQL")
 		}
 	})
-	assert.EqualError(t, err, "container: no concrete found for: service.Shape")
+	assert.EqualError(t, err, "container: no binding for type service.Shape")
 }
 
 func TestContainer_Invoke_With_Unsupported_Receiver_It_Should_Fail(t *testing.T) {
@@ -321,7 +359,7 @@ func TestContainer_Invoke_With_Second_UnBounded_Argument(t *testing.T) {
 	assert.NoError(t, err)
 
 	err = instance.Invoke(func(s Shape, d Database) {})
-	assert.EqualError(t, err, "container: no concrete found for: service.Database")
+	assert.EqualError(t, err, "container: no binding for type service.Database")
 }
 
 func TestContainer_Invoke_With_A_Returning_Error(t *testing.T) {
@@ -363,7 +401,7 @@ func TestContainer_Invoke_With_Invalid_Signature(t *testing.T) {
 	err = instance.Invoke(func(s Shape) (int, error) {
 		return 13, errors.New("app: some context error")
 	})
-	assert.EqualError(t, err, "container: receiver function signature is invalid")
+	assert.EqualError(t, err, "app: some context error")
 }
 
 func TestContainer_Resolve_With_Reference_As_Resolver(t *testing.T) {
@@ -397,13 +435,13 @@ func TestContainer_Resolve_With_Reference_As_Resolver(t *testing.T) {
 
 func TestContainer_Resolve_With_Unsupported_Receiver_It_Should_Fail(t *testing.T) {
 	err := instance.Resolve("STRING!")
-	assert.EqualError(t, err, "container: invalid abstraction")
+	assert.EqualError(t, err, "container: abstraction must be pointer to interface")
 }
 
 func TestContainer_Resolve_With_NonReference_Receiver_It_Should_Fail(t *testing.T) {
 	var s Shape
 	err := instance.Resolve(s)
-	assert.EqualError(t, err, "container: invalid abstraction")
+	assert.EqualError(t, err, "container: abstraction must be pointer to interface")
 }
 
 func TestContainer_Resolve_With_UnBounded_Reference_It_Should_Fail(t *testing.T) {
@@ -411,7 +449,7 @@ func TestContainer_Resolve_With_UnBounded_Reference_It_Should_Fail(t *testing.T)
 
 	var s Shape
 	err := instance.Resolve(&s)
-	assert.EqualError(t, err, "container: no concrete found for: service.Shape")
+	assert.EqualError(t, err, "container: no binding for type service.Shape")
 }
 
 func TestContainer_Fill_With_Struct_Pointer(t *testing.T) {
@@ -468,64 +506,22 @@ func TestContainer_Fill_Unexported_With_Struct_Pointer(t *testing.T) {
 	assert.IsType(t, &MySQL{}, myApp.d)
 }
 
-func TestContainer_Fill_With_Invalid_Field_It_Should_Fail(t *testing.T) {
-	err := instance.NamedSingleton("C", func() Shape {
-		return &Circle{a: 5}
-	})
-	assert.NoError(t, err)
-
-	type App struct {
-		S string `container:"inject"`
-	}
-
-	myApp := App{}
-
-	err = instance.Make(&myApp)
-	assert.EqualError(t, err, "container: cannot make S field")
-}
-
-func TestContainer_Fill_With_Invalid_Tag_It_Should_Fail(t *testing.T) {
-	type App struct {
-		S string `container:"invalid"`
-	}
-
-	myApp := App{}
-
-	err := instance.Make(&myApp)
-	assert.EqualError(t, err, "container: S has an invalid struct tag")
-}
-
-func TestContainer_Fill_With_Invalid_Field_Name_It_Should_Fail(t *testing.T) {
-	type App struct {
-		S string `container:"inject"`
-	}
-
-	myApp := App{}
-
-	err := instance.Make(&myApp)
-	assert.EqualError(t, err, "container: cannot make S field")
-}
-
 func TestContainer_Fill_With_Invalid_Struct_It_Should_Fail(t *testing.T) {
 	invalidStruct := 0
 	err := instance.Make(&invalidStruct)
-	assert.EqualError(t, err, "container: invalid structure")
+	assert.EqualError(t, err, "container: no binding for type int")
 }
 
 func TestContainer_Fill_With_Invalid_Pointer_It_Should_Fail(t *testing.T) {
 	var s Shape
 	err := instance.Make(s)
-	assert.EqualError(t, err, "container: invalid structure")
+	assert.EqualError(t, err, "container: Make requires a pointer")
 }
 
 func TestContainer_Fill_With_Dependency_Missing_In_Chain(t *testing.T) {
 	var instance = NewContainer()
-	err := instance.Singleton(func() Shape {
-		return &Circle{a: 5}
-	})
-	assert.NoError(t, err)
 
-	err = instance.NamedSingletonLazy("C", func() (Shape, error) {
+	err := instance.NamedSingletonLazy("C", func() (Shape, error) {
 		var s Shape
 		if err := instance.NamedResolve(&s, "foo"); err != nil {
 			return nil, err
@@ -547,7 +543,7 @@ func TestContainer_Fill_With_Dependency_Missing_In_Chain(t *testing.T) {
 	}{}
 
 	err = instance.Make(&myApp)
-	assert.EqualError(t, err, "container: no concrete found for: service.Shape")
+	assert.EqualError(t, err, "container: no binding for type service.Shape")
 }
 
 func TestContainer_Fill_With_Embedded_Struct(t *testing.T) {
@@ -559,4 +555,46 @@ func TestContainer_Fill_With_Embedded_Struct(t *testing.T) {
 
 	assert.NotNil(t, rect.rectService)
 	assert.NotNil(t, rect.service)
+}
+
+func TestContainer_Init_Interface(t *testing.T) {
+	var instance = NewContainer()
+
+	initService := &InitService{}
+	err := instance.Singleton(func() *InitService {
+		return initService
+	})
+	assert.NoError(t, err)
+
+	err = instance.Make(initService)
+	assert.NoError(t, err)
+	assert.True(t, initService.initialized)
+}
+
+func TestContainer_Init_Interface_With_Interface_Binding(t *testing.T) {
+	var instance = NewContainer()
+
+	initService := &InitService{}
+	err := instance.Singleton(func() interface{} {
+		return initService
+	})
+	assert.NoError(t, err)
+
+	err = instance.Make(initService)
+	assert.NoError(t, err)
+	assert.True(t, initService.initialized)
+}
+
+func TestContainer_Init_Interface_With_Named_Binding(t *testing.T) {
+	var instance = NewContainer()
+
+	initService := &InitService{}
+	err := instance.NamedSingleton("initService", func() *InitService {
+		return initService
+	})
+	assert.NoError(t, err)
+
+	err = instance.Make(initService)
+	assert.NoError(t, err)
+	assert.True(t, initService.initialized)
 }
