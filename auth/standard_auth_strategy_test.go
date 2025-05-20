@@ -93,11 +93,6 @@ func (m *MockMessageContext) GetHeader() http.Header {
 	return args.Get(0).(http.Header)
 }
 
-func (m *MockMessageContext) GetBearerToken() string {
-	args := m.Called()
-	return args.String(0)
-}
-
 func (m *MockMessageContext) GetPathParam(name string) string {
 	args := m.Called(name)
 	return args.String(0)

@@ -17,6 +17,10 @@ func DecodeFiles(filesMap map[string][]*multipart.FileHeader, dest any) ([]io.Cl
 			return strings.ToLower(key) == strings.ToLower(n)
 		})
 
+		if !field.IsValid() {
+			continue
+		}
+
 		rawFile := files[0]
 		reader, err := rawFile.Open()
 		if err != nil {

@@ -81,7 +81,7 @@ type IResponseScope interface {
 
 // IViewScope defines methods for rendering templates.
 type IViewScope interface {
-	Render(ctx context.Context, w io.Writer, tpl string, data map[string]any)
+	Render(tpl string, data map[string]any)
 }
 
 // ISessionScope defines methods for session management and flash data.
@@ -120,8 +120,6 @@ type IMessageContext interface {
 	GetCookieManager() ICookieManager
 	// GetHeader returns the request headers
 	GetHeader() http.Header
-	// GetBearerToken retrieves the Bearer token from the Authorization header
-	GetBearerToken() string
 	// GetPathParam retrieves a path parameter by name
 	GetPathParam(name string) string
 	// GetSession returns the current session

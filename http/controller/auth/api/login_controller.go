@@ -24,7 +24,7 @@ type LoginPayload struct {
 }
 
 func (thiz LoginController) Login(message core.HttpMessage) {
-	body := message.GetBody()
+	body, _ := message.Request().Body()
 
 	loginPayload := &LoginPayload{}
 	err := json.Unmarshal(body, loginPayload)

@@ -320,12 +320,20 @@ func (s *HTTPResponseScope) RawWriter() http.ResponseWriter {
 
 type HTTPViewScope struct {
 	Engine core.IEngineRenderer
+	Ctx    context.Context
+	Writer http.ResponseWriter
 }
 
-func NewHTTPViewScope(engineRendere core.IEngineRenderer) *HTTPViewScope { return &HTTPViewScope{} }
+func NewHTTPViewScope(ctx context.Context, writer http.ResponseWriter, engineRenderer core.IEngineRenderer) *HTTPViewScope {
+	return &HTTPViewScope{
+		Engine: engineRenderer,
+		Ctx:    ctx,
+		Writer: writer,
+	}
+}
 
-func (s *HTTPViewScope) Render(ctx context.Context, w io.Writer, tpl string, data map[string]any) {
-	if err := s.Engine.DoRender(ctx, w, tpl, data); err != nil {
+func (s *HTTPViewScope) Render(tpl string, data map[string]any) {
+	if err := s.Engine.DoRender(s.Ctx, s.Writer, tpl, data); err != nil {
 		panic(err)
 	}
 }
@@ -412,6 +420,7 @@ func (s *HTTPSessionScope) markFlashUsed(session core.ISession) {
 	}
 	session.SetItem(core.OneTimeSessionAttributeKey, string(buf))
 }
+
 func (s *HTTPSessionScope) ClearExpiredFlash() {
 	session := s.Get()
 	if session == nil {
@@ -481,7 +490,7 @@ func (m *Message) Init() {
 	m.Ses = NewHTTPSessionScope(m.ctx, m.authContext, m.sessionStorage)
 	mCtx.session = m.Ses.Get()
 
-	m.Vw = NewHTTPViewScope(m.viewEngine)
+	m.Vw = NewHTTPViewScope(m.ctx, m.writer, m.viewEngine)
 	m.CookieManager = cookieManager
 }
 

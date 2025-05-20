@@ -6,7 +6,6 @@ import (
 	"net/url"
 
 	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/util"
 	"github.com/go-chi/chi"
 )
 
@@ -38,11 +37,6 @@ func (thiz *messageContext) GetCookieManager() core.ICookieManager {
 
 func (thiz *messageContext) GetHeader() http.Header {
 	return thiz.headers
-}
-
-func (thiz *messageContext) GetBearerToken() string {
-	bearerToken := thiz.GetHeader().Get("Authorization")
-	return util.ParseBearerToken(bearerToken)
 }
 
 func (thiz *messageContext) GetPathParam(name string) string {

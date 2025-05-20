@@ -3,29 +3,96 @@ package http
 import (
 	"errors"
 	"fmt"
+	"reflect"
+	"sync"
+
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/db"
 	error2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/service/cache"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"github.com/gorilla/schema"
-	"reflect"
 )
 
-type queryParser struct {
+// queryTypeCache stores reflection information for types to avoid repeated lookups
+var queryTypeCache = struct {
+	sync.RWMutex
+	m map[reflect.Type]*typeInfo
+}{
+	m: make(map[reflect.Type]*typeInfo),
+}
+
+// getQueryTypeInfo returns cached reflection information for a type
+func getQueryTypeInfo(t reflect.Type) *typeInfo {
+	indirectT := util.IndirectType(t)
+
+	queryTypeCache.RLock()
+	if info, ok := queryTypeCache.m[t]; ok {
+		queryTypeCache.RUnlock()
+		return info
+	}
+	queryTypeCache.RUnlock()
+
+	queryTypeCache.Lock()
+	defer queryTypeCache.Unlock()
+
+	// Double-check after acquiring write lock
+	if info, ok := queryTypeCache.m[t]; ok {
+		return info
+	}
+
+	info := &typeInfo{
+		fields:      make(map[string]reflect.StructField),
+		bindMethods: make(map[string]reflect.Method),
+	}
+
+	if indirectT.Kind() == reflect.Struct {
+		for i := 0; i < indirectT.NumField(); i++ {
+			field := indirectT.Field(i)
+			if tag := field.Tag.Get("scheme"); tag != "" {
+				info.fields[tag] = field
+			}
+		}
+
+		for i := 0; i < t.NumMethod(); i++ {
+			method := t.Method(i)
+			if len(method.Name) > 4 && method.Name[:4] == "Bind" {
+				fieldName := method.Name[4:]
+				field, ok := indirectT.FieldByName(fieldName)
+				if !ok {
+					continue
+				}
+
+				if tag := field.Tag.Get("scheme"); tag != "" {
+					info.bindMethods[tag] = method
+				} else {
+					info.bindMethods[fieldName] = method
+				}
+			}
+		}
+	}
+
+	queryTypeCache.m[t] = info
+	return info
+}
+
+type QueryParser struct {
 	message core.HttpMessage
 }
 
-func (thiz queryParser) parse(arg interface{}) error {
-	queryParams := thiz.message.Request().Query()
+func (p *QueryParser) Parse(arg interface{}) error {
+	queryParams := p.message.Request().Query()
 
-	err := thiz.initStruct(arg, queryParams.AsMap())
+	err := p.initStruct(arg, queryParams.AsMap())
 	if err != nil {
 		validationErrors := make(error2.ValidationErrors, 0)
 		if errors.As(err, &schema.MultiError{}) {
 			multiError := err.(schema.MultiError)
 			for key, err := range multiError {
-				validationErrors.AddValidationError(error2.ValidationError{Field: key, Err: err.Error()})
+				validationErrors.AddValidationError(error2.ValidationError{
+					Field: sanitizeFieldName(key),
+					Err:   err.Error(),
+				})
 			}
 		} else {
 			checkAndAddIfValidationError(err, &validationErrors)
@@ -36,26 +103,35 @@ func (thiz queryParser) parse(arg interface{}) error {
 	return nil
 }
 
-func (thiz queryParser) initStruct(dest interface{}, inputMap map[string]any) error { // todo: LocolizedString from map does not work, need to fix it on the front side
+func (p *QueryParser) initStruct(dest interface{}, inputMap map[string]any) error {
+	if dest == nil {
+		return fmt.Errorf("destination cannot be nil")
+	}
+
+	rvDest := reflect.ValueOf(dest)
+	if rvDest.Kind() != reflect.Ptr {
+		return fmt.Errorf("destination must be a pointer")
+	}
+
 	for key, value := range inputMap {
-		err := thiz.processValue(dest, value, key)
+		err := p.processValue(dest, value, key)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to process field %s: %w", key, err)
 		}
 	}
 	return nil
 }
 
-func (thiz queryParser) processValue(dest any, value interface{}, key string) error {
+func (p *QueryParser) processValue(dest any, value interface{}, key string) error {
 	rvDest := reflect.ValueOf(dest)
 	if rvDest.Kind() != reflect.Ptr || !rvDest.IsValid() {
-		return fmt.Errorf("gorgany.http.jsonParser: Destination type must be a pointer")
+		return fmt.Errorf("destination must be a valid pointer")
 	}
 	rvDest = rvDest.Elem()
 
 	field := rvDest
 	if key != "" {
-		found, err := thiz.callBindMethodIfExists(dest, key, value)
+		found, err := p.callBindMethodIfExists(dest, key, value)
 		if err != nil {
 			return err
 		}
@@ -64,63 +140,72 @@ func (thiz queryParser) processValue(dest any, value interface{}, key string) er
 		}
 
 		if util.IndirectValue(rvDest).Kind() == reflect.Struct {
-			found, field, _ = util.FindFieldByTag(rvDest, "scheme", key, true)
-			if !found {
+			info := getQueryTypeInfo(rvDest.Type())
+			if structField, ok := info.fields[key]; ok {
+				field = rvDest.FieldByName(structField.Name)
+			} else {
 				return nil
 			}
 		}
 	}
 
-	return thiz.setFieldValue(field, key, value)
+	return p.setFieldValue(field, key, value)
 }
 
-func (thiz queryParser) setFieldValue(field reflect.Value, key string, value interface{}) error {
+func (p *QueryParser) setFieldValue(field reflect.Value, key string, value interface{}) error {
+	if !field.IsValid() || !field.CanSet() {
+		return fmt.Errorf("field %s is not settable", key)
+	}
+
 	switch field.Kind() {
 	case reflect.Ptr:
-		return thiz.setPointer(field, key, value)
+		return p.setPointer(field, key, value)
 	case reflect.Slice:
-		return thiz.setSlice(field, key, value)
+		return p.setSlice(field, key, value)
 	case reflect.Struct:
-		return thiz.setStruct(field, key, value)
+		return p.setStruct(field, key, value)
 	case reflect.Map:
-		return thiz.setMap(field, key, value)
+		return p.setMap(field, key, value)
 	default:
-		return thiz.setPrimitive(field, value)
+		return p.setPrimitive(field, key, value)
 	}
 }
 
-func (thiz queryParser) setPointer(field reflect.Value, key string, value interface{}) error {
+func (p *QueryParser) setPointer(field reflect.Value, key string, value interface{}) error {
 	if value == nil && field.Kind() == reflect.Ptr {
 		return nil
 	}
 	indirectType := field.Type().Elem()
 	field.Set(reflect.New(indirectType).Elem().Addr().Convert(reflect.PointerTo(indirectType)))
-	return thiz.setFieldValue(field.Elem(), key, value)
+	return p.setFieldValue(field.Elem(), key, value)
 }
 
-func (thiz queryParser) setSlice(field reflect.Value, key string, value interface{}) error {
-	reflectedElement := util.GetReflectedElementOfSlice(field.Interface()) // fix the GetReflectElementOfSlice method, becouse it always returns a pointer, but we need a raw value
-	s, ok := value.([]any)
-	if !ok {
+func (p *QueryParser) setSlice(field reflect.Value, key string, value interface{}) error {
+	reflectedElement := util.GetReflectedElementOfSlice(field.Interface())
+
+	reflectedValue := reflect.ValueOf(value)
+	if reflectedValue.Kind() != reflect.Slice {
 		return &error2.ValidationErrors{
-			error2.ValidationError{Field: key, Err: "Value must be slice"},
+			error2.ValidationError{Field: key, Err: "Value must be a slice"},
 		}
 	}
 
-	for _, v := range s {
-		rv := reflect.New(reflectedElement.Type()).Elem().Addr().Convert(reflect.PointerTo(reflectedElement.Type())).Elem()
-		err := thiz.processValue(rv.Addr().Interface(), v, "")
-		if err != nil {
-			return err
-		}
+	sliceLen := reflectedValue.Len()
+	newSlice := reflect.MakeSlice(field.Type(), 0, sliceLen)
 
-		field.Set(reflect.Append(field, rv)) // todo fix loading of domains
+	for i := 0; i < sliceLen; i++ {
+		rv := reflect.New(reflectedElement.Type()).Elem()
+		if err := p.processValue(rv.Addr().Interface(), reflectedValue.Index(i), ""); err != nil {
+			return fmt.Errorf("failed to process slice element: %w", err)
+		}
+		newSlice = reflect.Append(newSlice, rv)
 	}
 
+	field.Set(newSlice)
 	return nil
 }
 
-func (thiz queryParser) setMap(field reflect.Value, key string, value interface{}) error {
+func (p *QueryParser) setMap(field reflect.Value, key string, value interface{}) error {
 	m, ok := value.(map[string]any)
 	if !ok {
 		return &error2.ValidationErrors{
@@ -128,21 +213,24 @@ func (thiz queryParser) setMap(field reflect.Value, key string, value interface{
 		}
 	}
 
-	field.Set(reflect.MakeMap(field.Type()))
+	newMap := reflect.MakeMap(field.Type())
+	mapValueType := field.Type().Elem()
+
 	for k, v := range m {
-		mapValueRType := field.Type().Elem()
-		rv := reflect.New(mapValueRType).Elem().Addr().Convert(reflect.PointerTo(mapValueRType)).Elem()
-		err := thiz.processValue(rv.Addr().Interface(), v, "")
+		newValue := reflect.New(mapValueType).Elem()
+		err := p.processValue(newValue.Addr().Interface(), v, "")
 		if err != nil {
 			return err
 		}
-		field.SetMapIndex(reflect.ValueOf(k), rv)
+		newMap.SetMapIndex(reflect.ValueOf(k), newValue)
 	}
+
+	field.Set(newMap)
 	return nil
 }
 
-func (thiz queryParser) setStruct(field reflect.Value, key string, value interface{}) error {
-	found, err := thiz.initDomain(field, key, value)
+func (p *QueryParser) setStruct(field reflect.Value, key string, value interface{}) error {
+	found, err := p.initDomain(field, key, value)
 	if err != nil {
 		return err
 	}
@@ -151,56 +239,79 @@ func (thiz queryParser) setStruct(field reflect.Value, key string, value interfa
 	}
 
 	if nestedValue, ok := value.(map[string]any); ok {
-		err = thiz.initStruct(field.Addr().Interface(), nestedValue)
-		if err != nil {
-			return err
-		}
-		return nil
+		return p.initStruct(field.Addr().Interface(), nestedValue)
 	}
+
+	if value != nil {
+		return &error2.ValidationErrors{
+			error2.ValidationError{Field: key, Err: "Cannot set non-object value to struct field"},
+		}
+	}
+
 	return nil
 }
 
-func (thiz queryParser) setPrimitive(field reflect.Value, value interface{}) error {
+func (p *QueryParser) setPrimitive(field reflect.Value, key string, value interface{}) error {
 	if value == nil {
+		field.Set(reflect.Zero(field.Type()))
 		return nil
 	}
 
 	primitive, err := util.ResolvePrimitive(field.Kind(), fmt.Sprintf("%v", value))
 	if err != nil {
-		return err
+		return newValidationError(key, "Cannot convert '%v' to type %s: %v", value, field.Type().String(), err)
 	}
+
 	field.Set(reflect.ValueOf(primitive).Convert(field.Type()))
 	return nil
 }
 
-func (thiz queryParser) callBindMethodIfExists(command any, fieldName string, value any) (bool, error) {
+func (p *QueryParser) callBindMethodIfExists(command any, fieldName string, value any) (bool, error) {
 	rvArg := reflect.ValueOf(command)
+	t := rvArg.Type()
+
 	if util.IndirectValue(rvArg).Kind() != reflect.Struct {
 		return false, nil
 	}
 
-	found, _, structField := util.FindFieldByTag(rvArg, "scheme", fieldName, true)
-	if !found {
+	info := getQueryTypeInfo(t)
+
+	if _, ok := info.fields[fieldName]; !ok {
 		return false, nil
 	}
 
-	method := rvArg.MethodByName(fmt.Sprintf("Transient%s", structField.Name))
-	if !method.IsValid() {
+	method, ok := info.bindMethods[fieldName]
+	if !ok {
+		return false, nil
+	}
+
+	methodValue := rvArg.MethodByName(method.Name)
+	if !methodValue.IsValid() {
 		return false, nil
 	}
 
 	var processedValue any
-	if _, ok := value.(map[string]any); !ok {
+	if complexValue, ok := value.(map[string]any); ok {
+		processedValue = complexValue
+	} else if value != nil {
 		var err error
-		processedValue, err = util.ResolvePrimitive(method.Type().In(0).Kind(), fmt.Sprintf("%v", value))
-		if err != nil {
-			return false, &error2.ValidationErrors{
-				error2.ValidationError{Field: structField.Name, Err: err.Error()},
+		if methodValue.Type().NumIn() > 0 {
+			processedValue, err = util.ResolvePrimitive(methodValue.Type().In(0).Kind(), fmt.Sprintf("%v", value))
+			if err != nil {
+				return false, &error2.ValidationErrors{
+					error2.ValidationError{Field: fieldName, Err: err.Error()},
+				}
 			}
 		}
 	}
 
-	outputs := method.Call([]reflect.Value{reflect.ValueOf(processedValue)})
+	var outputs []reflect.Value
+	if processedValue != nil {
+		outputs = methodValue.Call([]reflect.Value{reflect.ValueOf(processedValue)})
+	} else {
+		outputs = methodValue.Call(nil)
+	}
+
 	if len(outputs) > 0 {
 		if outputs[0].IsZero() {
 			return true, nil
@@ -208,7 +319,7 @@ func (thiz queryParser) callBindMethodIfExists(command any, fieldName string, va
 
 		output, ok := outputs[0].Interface().(error)
 		if !ok {
-			return false, fmt.Errorf("Transient method must return error or nothing")
+			return false, fmt.Errorf("Bind method %s must return error or nothing", method.Name)
 		}
 
 		var validationErrors *error2.ValidationErrors
@@ -225,44 +336,52 @@ func (thiz queryParser) callBindMethodIfExists(command any, fieldName string, va
 	return true, nil
 }
 
-func (thiz queryParser) initDomain(field reflect.Value, fieldName string, value any) (bool, error) {
+func (p *QueryParser) initDomain(field reflect.Value, fieldName string, value any) (bool, error) {
 	if field.Kind() != reflect.Struct {
 		return false, nil
 	}
 
-	s := reflect.New(field.Type()).Interface()
-	if !util.IsGenericImplemented(s, (*core.IDomain[any])(nil)) {
+	newInstance := reflect.New(field.Type()).Interface()
+	if !util.IsGenericImplemented(newInstance, (*core.IDomain[any])(nil)) {
 		return false, nil
 	}
 
-	scheme := cache.GetDomainSchemeCache().ParseDomain(s)
+	scheme := cache.GetDomainSchemeCache().ParseDomain(newInstance)
 	primaryField := scheme.PrioritizedPrimaryField
+	if primaryField == nil {
+		return false, fmt.Errorf("domain type %s has no primary field defined", field.Type().Name())
+	}
 
 	dest := reflect.New(field.Type()).Interface()
 
-	id, err := util.ResolvePrimitive(primaryField.FieldType.Kind(), fmt.Sprintf("%v", value))
-	if err != nil {
-		return false, &error2.ValidationErrors{
-			error2.ValidationError{Field: fieldName, Err: err.Error()},
-		}
-	}
-
 	neededGeneralType := core.GeneralDataTypeOf(util.IndirectType(primaryField.FieldType).Kind())
-	if neededGeneralType != core.GeneralDataTypeOf(reflect.TypeOf(id).Kind()) {
+	actualType := core.GeneralDataTypeOf(reflect.TypeOf(value).Kind())
+	if neededGeneralType != actualType {
 		return false, &error2.ValidationErrors{
-			error2.ValidationError{Field: fieldName, Err: fmt.Sprintf("Input value must be %s", neededGeneralType)},
+			error2.ValidationError{
+				Field: fieldName,
+				Err:   fmt.Sprintf("Input value must be %s, got %s", neededGeneralType, actualType),
+			},
 		}
 	}
 
-	err = db.Builder().WhereEqual(primaryField.DBName, value).Get(dest)
+	err := db.Builder().WhereEqual(primaryField.DBName, value).Get(dest)
 	if err != nil {
-		return false, err
+		return false, fmt.Errorf("database error when loading domain object: %w", err)
 	}
 
-	if !dest.(core.IDomainMeta).GetLoaded() {
+	domainMeta, ok := dest.(core.IDomainMeta)
+	if !ok || !domainMeta.GetLoaded() {
 		return false, &error2.ValidationErrors{
-			error2.ValidationError{Field: fieldName, Err: fmt.Sprintf("Record with specified primary key (%v) was not found", value)},
+			error2.ValidationError{
+				Field: fieldName,
+				Err:   fmt.Sprintf("Record with specified primary key (%v) was not found", value),
+			},
 		}
+	}
+
+	if !field.IsValid() || !field.CanSet() {
+		return false, newValidationError(fieldName, "Domain field is not settable")
 	}
 	field.Set(reflect.ValueOf(dest).Elem())
 

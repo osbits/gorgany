@@ -28,7 +28,7 @@ func (thiz LoginController) ShowLogin(message core.HttpMessage) {
 		message.Response().Redirect(homeUrl, 301)
 	}
 
-	message.Render("auth/login", nil)
+	message.View().Render("auth/login", nil)
 }
 
 func (thiz LoginController) Login(message core.HttpMessage) {
@@ -38,26 +38,26 @@ func (thiz LoginController) Login(message core.HttpMessage) {
 		message.Response().Redirect(homeUrl, 301)
 	}
 
-	body := message.GetBodyContent()
-	values, _ := url.ParseQuery(body)
+	body, _ := message.Request().Body()
+	values, _ := url.ParseQuery(string(body))
 	username := values.Get("username")
 	password := values.Get("password")
 	user, err := thiz.userService.GetByUsername(username)
 	if err != nil {
 		err2.HandleError(err)
-		message.Response().RedirectWithParams(thiz.router.UrlByNameSequence("cp.login.show"), 301, map[string]any{"error": fmt.Sprintf("Unexpected error during find user %s in our storage", username)})
+		message.RedirectWithFlash(thiz.router.UrlByNameSequence("cp.login.show"), 301, map[string]any{"error": fmt.Sprintf("Unexpected error during find user %s in our storage", username)})
 		return
 	}
 
 	if user == nil || !util.CompareSaltedHash(user.GetPassword(), password) {
-		message.Response().RedirectWithParams(thiz.router.UrlByNameSequence("cp.login.show"), 301, map[string]any{"error": "We were unable to find a user with the specified email address and password"})
+		message.RedirectWithFlash(thiz.router.UrlByNameSequence("cp.login.show"), 301, map[string]any{"error": "We were unable to find a user with the specified email address and password"})
 		return
 	}
 
 	_, err = thiz.authContext.ResolveAuthStrategyByContext(message.Context()).Login(user, message.Context())
 	if err != nil {
 		err2.HandleError(err)
-		message.Response().RedirectWithParams(thiz.router.UrlByNameSequence("cp.login.show"), 301, map[string]any{"error": fmt.Sprintf("Unexpected error during find user %s in our storage", username)})
+		message.RedirectWithFlash(thiz.router.UrlByNameSequence("cp.login.show"), 301, map[string]any{"error": fmt.Sprintf("Unexpected error during find user %s in our storage", username)})
 		return
 	}
 

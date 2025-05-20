@@ -2,6 +2,7 @@ package auth
 
 import (
 	"context"
+	"git.qix.sx/gorgany/gorgany.git/util"
 
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
@@ -33,7 +34,7 @@ func (thiz *JwtAuthStrategy) IsLoggedIn(ctx context.Context) bool {
 		return false
 	}
 
-	bearerToken := messageContext.GetBearerToken()
+	bearerToken := util.ParseBearerToken(messageContext.GetHeader().Get("Authorization"))
 	return thiz.jwtService.ValidateJwt(bearerToken, viper.GetString("auth.jwt.secret"))
 }
 
@@ -59,7 +60,7 @@ func (thiz *JwtAuthStrategy) IsRequestMadeWithStrategy(ctx context.Context) bool
 		return false
 	}
 
-	token := messageContext.GetBearerToken()
+	token := util.ParseBearerToken(messageContext.GetHeader().Get("Authorization"))
 	if token == "" {
 		return false
 	}

@@ -64,18 +64,16 @@ func GetElementOfSlice(slice any) any {
 func GetReflectedElementOfSlice(slice any) reflect.Value {
 	rtSlice := reflect.TypeOf(slice)
 	if rtSlice.Kind() != reflect.Slice {
-		panic("")
+		return reflect.ValueOf(nil)
 	}
 
-	rtOriginalEl := reflect.MakeSlice(rtSlice, 1, 1).Index(0)
-	model := rtOriginalEl.Interface()
-	rType := IndirectType(reflect.TypeOf(model))
+	rtSliceElem := rtSlice.Elem()
 
-	if rtOriginalEl.Kind() == reflect.Ptr {
-		return reflect.New(rType)
+	if rtSliceElem.Kind() == reflect.Interface {
+		rtSliceElem = rtSliceElem.Elem()
 	}
 
-	return reflect.New(rType).Elem()
+	return reflect.New(rtSliceElem).Elem()
 }
 
 func GetIndirectReflectElementOfSlice(slice any) reflect.Value {

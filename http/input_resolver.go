@@ -60,7 +60,7 @@ func (thiz *InputResolver) Resolve() ([]reflect.Value, error) {
 				log.Log().Warnf("Body parser could not be resolved!")
 			}
 
-			err := parser.parse(arg)
+			err := parser.Parse(arg)
 			if err != nil {
 				return nil, err
 			}
@@ -97,16 +97,16 @@ func (thiz *InputResolver) collectPathParams() []string {
 }
 
 type bodyParser interface {
-	parse(arg interface{}) error
+	Parse(arg interface{}) error
 }
 
 func resolveBodyParser(command core.HttpCommand, message core.HttpMessage) bodyParser {
 	if command.ContentType() == core.ApplicationJson {
-		return jsonParser{message: message}
+		return &JsonParser{message: message}
 	} else if command.ContentType() == core.MultipartFormData {
-		return multipartParser{message: message}
+		return &MultipartParser{message: message}
 	} else if command.ContentType() == core.Query {
-		return queryParser{message: message}
+		return &QueryParser{message: message}
 	}
 
 	return nil
