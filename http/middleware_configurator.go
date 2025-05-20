@@ -17,8 +17,8 @@ func (thiz *MiddlewareConfigBuilder) WithPattern(pattern string) core.IMiddlewar
 	return thiz
 }
 
-func (thiz *MiddlewareConfigBuilder) WithExcludePattern(pattern string) core.IMiddlewareConfigBuilder {
-	thiz.middlewareConfig.excludePattern = pattern
+func (thiz *MiddlewareConfigBuilder) WithExcludePatterns(patterns []string) core.IMiddlewareConfigBuilder {
+	thiz.middlewareConfig.excludePatterns = patterns
 	return thiz
 }
 
@@ -40,18 +40,18 @@ func (thiz *MiddlewareConfigBuilder) Build() core.IMiddlewareConfig {
 }
 
 type MiddlewareConfig struct {
-	pattern        string
-	excludePattern string
-	isFilter       bool
-	middleware     core.IMiddleware
+	pattern         string
+	excludePatterns []string
+	isFilter        bool
+	middleware      core.IMiddleware
 }
 
 func (thiz *MiddlewareConfig) GetPattern() string {
 	return thiz.pattern
 }
 
-func (thiz *MiddlewareConfig) GetExcludePattern() string {
-	return thiz.excludePattern
+func (thiz *MiddlewareConfig) GetExcludePatterns() []string {
+	return thiz.excludePatterns
 }
 
 func (thiz *MiddlewareConfig) IsFilter() bool {

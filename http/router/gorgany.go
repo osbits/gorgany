@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/err"
+	"git.qix.sx/gorgany/gorgany.git/util"
 	"io"
 	"net/http"
 	"reflect"
@@ -85,7 +86,11 @@ func (r *ChiRouterAdapter) RegisterRoute(rc core.IRouteConfig) {
 			continue
 		}
 
-		if matchesPattern(cfg.GetPattern(), pattern) && !matchesPattern(cfg.GetExcludePattern(), pattern) {
+		isAnyExcludeSuitable := util.ContainsByClosure(cfg.GetExcludePatterns(), func(exclude string) bool {
+			return matchesPattern(exclude, pattern)
+		})
+
+		if matchesPattern(cfg.GetPattern(), pattern) && !isAnyExcludeSuitable {
 			mws = append(mws, r.adaptRouteMiddleware(cfg))
 		}
 	}
@@ -136,7 +141,11 @@ func (r *ChiRouterAdapter) adaptFilter(cfg core.IMiddlewareConfig) func(http.Han
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			path := req.URL.Path
-			if matches(cfg.GetPattern(), path) && !matches(cfg.GetExcludePattern(), path) {
+
+			isAnyExcludeSuitable := util.ContainsByClosure(cfg.GetExcludePatterns(), func(exclude string) bool {
+				return matches(exclude, path)
+			})
+			if matches(cfg.GetPattern(), path) && !isAnyExcludeSuitable {
 				msgRaw := req.Context().Value(core.FullMessageInstanceContextKey)
 
 				var msg core.HttpMessage

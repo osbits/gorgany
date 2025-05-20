@@ -1,7 +1,10 @@
 package log
 
 import (
+	"fmt"
 	"log"
+	"runtime"
+	"strings"
 )
 
 type DefaultLogger struct {
@@ -59,5 +62,20 @@ func (thiz *DefaultLogger) buildPrefix(level string) string {
 	if thiz.prefix != "" {
 		prefix = prefix + thiz.prefix + " "
 	}
+
+	_, file, line, _ := runtime.Caller(2)
+	if file == "" {
+		return prefix
+	}
+	splitFileName := strings.Split(file, "/")
+	splitFileNameSize := len(splitFileName)
+
+	if splitFileNameSize < 2 {
+		return prefix
+	}
+
+	pkgFileName := splitFileName[splitFileNameSize-2] + "/" + splitFileName[splitFileNameSize-1]
+
+	prefix = prefix + "[" + pkgFileName + ":" + fmt.Sprint(line) + "] "
 	return prefix
 }

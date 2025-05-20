@@ -152,17 +152,21 @@ func (s *HTTPRequestScope) BodyReader() io.ReadCloser {
 	return s.R.Body
 }
 
-func (s *HTTPRequestScope) Body() ([]byte, error) {
-	defer s.R.Body.Close()
+func (s *HTTPRequestScope) Body() (body []byte, err error) {
+	defer func() {
+		s.R.Body.Close()
+		s.R.Body = io.NopCloser(bytes.NewBuffer(body))
+	}()
+
 	limited := io.LimitReader(s.R.Body, s.maxBodyBytes+1)
-	data, err := io.ReadAll(limited)
+	body, err = io.ReadAll(limited)
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(data)) > s.maxBodyBytes {
-		return nil, fmt.Errorf("body too large: %d bytes (max %d)", len(data), s.maxFileBytes)
+	if int64(len(body)) > s.maxBodyBytes {
+		return nil, fmt.Errorf("body too large: %d bytes (max %d)", len(body), s.maxFileBytes)
 	}
-	return data, nil
+	return body, nil
 }
 
 func (s *HTTPRequestScope) RawRequest() *http.Request {

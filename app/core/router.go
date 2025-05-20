@@ -21,7 +21,7 @@ type IMiddlewareConfig interface {
 	// GetPattern returns the URL pattern this middleware applies to
 	GetPattern() string
 	// GetExcludePattern returns the URL pattern this middleware should not apply to
-	GetExcludePattern() string
+	GetExcludePatterns() []string
 	// IsFilter returns whether this middleware is a filter
 	IsFilter() bool
 	// GetMiddleware returns the middleware implementation
@@ -33,7 +33,7 @@ type IMiddlewareConfigBuilder interface {
 	// WithPattern sets the URL pattern for the middleware
 	WithPattern(pattern string) IMiddlewareConfigBuilder
 	// WithExcludePattern sets the URL pattern to exclude from middleware
-	WithExcludePattern(pattern string) IMiddlewareConfigBuilder
+	WithExcludePatterns(pattern []string) IMiddlewareConfigBuilder
 	// AsFilter marks the middleware as a filter
 	AsFilter() IMiddlewareConfigBuilder
 	// WithMiddleware sets the middleware implementation
