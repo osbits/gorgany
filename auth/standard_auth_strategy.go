@@ -17,7 +17,7 @@ import (
 
 const (
 	sessionRotationInterval = 24 * time.Hour
-	sessionActivityTimeout  = 10 * time.Second
+	sessionActivityTimeout  = 30 * time.Minute
 )
 
 type StandardAuthStrategy struct {

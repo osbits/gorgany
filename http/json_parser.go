@@ -66,6 +66,8 @@ func getTypeInfo(t reflect.Type) *typeInfo {
 			field := indirectT.Field(i)
 			if tag := field.Tag.Get("json"); tag != "" {
 				info.fields[tag] = field
+			} else {
+				info.fields[util.CamelCase(field.Name)] = field
 			}
 		}
 
@@ -73,16 +75,7 @@ func getTypeInfo(t reflect.Type) *typeInfo {
 			method := t.Method(i)
 			if len(method.Name) > 4 && method.Name[:4] == "Bind" {
 				fieldName := method.Name[4:]
-				field, ok := indirectT.FieldByName(fieldName)
-				if !ok {
-					continue
-				}
-
-				if tag := field.Tag.Get("json"); tag != "" {
-					info.bindMethods[tag] = method
-				} else {
-					info.bindMethods[fieldName] = method
-				}
+				info.bindMethods[fieldName] = method
 			}
 		}
 	}
@@ -272,7 +265,7 @@ func (p *JsonParser) setSlice(field reflect.Value, key string, value interface{}
 	for i := 0; i < sliceLen; i++ {
 		// Create a new element of the correct type
 		rv := reflect.New(reflectedElement.Type()).Elem()
-		if err := p.processValue(rv.Addr().Interface(), reflectedValue.Index(i), ""); err != nil {
+		if err := p.processValue(rv.Addr().Interface(), reflectedValue.Index(i).Interface(), ""); err != nil {
 			return fmt.Errorf("failed to process slice element: %w", err)
 		}
 		newSlice = reflect.Append(newSlice, rv)
@@ -399,7 +392,7 @@ func (p *JsonParser) callBindMethodIfExists(command any, fieldName string, value
 	}
 
 	// Look for the Transient<FieldName> method
-	method, ok := info.bindMethods[fieldName]
+	method, ok := info.bindMethods[util.StudlyCase(fieldName)]
 	if !ok {
 		return false, nil
 	}

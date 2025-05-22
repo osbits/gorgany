@@ -69,20 +69,15 @@ func getMultipartTypeInfo(t reflect.Type) *typeInfo {
 			field := indirectT.Field(i)
 			if tag := field.Tag.Get("scheme"); tag != "" {
 				info.fields[tag] = field
+			} else {
+				info.fields[util.CamelCase(field.Name)] = field
 			}
 		}
 
 		for i := 0; i < t.NumMethod(); i++ {
 			method := t.Method(i)
-			fieldName := method.Name[4:]
-			field, ok := indirectT.FieldByName(fieldName)
-			if !ok {
-				continue
-			}
-
-			if tag := field.Tag.Get("scheme"); tag != "" {
-				info.bindMethods[tag] = method
-			} else {
+			if len(method.Name) > 4 && method.Name[:4] == "Bind" {
+				fieldName := method.Name[4:]
 				info.bindMethods[fieldName] = method
 			}
 		}
@@ -310,7 +305,7 @@ func (p *MultipartParser) setSlice(field reflect.Value, key string, value interf
 	for i := 0; i < sliceLen; i++ {
 		// Create a new element of the correct type
 		rv := reflect.New(reflectedElement.Type()).Elem()
-		if err := p.processValue(rv.Addr().Interface(), reflectedValue.Index(i), ""); err != nil {
+		if err := p.processValue(rv.Addr().Interface(), reflectedValue.Index(i).Interface(), ""); err != nil {
 			return fmt.Errorf("failed to process slice element: %w", err)
 		}
 		newSlice = reflect.Append(newSlice, rv)
@@ -387,7 +382,7 @@ func (p *MultipartParser) callBindMethodIfExists(command any, fieldName string, 
 		return false, nil
 	}
 
-	method, ok := info.bindMethods[fieldName]
+	method, ok := info.bindMethods[util.StudlyCase(fieldName)]
 	if !ok {
 		return false, nil
 	}
@@ -401,10 +396,13 @@ func (p *MultipartParser) callBindMethodIfExists(command any, fieldName string, 
 	var processedValue any
 	if _, ok := value.(map[string]any); !ok {
 		var err error
-		processedValue, err = util.ResolvePrimitive(methodValue.Type().In(0).Kind(), fmt.Sprintf("%v", value))
-		if err != nil {
-			return false, &error2.ValidationErrors{
-				error2.ValidationError{Field: fieldName, Err: err.Error()},
+		// Check if method expects a parameter
+		if methodValue.Type().NumIn() > 0 {
+			processedValue, err = util.ResolvePrimitive(methodValue.Type().In(0).Kind(), fmt.Sprintf("%v", value))
+			if err != nil {
+				return false, &error2.ValidationErrors{
+					error2.ValidationError{Field: fieldName, Err: err.Error()},
+				}
 			}
 		}
 	}
