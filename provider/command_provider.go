@@ -35,7 +35,7 @@ func (thiz *CommandProvider) Register(container core.IContainer) {
 }
 
 func (thiz *CommandProvider) Boot(container core.IContainer) {
-	container.Invoke(func(consoleContext *command.ConsoleContext) {
+	container.Invoke(func(consoleContext core.IConsoleContext) {
 		for _, c := range thiz.commands {
 			if e := container.Make(c); e != nil {
 				err.HandleError(e)
