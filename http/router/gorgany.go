@@ -111,18 +111,17 @@ func (r *ChiRouterAdapter) RegisterRoute(rc core.IRouteConfig) {
 		var ok bool
 
 		if msg, ok = msgRaw.(core.HttpMessage); !ok {
-			err.HandleError(fmt.Errorf("route: %s, Message not found in context", req.URL.Path))
-			w.WriteHeader(500)
+			grghttp.Catch(fmt.Errorf("route: %s, Message not found in context", req.URL.Path), msg)
 		}
 
 		resolver, err := r.webCtx.GetNewInputResolver()(rc.GetHandler(), msg)
 		if err != nil {
-			msg.Response().Bytes(nil, 500)
+			grghttp.Catch(err, msg)
 			return
 		}
 		args, err := resolver.(*grghttp.InputResolver).Resolve()
 		if err != nil {
-			msg.Response().Bytes(nil, 500)
+			grghttp.Catch(err, msg)
 			return
 		}
 		reflect.ValueOf(rc.GetHandler()).Call(args)
@@ -154,6 +153,7 @@ func (r *ChiRouterAdapter) adaptFilter(cfg core.IMiddlewareConfig) func(http.Han
 				if msg, ok = msgRaw.(core.HttpMessage); !ok {
 					err.HandleError(fmt.Errorf("route: %s, Message not found in context", req.URL.Path))
 					w.WriteHeader(500)
+					return
 				}
 
 				cfg.GetMiddleware().Handle(func(_ core.HttpMessage) {
@@ -177,6 +177,7 @@ func (r *ChiRouterAdapter) adaptRouteMiddleware(cfg core.IMiddlewareConfig) func
 			if msg, ok = msgRaw.(core.HttpMessage); !ok {
 				err.HandleError(fmt.Errorf("route: %s, Message not found in context", req.URL.Path))
 				w.WriteHeader(500)
+				return
 			}
 
 			cfg.GetMiddleware().Handle(func(_ core.HttpMessage) {

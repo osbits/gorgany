@@ -23,7 +23,7 @@ func (thiz RegisterDomainsCommand) GetName() string {
 func (thiz RegisterDomainsCommand) Execute(ctx context.Context) {
 	needToRegenerate := false
 
-	pkgInfos, err := util.ScanDir("./pkg/domain")
+	pkgInfos, err := util.ScanDir("./pkg/entity")
 	if err != nil {
 		panic(err)
 	}

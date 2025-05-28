@@ -55,8 +55,8 @@ type Builder struct {
 	groupBy         []string
 	having          core.IHaving
 
-	validator core.IValidator `container:"inject"`
-	copyGorm  *gorm.DB
+	//validator core.IValidator `container:"inject"`
+	copyGorm *gorm.DB
 }
 
 func NewBuilder(gormInstance core.GrgDBConnection) *Builder {
@@ -414,10 +414,10 @@ func (thiz *Builder) Insert(model any) error {
 }
 
 func (thiz *Builder) Save(model any) error {
-	err := thiz.validator.ValidateStruct(model)
-	if err != nil {
-		return err
-	}
+	//err := thiz.validator.ValidateStruct(model)
+	//if err != nil {
+	//	return err
+	//}
 
 	res := thiz.GetDriver().Save(model)
 	thiz.AddMetaToModel(model, res.Statement.Table)

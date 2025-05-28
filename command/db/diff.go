@@ -54,7 +54,7 @@ func (thiz DiffCommand) Execute(ctx context.Context) {
 	moduleName := util.ModuleName()
 	modelsMap := thiz.domainContext.GetDomains()
 
-	pkgInfos, err := util.ScanDir("./pkg/domain")
+	pkgInfos, err := util.ScanDir("./pkg/entity")
 	if err != nil {
 		panic(err)
 	}

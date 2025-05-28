@@ -74,11 +74,7 @@ func (p *DbProvider) Boot(c core.IContainer) error {
 	db.SetDBContext(ctx)
 	db.SetBuilderFactory(func(name string) core.IQueryBuilder {
 		conn := ctx.GetDBConnection(name)
-		builder := conn.Builder()
-		if err := c.Make(&builder); err != nil {
-			panic(fmt.Errorf("db builder injection error: %w", err))
-		}
-		return builder
+		return conn.Builder()
 	})
 
 	return nil
