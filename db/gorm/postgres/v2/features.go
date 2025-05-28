@@ -1,4 +1,4 @@
-package postgres
+package v2
 
 // PostgresFeatures implements DatabaseFeatures for PostgreSQL
 type PostgresFeatures struct{}
