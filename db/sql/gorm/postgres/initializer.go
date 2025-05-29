@@ -3,7 +3,7 @@ package postgres
 import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/db/gorm/plugin"
+	"git.qix.sx/gorgany/gorgany.git/db/sql/gorm/plugin"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"

@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
 
 	"gorm.io/gorm"
 )
@@ -17,12 +18,13 @@ const (
 // IDBContext defines the interface for database context management
 type IDBContext interface {
 	// RegisterDataSource registers a new database connection
-	RegisterDataSource(name string, dataSource IDataSource)
+	RegisterDataSource(name string, dataSource dbCore.IDataSource)
 	// GetDataSource retrieves a database connection by name
-	GetDataSource(name string) IDataSource
+	GetDataSource(name string) dbCore.IDataSource
 }
 
 // IDataSource defines the interface for database connections
+// Deprecated, need to use dbCore.IDataSource
 type IDataSource interface {
 	// Driver returns the underlying database driver
 	Driver() any
@@ -33,6 +35,7 @@ type IDataSource interface {
 }
 
 // IQueryBuilder defines the interface for building database queries
+// Deprecated, need to use dbCore.IQueryBuilder
 type IQueryBuilder interface {
 	// Select specifies the fields to select
 	Select(fields ...string) IQueryBuilder

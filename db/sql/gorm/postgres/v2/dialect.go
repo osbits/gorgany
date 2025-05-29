@@ -2,9 +2,8 @@ package v2
 
 import (
 	"fmt"
+	"git.qix.sx/gorgany/gorgany.git/db/sql/core"
 	"strings"
-
-	"git.qix.sx/gorgany/gorgany.git/db/gorm/postgres/v2/core"
 )
 
 // PostgresDialect implements SQLDialect for PostgreSQL

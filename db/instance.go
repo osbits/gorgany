@@ -2,6 +2,7 @@ package db
 
 import (
 	"git.qix.sx/gorgany/gorgany.git/app/core"
+	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
 )
 
 var (
@@ -21,7 +22,7 @@ func GetDBContext() core.IDBContext {
 	return dbCtx
 }
 
-func Connection(name ...string) core.IDataSource {
+func Connection(name ...string) dbCore.IDataSource {
 	key := core.DefaultKeyInRegistrar
 	if len(name) > 0 && name[0] != "" {
 		key = name[0]

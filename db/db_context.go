@@ -1,23 +1,25 @@
 package db
 
-import "git.qix.sx/gorgany/gorgany.git/app/core"
+import (
+	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
+)
 
 type DBContext struct {
-	dbConnections map[string]core.IDataSource
+	dbConnections map[string]dbCore.IDataSource
 }
 
 func (thiz *DBContext) Init() {
-	thiz.dbConnections = make(map[string]core.IDataSource)
+	thiz.dbConnections = make(map[string]dbCore.IDataSource)
 }
 
-func (thiz *DBContext) RegisterDataSource(name string, dbConnection core.IDataSource) {
+func (thiz *DBContext) RegisterDataSource(name string, dbConnection dbCore.IDataSource) {
 	if thiz.dbConnections == nil {
-		thiz.dbConnections = make(map[string]core.IDataSource)
+		thiz.dbConnections = make(map[string]dbCore.IDataSource)
 	}
 	thiz.dbConnections[name] = dbConnection
 }
 
-func (thiz *DBContext) GetDataSource(name string) core.IDataSource {
+func (thiz *DBContext) GetDataSource(name string) dbCore.IDataSource {
 	if thiz.dbConnections == nil {
 		return nil
 	}

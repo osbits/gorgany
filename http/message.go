@@ -25,7 +25,6 @@ import (
 	"github.com/spf13/viper"
 
 	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/db"
 	"git.qix.sx/gorgany/gorgany.git/decoder"
 	"git.qix.sx/gorgany/gorgany.git/model"
 )
@@ -488,8 +487,8 @@ func (m *Message) Init() {
 	parentRequestCtx := m.Req.RawRequest().Context()
 	mCtx.requestCtx = parentRequestCtx
 
-	msgCtx := context.WithValue(parentRequestCtx, core.MessageContextKey, mCtx)
-	m.ctx = context.WithValue(msgCtx, core.DbSessionContextKey, db.Connection().WithContext(msgCtx)) // todo: Currently it can be only GORM Postgres DB
+	m.ctx = context.WithValue(parentRequestCtx, core.MessageContextKey, mCtx)
+	//m.ctx = context.WithValue(msgCtx, core.DbSessionContextKey, db.Connection().WithContext(msgCtx)) // todo: Currently it can be only GORM Postgres DB
 
 	m.Ses = NewHTTPSessionScope(m.ctx, m.authContext, m.sessionStorage)
 	mCtx.session = m.Ses.Get()
