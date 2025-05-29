@@ -5,12 +5,10 @@ import (
 	"fmt"
 
 	"git.qix.sx/gorgany/gorgany.git/db/gorm/postgres/v2/core"
-	"gorm.io/gorm"
 )
 
 // transactionImpl implements the IDBTransaction interface
 type transactionImpl struct {
-	tx *gorm.DB
 	*Builder
 	*Executor
 }

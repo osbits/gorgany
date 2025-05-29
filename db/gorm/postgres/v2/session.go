@@ -10,7 +10,6 @@ import (
 
 // sessionImpl implements the ISession interface
 type sessionImpl struct {
-	db       *gorm.DB
 	executor *Executor
 	mu       sync.RWMutex
 }
@@ -24,7 +23,6 @@ func (ds *dataSourceImpl) NewSession() (core.ISession, error) {
 	}
 
 	return &sessionImpl{
-		db:       session,
 		executor: NewExecutor(session),
 	}, nil
 }
@@ -44,13 +42,12 @@ func (s *sessionImpl) Transaction(ctx context.Context, fn func(core.IDBTransacti
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	tx := s.db.Begin()
+	tx := s.executor.db.Begin()
 	if tx.Error != nil {
 		return tx.Error
 	}
 
 	transaction := &transactionImpl{
-		tx:       tx,
 		Builder:  NewBuilder(),
 		Executor: NewExecutor(tx),
 	}
