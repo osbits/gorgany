@@ -246,11 +246,11 @@ func (m *MockDBContext) Init() {
 	m.Called()
 }
 
-func (m *MockDBContext) RegisterDBConnection(name string, dbConnection core.GrgDBConnection) {
+func (m *MockDBContext) RegisterDataSource(name string, dbConnection core.IDataSource) {
 	m.Called(name, dbConnection)
 }
 
-func (m *MockDBContext) GetDBConnection(name string) core.GrgDBConnection {
+func (m *MockDBContext) GetDataSource(name string) core.IDataSource {
 	return new(MockDBConnection)
 }
 
@@ -266,7 +266,7 @@ func (thiz *MockDBConnection) Builder() core.IQueryBuilder {
 	return nil
 }
 
-func (thiz *MockDBConnection) WithContext(ctx context.Context) core.GrgDBConnection {
+func (thiz *MockDBConnection) WithContext(ctx context.Context) core.IDataSource {
 	return &MockDBConnection{}
 }
 
@@ -368,7 +368,7 @@ func TestMessage_RedirectWithFlash(t *testing.T) {
 
 	// Setup DB context
 	db.SetDBContext(mockDBContext)
-	mockDBContext.On("GetDBConnection", core.DefaultKeyInRegistrar).Return(mockDBConnection)
+	mockDBContext.On("GetDataSource", core.DefaultKeyInRegistrar).Return(mockDBConnection)
 	mockDBConnection.On("WithContext", mock.Anything).Return(mockDBConnection)
 
 	// Setup auth context and strategy
@@ -469,7 +469,7 @@ func TestMessage_Init(t *testing.T) {
 
 	// Setup DB context - must be done before creating Message instance
 	db.SetDBContext(mockDBContext)
-	mockDBContext.On("GetDBConnection", core.DefaultKeyInRegistrar).Return(mockDBConnection)
+	mockDBContext.On("GetDataSource", core.DefaultKeyInRegistrar).Return(mockDBConnection)
 	mockDBConnection.On("WithContext", mock.Anything).Return(mockDBConnection)
 
 	// Setup auth context and strategy
@@ -555,7 +555,7 @@ func TestMessage_Init_WithPathParams(t *testing.T) {
 
 	// Setup DB context
 	db.SetDBContext(mockDBContext)
-	mockDBContext.On("GetDBConnection", core.DefaultKeyInRegistrar).Return(mockDBConnection)
+	mockDBContext.On("GetDataSource", core.DefaultKeyInRegistrar).Return(mockDBConnection)
 	mockDBConnection.On("WithContext", mock.Anything).Return(mockDBConnection)
 
 	// Create test request with path parameters
@@ -601,7 +601,7 @@ func TestMessage_Close(t *testing.T) {
 
 	// Setup DB context - must be done before creating Message instance
 	db.SetDBContext(mockDBContext)
-	mockDBContext.On("GetDBConnection", core.DefaultKeyInRegistrar).Return(mockDBConnection)
+	mockDBContext.On("GetDataSource", core.DefaultKeyInRegistrar).Return(mockDBConnection)
 	mockDBConnection.On("WithContext", mock.Anything).Return(mockDBConnection)
 
 	// Setup auth context and strategy

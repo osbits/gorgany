@@ -50,7 +50,6 @@ type QueryBuilder interface {
 
 // DatabaseFeatures represents database-specific capabilities
 type DatabaseFeatures interface {
-	// Join support
 	SupportsJoinType(joinType string) bool
 	SupportsWindowFunctions() bool
 	SupportsCTE() bool
@@ -128,4 +127,87 @@ type SQLDialect interface {
 	FormatDistinctOn(fields []string) string
 	// FormatReturning formats a RETURNING clause
 	FormatReturning(fields []string) string
+}
+
+// IQueryExecutor defines the interface for executing database queries
+type IQueryExecutor interface {
+	// Execute executes a query without returning results
+	Execute(ctx context.Context, query *Query) error
+
+	// ExecuteWithResult executes a query and stores the results in the provided destination
+	ExecuteWithResult(ctx context.Context, query *Query, result interface{}) error
+
+	// Count executes a COUNT query
+	Count(ctx context.Context, query *Query) (int64, error)
+
+	// ExecuteRaw executes a raw SQL query without returning results
+	ExecuteRaw(ctx context.Context, sql string, args ...interface{}) error
+
+	// ExecuteRawWithResult executes a raw SQL query and stores the results in the provided destination
+	ExecuteRawWithResult(ctx context.Context, result interface{}, sql string, args ...interface{}) error
+
+	// CountRaw executes a raw SQL COUNT query
+	CountRaw(ctx context.Context, sql string, args ...interface{}) (int64, error)
+}
+
+// IQueryBuilder defines the interface for building database queries
+type IQueryBuilder interface {
+	QueryBuilder
+}
+
+// IDBTransaction defines the interface for database transactions
+type IDBTransaction interface {
+	// Query creates a new query builder
+	Query() IQueryBuilder
+
+	// Find executes a query and stores the results in the provided destination
+	Find(ctx context.Context, result interface{}, conditions ...Condition) error
+
+	// FindOne executes a query and stores the first result in the provided destination
+	FindOne(ctx context.Context, result interface{}, conditions ...Condition) error
+
+	// Count returns the number of records matching the conditions
+	Count(ctx context.Context, table string, conditions ...Condition) (int64, error)
+
+	// Insert inserts a new record
+	Insert(ctx context.Context, table string, data interface{}) error
+
+	// Update updates records matching the conditions
+	Update(ctx context.Context, table string, data interface{}, conditions ...Condition) error
+
+	// Delete deletes records matching the conditions
+	Delete(ctx context.Context, table string, conditions ...Condition) error
+
+	// ExecuteRaw executes a raw SQL query without returning results
+	ExecuteRaw(ctx context.Context, sql string, args ...interface{}) error
+
+	// ExecuteRawWithResult executes a raw SQL query and stores the results in the provided destination
+	ExecuteRawWithResult(ctx context.Context, result interface{}, sql string, args ...interface{}) error
+
+	// CountRaw executes a raw SQL COUNT query
+	CountRaw(ctx context.Context, sql string, args ...interface{}) (int64, error)
+}
+
+// ISession defines the interface for database sessions
+type ISession interface {
+	// Executor returns the query executor for this session
+	Executor() IQueryExecutor
+
+	// Query creates a new query builder
+	Query() IQueryBuilder
+
+	// Transaction executes the provided function within a transaction
+	Transaction(ctx context.Context, fn func(IDBTransaction) error) error
+
+	// Close closes the session
+	Close() error
+}
+
+// IDataSource defines the interface for database connections
+type IDataSource interface {
+	// NewSession creates a new database session
+	NewSession() (ISession, error)
+
+	// Close closes the database connection
+	Close() error
 }

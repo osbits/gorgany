@@ -16,20 +16,20 @@ const (
 
 // IDBContext defines the interface for database context management
 type IDBContext interface {
-	// RegisterDBConnection registers a new database connection
-	RegisterDBConnection(name string, dbConnection GrgDBConnection)
-	// GetDBConnection retrieves a database connection by name
-	GetDBConnection(name string) GrgDBConnection
+	// RegisterDataSource registers a new database connection
+	RegisterDataSource(name string, dataSource IDataSource)
+	// GetDataSource retrieves a database connection by name
+	GetDataSource(name string) IDataSource
 }
 
-// GrgDBConnection defines the interface for database connections
-type GrgDBConnection interface {
+// IDataSource defines the interface for database connections
+type IDataSource interface {
 	// Driver returns the underlying database driver
 	Driver() any
 	// Builder returns a new query builder instance
 	Builder() IQueryBuilder
 	// WithContext creates a new connection with the given context
-	WithContext(ctx context.Context) GrgDBConnection
+	WithContext(ctx context.Context) IDataSource
 }
 
 // IQueryBuilder defines the interface for building database queries
@@ -122,7 +122,7 @@ type IQueryBuilder interface {
 	// Exec executes the query
 	Exec() error
 	// GetConnection returns the database connection
-	GetConnection() GrgDBConnection
+	GetConnection() IDataSource
 	// CountRelation counts related records
 	CountRelation(relation string) (int64, error)
 	// ReplaceRelation replaces related records

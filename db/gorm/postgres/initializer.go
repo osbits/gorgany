@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func NewGormPostgresConnection(config map[string]any) core.GrgDBConnection {
+func NewGormPostgresConnection(config map[string]any) core.IDataSource {
 	dsn := getDataSource(config)
 
 	gormConfig := postgres.Config{DSN: dsn, PreferSimpleProtocol: config["prefer_simple_protocol"].(bool)}

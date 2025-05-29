@@ -21,12 +21,12 @@ func GetDBContext() core.IDBContext {
 	return dbCtx
 }
 
-func Connection(name ...string) core.GrgDBConnection {
+func Connection(name ...string) core.IDataSource {
 	key := core.DefaultKeyInRegistrar
 	if len(name) > 0 && name[0] != "" {
 		key = name[0]
 	}
-	return GetDBContext().GetDBConnection(key)
+	return GetDBContext().GetDataSource(key)
 }
 
 func Builder(name ...string) core.IQueryBuilder {

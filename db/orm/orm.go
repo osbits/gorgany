@@ -225,7 +225,7 @@ func (thiz *GorganyOrm[T]) setBuilder() {
 	}
 
 	if dbSessionCtx := thiz.context.Value(core.DbSessionContextKey); dbSessionCtx != nil {
-		if dbSession, ok := dbSessionCtx.(core.GrgDBConnection); ok {
+		if dbSession, ok := dbSessionCtx.(core.IDataSource); ok {
 			thiz.builder = dbSession.Builder()
 			thiz.builder.FromModel(thiz.Model)
 			return

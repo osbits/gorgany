@@ -29,7 +29,7 @@ func (thiz *GormPostgresConnection) Builder() core.IQueryBuilder {
 	return NewBuilder(thiz)
 }
 
-func (thiz *GormPostgresConnection) WithContext(ctx context.Context) core.GrgDBConnection {
+func (thiz *GormPostgresConnection) WithContext(ctx context.Context) core.IDataSource {
 	return &GormPostgresConnection{gormInstance: thiz.gormInstance.WithContext(ctx)}
 }
 
@@ -42,7 +42,7 @@ func (thiz Config) SetPreloadingMaxDeep(maxDeep int) {
 }
 
 type Builder struct {
-	gormInstance    core.GrgDBConnection
+	gormInstance    core.IDataSource
 	config          Config
 	selectStatement []string
 	from            core.IFrom
@@ -59,7 +59,7 @@ type Builder struct {
 	copyGorm *gorm.DB
 }
 
-func NewBuilder(gormInstance core.GrgDBConnection) *Builder {
+func NewBuilder(gormInstance core.IDataSource) *Builder {
 	return &Builder{
 		gormInstance: gormInstance,
 		config:       Config{PreloadingMaxDeep: RecursiveRelationMaxDeep},
@@ -70,7 +70,7 @@ func NewBuilder(gormInstance core.GrgDBConnection) *Builder {
 	}
 }
 
-func NewBuilderWithConfig(gormInstance core.GrgDBConnection, config Config) *Builder {
+func NewBuilderWithConfig(gormInstance core.IDataSource, config Config) *Builder {
 	return &Builder{
 		gormInstance: gormInstance,
 		config:       config,
@@ -447,7 +447,7 @@ func (thiz *Builder) Relation(relation string) core.IQueryBuilder {
 	return thiz
 }
 
-func (thiz *Builder) GetConnection() core.GrgDBConnection {
+func (thiz *Builder) GetConnection() core.IDataSource {
 	return thiz.gormInstance
 }
 

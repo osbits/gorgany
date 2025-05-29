@@ -2,6 +2,8 @@ package provider
 
 import (
 	"fmt"
+	core2 "git.qix.sx/gorgany/gorgany.git/db/gorm/postgres/v2/core"
+
 	"github.com/spf13/viper"
 
 	"git.qix.sx/gorgany/gorgany.git/app/core"
@@ -10,14 +12,14 @@ import (
 )
 
 type DbProvider struct {
-	connCtors []func() (string, core.GrgDBConnection)
+	connCtors []func() (string, core.IDataSource)
 }
 
 func NewDbProvider() *DbProvider {
 	p := &DbProvider{}
 
-	p.connCtors = []func() (string, core.GrgDBConnection){
-		func() (string, core.GrgDBConnection) {
+	p.connCtors = []func() (string, core.IDataSource){
+		func() (string, core.IDataSource) {
 			databases := viper.GetStringMap("databases")
 			for name, cfg := range databases {
 				conf, ok := cfg.(map[string]any)
@@ -38,22 +40,39 @@ func NewDbProvider() *DbProvider {
 	return p
 }
 
-func (p *DbProvider) AddConnection(name string, ctor func() core.GrgDBConnection) {
-	p.connCtors = append(p.connCtors, func() (string, core.GrgDBConnection) {
+func (p *DbProvider) AddConnection(name string, ctor func() core.IDataSource) {
+	p.connCtors = append(p.connCtors, func() (string, core.IDataSource) {
 		return name, ctor()
 	})
 }
 
 func (p *DbProvider) Register(c core.IContainer) {
+	// Register DBContext as singleton
 	c.SingletonLazy(func() *db.DBContext {
 		return &db.DBContext{}
 	})
 
+	// Register connection constructors
 	for _, ctor := range p.connCtors {
-		c.TransientLazy(func(ctor func() (string, core.GrgDBConnection)) func() (string, core.GrgDBConnection) {
+		c.SingletonLazy(func(ctor func() (string, core.IDataSource)) func() (string, core.IDataSource) {
 			return ctor
 		}(ctor))
 	}
+
+	// Register Session as transient
+	c.TransientLazy(func(ds core2.IDataSource) (core2.ISession, error) {
+		return ds.NewSession()
+	})
+
+	// Register QueryExecutor as transient
+	c.TransientLazy(func(session core2.ISession) core2.IQueryExecutor {
+		return session.Executor()
+	})
+
+	// Register QueryBuilder as transient
+	c.TransientLazy(func(session core2.ISession) core2.IQueryBuilder {
+		return session.Query()
+	})
 }
 
 func (p *DbProvider) Boot(c core.IContainer) error {
@@ -66,14 +85,14 @@ func (p *DbProvider) Boot(c core.IContainer) error {
 		for _, ctor := range p.connCtors {
 			name, conn := ctor()
 			if conn != nil {
-				ctx.RegisterDBConnection(name, conn)
+				ctx.RegisterDataSource(name, conn)
 			}
 		}
 	})
 
 	db.SetDBContext(ctx)
 	db.SetBuilderFactory(func(name string) core.IQueryBuilder {
-		conn := ctx.GetDBConnection(name)
+		conn := ctx.GetDataSource(name)
 		return conn.Builder()
 	})
 
