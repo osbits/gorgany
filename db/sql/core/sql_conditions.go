@@ -33,7 +33,8 @@ func (c *BinaryCondition) ToSQL() (string, []interface{}) {
 	// Handle right operand
 	switch v := c.Right.(type) {
 	case string:
-		rightSQL = v
+		rightSQL = "?"
+		args = append(args, v)
 	case *Query:
 		sql, subArgs := buildSubquerySQL(v)
 		rightSQL = fmt.Sprintf("(%s)", sql)
@@ -278,6 +279,17 @@ func (c *IsNullCondition) ToSQL() (string, []interface{}) {
 	}
 
 	return fmt.Sprintf("%s %s", fieldSQL, operator), args
+}
+
+// RawCondition represents a raw SQL condition
+type RawCondition struct {
+	SQL  string
+	Args []interface{}
+}
+
+// ToSQL returns the SQL representation of the raw condition
+func (c *RawCondition) ToSQL() (string, []interface{}) {
+	return c.SQL, c.Args
 }
 
 // buildSubquerySQL builds SQL for a subquery and returns its SQL and arguments
