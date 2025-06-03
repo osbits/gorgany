@@ -22,27 +22,27 @@ func NewExecutor(db *gorm.DB) *Executor {
 
 // Exec executes a query without returning results
 func (e *Executor) Exec(ctx context.Context, query *core.Query) error {
-	gormQuery := e.buildGormQuery(query)
-	return gormQuery.Exec("").Error
+	sql, args := e.BuildSQL(query)
+	return e.db.Exec(sql, args...).Error
 }
 
 // QueryOne executes a query and stores the result in the provided destination
 func (e *Executor) QueryOne(ctx context.Context, query *core.Query, result interface{}) error {
-	gormQuery := e.buildGormQuery(query)
-	return gormQuery.First(result).Error
+	sql, args := e.BuildSQL(query)
+	return e.db.Raw(sql, args...).Scan(result).Error
 }
 
 // QueryList executes a query and stores the results in the provided destination
 func (e *Executor) QueryList(ctx context.Context, query *core.Query, result interface{}) error {
-	gormQuery := e.buildGormQuery(query)
-	return gormQuery.Find(result).Error
+	sql, args := e.BuildSQL(query)
+	return e.db.Raw(sql, args...).Scan(result).Error
 }
 
 // Count executes a COUNT query
 func (e *Executor) Count(ctx context.Context, query *core.Query) (int64, error) {
+	sql, args := e.BuildSQL(query)
 	var count int64
-	gormQuery := e.buildGormQuery(query)
-	err := gormQuery.Count(&count).Error
+	err := e.db.Raw(sql, args...).Count(&count).Error
 	return count, err
 }
 
@@ -61,6 +61,13 @@ func (e *Executor) CountRaw(ctx context.Context, sql string, args ...interface{}
 	var count int64
 	err := e.db.Raw(sql, args...).Count(&count).Error
 	return count, err
+}
+
+// BuildSQL converts a query to SQL and returns both the SQL string and arguments
+func (e *Executor) BuildSQL(q *core.Query) (string, []interface{}) {
+	builder := NewBuilder()
+	builder.query = q
+	return builder.ToSQL()
 }
 
 // buildGormQuery converts our Query to a GORM query

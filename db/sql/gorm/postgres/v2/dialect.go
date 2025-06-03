@@ -4,220 +4,259 @@ import (
 	"fmt"
 	"strings"
 
-	"git.qix.sx/gorgany/gorgany.git/db/sql/core"
+	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
 )
 
-// PostgresDialect implements SQLDialect for PostgreSQL
+// PostgresDialect implements the SQLDialect interface for PostgreSQL
 type PostgresDialect struct{}
 
 // FormatSelect formats the SELECT clause
-func (d *PostgresDialect) FormatSelect(fields []string, distinct bool, distinctOn []string) string {
+func (d *PostgresDialect) FormatSelect(fields []string, distinct bool, distinctOn []string) (string, []interface{}) {
 	var parts []string
-	parts = append(parts, "SELECT")
-
 	if distinct {
 		if len(distinctOn) > 0 {
-			parts = append(parts, fmt.Sprintf("DISTINCT ON (%s)", strings.Join(distinctOn, ", ")))
+			parts = append(parts, fmt.Sprintf("SELECT DISTINCT ON (%s)", strings.Join(distinctOn, ", ")))
 		} else {
-			parts = append(parts, "DISTINCT")
+			parts = append(parts, "SELECT DISTINCT")
 		}
+	} else {
+		parts = append(parts, "SELECT")
 	}
-
 	parts = append(parts, strings.Join(fields, ", "))
-	return strings.Join(parts, " ")
+	return strings.Join(parts, " "), nil
 }
 
 // FormatFrom formats the FROM clause
-func (d *PostgresDialect) FormatFrom(table string, alias string) string {
+func (d *PostgresDialect) FormatFrom(table string, alias string) (string, []interface{}) {
 	if alias != "" {
-		return fmt.Sprintf("FROM %s AS %s", table, alias)
+		return fmt.Sprintf("FROM %s AS %s", table, alias), nil
 	}
-	return fmt.Sprintf("FROM %s", table)
+	return fmt.Sprintf("FROM %s", table), nil
 }
 
 // FormatJoin formats a JOIN clause
-func (d *PostgresDialect) FormatJoin(join *core.JoinClause) string {
+func (d *PostgresDialect) FormatJoin(join *dbCore.JoinClause) (string, []interface{}) {
 	var parts []string
 	parts = append(parts, join.Type, "JOIN")
 
 	if join.IsSubquery {
-		// Use the dialect to format the subquery
-		parts = append(parts, fmt.Sprintf("(%s)", d.FormatQuery(join.Subquery)))
-	} else {
-		parts = append(parts, join.Table)
+		sql, args := d.FormatSubquery(join.Subquery, join.Alias)
+		parts = append(parts, sql)
+		if join.Condition != nil {
+			conditionSQL, conditionArgs := join.Condition.ToSQL()
+			parts = append(parts, "ON", conditionSQL)
+			args = append(args, conditionArgs...)
+		}
+		return strings.Join(parts, " "), args
 	}
 
+	parts = append(parts, join.Table)
 	if join.Alias != "" {
 		parts = append(parts, "AS", join.Alias)
 	}
-
 	if join.Condition != nil {
-		sql, _ := join.Condition.ToSQL()
-		parts = append(parts, "ON", sql)
+		conditionSQL, args := join.Condition.ToSQL()
+		parts = append(parts, "ON", conditionSQL)
+		return strings.Join(parts, " "), args
 	}
-
-	return strings.Join(parts, " ")
+	return strings.Join(parts, " "), nil
 }
 
 // FormatWhere formats the WHERE clause
-func (d *PostgresDialect) FormatWhere(where *core.WhereClause) string {
+func (d *PostgresDialect) FormatWhere(where *dbCore.WhereClause) (string, []interface{}) {
 	if where == nil || len(where.Conditions) == 0 {
-		return ""
+		return "", nil
 	}
 
+	allArgs := make([]any, 0)
 	var conditions []string
 	for _, condition := range where.Conditions {
-		sql, _ := condition.ToSQL()
+		sql, args := condition.ToSQL()
+		if sql == "" {
+			continue
+		}
+
 		conditions = append(conditions, sql)
+
+		if len(args) > 0 {
+			allArgs = append(allArgs, args...)
+		}
 	}
 
-	return fmt.Sprintf("WHERE %s", strings.Join(conditions, fmt.Sprintf(" %s ", where.Operator)))
+	return fmt.Sprintf("WHERE %s", strings.Join(conditions, fmt.Sprintf(" %s ", where.Operator))), allArgs
 }
 
 // FormatOrderBy formats the ORDER BY clause
-func (d *PostgresDialect) FormatOrderBy(field string, direction string) string {
-	if direction == "" {
-		return fmt.Sprintf("ORDER BY %s", field)
-	}
-	return fmt.Sprintf("ORDER BY %s %s", field, direction)
+func (d *PostgresDialect) FormatOrderBy(field string, direction string) (string, []interface{}) {
+	return fmt.Sprintf("ORDER BY %s %s", field, direction), nil
 }
 
 // FormatGroupBy formats the GROUP BY clause
-func (d *PostgresDialect) FormatGroupBy(fields []string) string {
-	return fmt.Sprintf("GROUP BY %s", strings.Join(fields, ", "))
+func (d *PostgresDialect) FormatGroupBy(fields []string) (string, []interface{}) {
+	return fmt.Sprintf("GROUP BY %s", strings.Join(fields, ", ")), nil
 }
 
 // FormatHaving formats the HAVING clause
-func (d *PostgresDialect) FormatHaving(having *core.HavingClause) string {
-	if having == nil || having.Condition == nil {
-		return ""
+func (d *PostgresDialect) FormatHaving(condition *dbCore.HavingClause) (string, []interface{}) {
+	if condition == nil {
+		return "", nil
 	}
-	sql, _ := having.Condition.ToSQL()
-	return fmt.Sprintf("HAVING %s", sql)
+	sql, args := condition.Condition.ToSQL()
+	return fmt.Sprintf("HAVING %s", sql), args
 }
 
 // FormatLimit formats the LIMIT clause
-func (d *PostgresDialect) FormatLimit(limit int) string {
-	return fmt.Sprintf("LIMIT %d", limit)
+func (d *PostgresDialect) FormatLimit(limit int) (string, []interface{}) {
+	return fmt.Sprintf("LIMIT %d", limit), nil
 }
 
 // FormatOffset formats the OFFSET clause
-func (d *PostgresDialect) FormatOffset(offset int) string {
-	return fmt.Sprintf("OFFSET %d", offset)
+func (d *PostgresDialect) FormatOffset(offset int) (string, []interface{}) {
+	return fmt.Sprintf("OFFSET %d", offset), nil
 }
 
 // FormatCTE formats a Common Table Expression
-func (d *PostgresDialect) FormatCTE(name string, query *core.Query) string {
-	return fmt.Sprintf("%s AS (%s)", name, d.FormatQuery(query))
+func (d *PostgresDialect) FormatCTE(name string, query *dbCore.Query) (string, []interface{}) {
+	sql, args := d.FormatQuery(query)
+	return fmt.Sprintf("%s AS (%s)", name, sql), args
 }
 
 // FormatUnion formats a UNION clause
-func (d *PostgresDialect) FormatUnion(query *core.Query, all bool) string {
+func (d *PostgresDialect) FormatUnion(query *dbCore.Query, all bool) (string, []interface{}) {
+	sql, args := d.FormatQuery(query)
 	if all {
-		return fmt.Sprintf("UNION ALL %s", d.FormatQuery(query))
+		return fmt.Sprintf("UNION ALL %s", sql), args
 	}
-	return fmt.Sprintf("UNION %s", d.FormatQuery(query))
+	return fmt.Sprintf("UNION %s", sql), args
 }
 
 // FormatWindow formats a window function definition
-func (d *PostgresDialect) FormatWindow(name string, definition *core.WindowDefinition) string {
-	return fmt.Sprintf("%s AS (%s)", name, definition.String())
+func (d *PostgresDialect) FormatWindow(name string, definition *dbCore.WindowDefinition) (string, []interface{}) {
+	s, _ := definition.ToSQL()
+	return fmt.Sprintf("%s AS (%s)", name, s), nil
 }
 
 // FormatSubquery formats a subquery
-func (d *PostgresDialect) FormatSubquery(query *core.Query, alias string) string {
-	return fmt.Sprintf("(%s) AS %s", d.FormatQuery(query), alias)
+func (d *PostgresDialect) FormatSubquery(query *dbCore.Query, alias string) (string, []interface{}) {
+	sql, args := d.FormatQuery(query)
+	if alias != "" {
+		return fmt.Sprintf("(%s) AS %s", sql, alias), args
+	}
+	return fmt.Sprintf("(%s)", sql), args
 }
 
 // FormatDistinctOn formats a DISTINCT ON clause
-func (d *PostgresDialect) FormatDistinctOn(fields []string) string {
-	return fmt.Sprintf("DISTINCT ON (%s)", strings.Join(fields, ", "))
+func (d *PostgresDialect) FormatDistinctOn(fields []string) (string, []interface{}) {
+	return fmt.Sprintf("DISTINCT ON (%s)", strings.Join(fields, ", ")), nil
 }
 
 // FormatReturning formats a RETURNING clause
-func (d *PostgresDialect) FormatReturning(fields []string) string {
-	return fmt.Sprintf("RETURNING %s", strings.Join(fields, ", "))
+func (d *PostgresDialect) FormatReturning(fields []string) (string, []interface{}) {
+	return fmt.Sprintf("RETURNING %s", strings.Join(fields, ", ")), nil
 }
 
 // FormatQuery formats a complete query
-func (d *PostgresDialect) FormatQuery(query *core.Query) string {
+func (d *PostgresDialect) FormatQuery(query *dbCore.Query) (string, []interface{}) {
 	var parts []string
+	var allArgs []interface{}
 
 	// Add CTEs if any
 	if len(query.CTEs) > 0 {
 		cteParts := make([]string, len(query.CTEs))
 		for i, cte := range query.CTEs {
-			cteParts[i] = d.FormatCTE(cte.Name, cte.Query)
+			cteSQL, cteArgs := d.FormatCTE(cte.Name, cte.Query)
+			cteParts[i] = cteSQL
+			allArgs = append(allArgs, cteArgs...)
 		}
 		parts = append(parts, "WITH "+strings.Join(cteParts, ", "))
 	}
 
 	// Add SELECT clause
 	if query.Select != nil {
-		parts = append(parts, d.FormatSelect(
+		selectSQL, selectArgs := d.FormatSelect(
 			query.Select.Fields,
 			query.Select.Distinct,
 			query.Select.DistinctOn,
-		))
+		)
+		parts = append(parts, selectSQL)
+		allArgs = append(allArgs, selectArgs...)
 	}
 
 	// Add FROM clause
 	if query.From != nil {
-		parts = append(parts, d.FormatFrom(query.From.Table, query.From.Alias))
+		fromSQL, fromArgs := d.FormatFrom(query.From.Table, query.From.Alias)
+		parts = append(parts, fromSQL)
+		allArgs = append(allArgs, fromArgs...)
 	}
 
 	// Add JOINs
 	for _, join := range query.Joins {
-		parts = append(parts, d.FormatJoin(join))
+		joinSQL, joinArgs := d.FormatJoin(join)
+		parts = append(parts, joinSQL)
+		allArgs = append(allArgs, joinArgs...)
 	}
 
 	// Add WHERE clause
 	if query.Where != nil {
-		whereSQL := d.FormatWhere(query.Where)
+		whereSQL, whereArgs := d.FormatWhere(query.Where)
 		if whereSQL != "" {
 			parts = append(parts, whereSQL)
+			allArgs = append(allArgs, whereArgs...)
 		}
 	}
 
 	// Add GROUP BY clause
 	if query.GroupBy != nil {
-		parts = append(parts, d.FormatGroupBy(query.GroupBy.Fields))
+		groupBySQL, groupByArgs := d.FormatGroupBy(query.GroupBy.Fields)
+		parts = append(parts, groupBySQL)
+		allArgs = append(allArgs, groupByArgs...)
 	}
 
 	// Add HAVING clause
 	if query.Having != nil {
-		havingSQL := d.FormatHaving(query.Having)
+		havingSQL, havingArgs := d.FormatHaving(query.Having)
 		if havingSQL != "" {
 			parts = append(parts, havingSQL)
+			allArgs = append(allArgs, havingArgs...)
 		}
 	}
 
 	// Add ORDER BY clause
 	if query.OrderBy != nil {
 		for _, field := range query.OrderBy.Fields {
-			parts = append(parts, d.FormatOrderBy(field.Field, field.Direction))
+			orderBySQL, orderByArgs := d.FormatOrderBy(field.Field, field.Direction)
+			parts = append(parts, orderBySQL)
+			allArgs = append(allArgs, orderByArgs...)
 		}
 	}
 
 	// Add LIMIT clause
 	if query.Limit != nil {
-		parts = append(parts, d.FormatLimit(*query.Limit))
+		limitSQL, limitArgs := d.FormatLimit(*query.Limit)
+		parts = append(parts, limitSQL)
+		allArgs = append(allArgs, limitArgs...)
 	}
 
 	// Add OFFSET clause
 	if query.Offset != nil {
-		parts = append(parts, d.FormatOffset(*query.Offset))
+		offsetSQL, offsetArgs := d.FormatOffset(*query.Offset)
+		parts = append(parts, offsetSQL)
+		allArgs = append(allArgs, offsetArgs...)
 	}
 
 	// Add UNION clauses
 	for _, union := range query.Unions {
-		parts = append(parts, d.FormatUnion(union.Query, union.All))
+		unionSQL, unionArgs := d.FormatUnion(union.Query, union.All)
+		parts = append(parts, unionSQL)
+		allArgs = append(allArgs, unionArgs...)
 	}
 
 	// Add RETURNING clause
 	if len(query.Returning) > 0 {
-		parts = append(parts, d.FormatReturning(query.Returning))
+		returningSQL, returningArgs := d.FormatReturning(query.Returning)
+		parts = append(parts, returningSQL)
+		allArgs = append(allArgs, returningArgs...)
 	}
 
-	return strings.Join(parts, " ")
+	return strings.Join(parts, " "), allArgs
 }

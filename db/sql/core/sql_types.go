@@ -125,23 +125,82 @@ type WindowClause struct {
 // WindowDefinition represents a window function definition
 type WindowDefinition struct {
 	PartitionBy []string
-	OrderBy     *OrderByClause
+	OrderBy     []OrderByField
 	Frame       *WindowFrame
+}
+
+// ToSQL returns the SQL representation of the window definition
+func (w *WindowDefinition) ToSQL() (string, []interface{}) {
+	var parts []string
+	var args []interface{}
+
+	if len(w.PartitionBy) > 0 {
+		parts = append(parts, fmt.Sprintf("PARTITION BY %s", strings.Join(w.PartitionBy, ", ")))
+	}
+
+	if len(w.OrderBy) > 0 {
+		orderParts := make([]string, len(w.OrderBy))
+		for i, field := range w.OrderBy {
+			orderParts[i] = fmt.Sprintf("%s %s", field.Field, field.Direction)
+		}
+		parts = append(parts, fmt.Sprintf("ORDER BY %s", strings.Join(orderParts, ", ")))
+	}
+
+	if w.Frame != nil {
+		frameSQL, frameArgs := w.Frame.ToSQL()
+		parts = append(parts, frameSQL)
+		args = append(args, frameArgs...)
+	}
+
+	return strings.Join(parts, " "), args
 }
 
 // WindowFrame represents a window frame specification
 type WindowFrame struct {
-	Mode      string // RANGE, ROWS, GROUPS
+	Type      string // ROWS, RANGE, or GROUPS
 	Start     *FrameBound
 	End       *FrameBound
-	Exclusion string // EXCLUDE CURRENT ROW, EXCLUDE GROUP, EXCLUDE TIES, EXCLUDE NO OTHERS
+	Exclusion string // EXCLUDE CURRENT ROW, EXCLUDE GROUP, EXCLUDE TIES, or EXCLUDE NO OTHERS
+}
+
+// ToSQL returns the SQL representation of the window frame
+func (f *WindowFrame) ToSQL() (string, []interface{}) {
+	var parts []string
+	var args []interface{}
+
+	parts = append(parts, f.Type)
+
+	if f.Start != nil {
+		startSQL, startArgs := f.Start.ToSQL()
+		parts = append(parts, startSQL)
+		args = append(args, startArgs...)
+	}
+
+	if f.End != nil {
+		endSQL, endArgs := f.End.ToSQL()
+		parts = append(parts, "AND", endSQL)
+		args = append(args, endArgs...)
+	}
+
+	if f.Exclusion != "" {
+		parts = append(parts, f.Exclusion)
+	}
+
+	return strings.Join(parts, " "), args
 }
 
 // FrameBound represents a window frame boundary
 type FrameBound struct {
-	Type      string // UNBOUNDED PRECEDING, PRECEDING, CURRENT ROW, FOLLOWING, UNBOUNDED FOLLOWING
-	Value     int
-	IsCurrent bool
+	Type  string // UNBOUNDED PRECEDING, PRECEDING, CURRENT ROW, FOLLOWING, or UNBOUNDED FOLLOWING
+	Value interface{}
+}
+
+// ToSQL returns the SQL representation of the frame boundary
+func (b *FrameBound) ToSQL() (string, []interface{}) {
+	if b.Value == nil {
+		return b.Type, nil
+	}
+	return fmt.Sprintf("%s %v", b.Type, b.Value), []interface{}{b.Value}
 }
 
 // Condition represents a SQL condition
@@ -190,11 +249,15 @@ func (wd *WindowDefinition) String() string {
 	var parts []string
 
 	if len(wd.PartitionBy) > 0 {
-		parts = append(parts, "PARTITION BY "+strings.Join(wd.PartitionBy, ", "))
+		parts = append(parts, fmt.Sprintf("PARTITION BY %s", strings.Join(wd.PartitionBy, ", ")))
 	}
 
-	if wd.OrderBy != nil {
-		parts = append(parts, "ORDER BY "+wd.OrderBy.String())
+	if len(wd.OrderBy) > 0 {
+		orderParts := make([]string, len(wd.OrderBy))
+		for i, field := range wd.OrderBy {
+			orderParts[i] = fmt.Sprintf("%s %s", field.Field, field.Direction)
+		}
+		parts = append(parts, fmt.Sprintf("ORDER BY %s", strings.Join(orderParts, ", ")))
 	}
 
 	if wd.Frame != nil {
@@ -207,7 +270,7 @@ func (wd *WindowDefinition) String() string {
 // String returns the SQL representation of the window frame
 func (wf *WindowFrame) String() string {
 	var parts []string
-	parts = append(parts, wf.Mode)
+	parts = append(parts, wf.Type)
 
 	if wf.Start != nil {
 		parts = append(parts, "BETWEEN "+wf.Start.String())
@@ -227,22 +290,10 @@ func (wf *WindowFrame) String() string {
 
 // String returns the SQL representation of the frame bound
 func (fb *FrameBound) String() string {
-	if fb.IsCurrent {
-		return "CURRENT ROW"
+	if fb.Value == nil {
+		return fb.Type
 	}
-
-	switch fb.Type {
-	case "UNBOUNDED PRECEDING":
-		return "UNBOUNDED PRECEDING"
-	case "UNBOUNDED FOLLOWING":
-		return "UNBOUNDED FOLLOWING"
-	case "PRECEDING":
-		return fmt.Sprintf("%d PRECEDING", fb.Value)
-	case "FOLLOWING":
-		return fmt.Sprintf("%d FOLLOWING", fb.Value)
-	default:
-		return "CURRENT ROW"
-	}
+	return fmt.Sprintf("%s %v", fb.Type, fb.Value)
 }
 
 // String returns the SQL representation of the ORDER BY clause

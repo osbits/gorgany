@@ -4,6 +4,15 @@ import (
 	"context"
 )
 
+// IDataSource defines the interface for database connections
+type IDataSource interface {
+	// NewSession creates a new database session
+	NewSession() (ISession, error)
+
+	// Close closes the database connection
+	Close() error
+}
+
 // IQueryExecutor handles the execution of queries
 type IQueryExecutor interface {
 	Exec(ctx context.Context, q *Query) error
@@ -19,38 +28,63 @@ type IQueryExecutor interface {
 	CountRaw(ctx context.Context, sql string, args ...interface{}) (int64, error)
 }
 
+// ISession defines the interface for database sessions
+type ISession interface {
+	// Executor returns the query executor for this session
+	Executor() IQueryExecutor
+
+	// Query creates a new query builder
+	Query() IQueryBuilder
+
+	// Transaction executes the provided function within a transaction
+	Transaction(ctx context.Context, fn func(IDBTransaction) error) error
+
+	// Close closes the session
+	Close() error
+}
+
+// IDBTransaction defines the interface for database transactions
+type IDBTransaction interface {
+	// Query creates a new query builder
+	IQueryExecutor
+	IQueryBuilder
+	Query() IQueryBuilder
+}
+
 // SQLDialect handles SQL formatting for a specific database
 type SQLDialect interface {
 	// FormatSelect formats the SELECT clause
-	FormatSelect(fields []string, distinct bool, distinctOn []string) string
+	FormatSelect(fields []string, distinct bool, distinctOn []string) (string, []any)
 	// FormatFrom formats the FROM clause
-	FormatFrom(table string, alias string) string
+	FormatFrom(table string, alias string) (string, []any)
 	// FormatJoin formats a JOIN clause
-	FormatJoin(join *JoinClause) string
+	FormatJoin(join *JoinClause) (string, []any)
 	// FormatWhere formats the WHERE clause
-	FormatWhere(condition Condition) string
+	FormatWhere(condition *WhereClause) (string, []any)
 	// FormatOrderBy formats the ORDER BY clause
-	FormatOrderBy(field string, direction string) string
+	FormatOrderBy(field string, direction string) (string, []any)
 	// FormatGroupBy formats the GROUP BY clause
-	FormatGroupBy(fields []string) string
+	FormatGroupBy(fields []string) (string, []any)
 	// FormatHaving formats the HAVING clause
-	FormatHaving(condition Condition) string
+	FormatHaving(condition *HavingClause) (string, []any)
 	// FormatLimit formats the LIMIT clause
-	FormatLimit(limit int) string
+	FormatLimit(limit int) (string, []any)
 	// FormatOffset formats the OFFSET clause
-	FormatOffset(offset int) string
+	FormatOffset(offset int) (string, []any)
 	// FormatCTE formats a Common Table Expression
-	FormatCTE(name string, query *Query) string
+	FormatCTE(name string, query *Query) (string, []any)
 	// FormatUnion formats a UNION clause
-	FormatUnion(query *Query, all bool) string
+	FormatUnion(query *Query, all bool) (string, []any)
 	// FormatWindow formats a window function definition
-	FormatWindow(name string, definition *WindowDefinition) string
+	FormatWindow(name string, definition *WindowDefinition) (string, []any)
 	// FormatSubquery formats a subquery
-	FormatSubquery(query *Query, alias string) string
+	FormatSubquery(query *Query, alias string) (string, []any)
 	// FormatDistinctOn formats a DISTINCT ON clause
-	FormatDistinctOn(fields []string) string
+	FormatDistinctOn(fields []string) (string, []any)
 	// FormatReturning formats a RETURNING clause
-	FormatReturning(fields []string) string
+	FormatReturning(fields []string) (string, []any)
+
+	FormatQuery(query *Query) (string, []interface{})
 }
 
 // IQueryBuilder defines the interface for building database queries
@@ -116,37 +150,5 @@ type IQueryBuilder interface {
 
 	// Query finalization
 	Build() *Query
-	ToSQL() string
-}
-
-// IDBTransaction defines the interface for database transactions
-type IDBTransaction interface {
-	// Query creates a new query builder
-	IQueryExecutor
-	IQueryBuilder
-	Query() IQueryBuilder
-}
-
-// ISession defines the interface for database sessions
-type ISession interface {
-	// Executor returns the query executor for this session
-	Executor() IQueryExecutor
-
-	// Query creates a new query builder
-	Query() IQueryBuilder
-
-	// Transaction executes the provided function within a transaction
-	Transaction(ctx context.Context, fn func(IDBTransaction) error) error
-
-	// Close closes the session
-	Close() error
-}
-
-// IDataSource defines the interface for database connections
-type IDataSource interface {
-	// NewSession creates a new database session
-	NewSession() (ISession, error)
-
-	// Close closes the database connection
-	Close() error
+	ToSQL() (string, []any)
 }

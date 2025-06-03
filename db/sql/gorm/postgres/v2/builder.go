@@ -1,15 +1,13 @@
 package v2
 
 import (
-	"strings"
-
 	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
 )
 
 // Builder implements the QueryBuilder interface
 type Builder struct {
 	query   *dbCore.Query
-	dialect *PostgresDialect
+	dialect dbCore.SQLDialect
 }
 
 // NewBuilder creates a new query builder
@@ -17,6 +15,18 @@ func NewBuilder() *Builder {
 	return &Builder{
 		query:   &dbCore.Query{},
 		dialect: &PostgresDialect{},
+	}
+}
+
+type Config struct {
+	Dialect dbCore.SQLDialect
+}
+
+// NewBuilderWithConfig creates a new query builder with v2.Config
+func NewBuilderWithConfig(config Config) *Builder {
+	return &Builder{
+		query:   &dbCore.Query{},
+		dialect: config.Dialect,
 	}
 }
 
@@ -260,87 +270,9 @@ func (b *Builder) Returning(fields ...string) dbCore.IQueryBuilder {
 	return b
 }
 
-// ToSQL converts the query to SQL
-func (b *Builder) ToSQL() string {
-	var parts []string
-
-	// Add CTEs if any
-	if len(b.query.CTEs) > 0 {
-		cteParts := make([]string, len(b.query.CTEs))
-		for i, cte := range b.query.CTEs {
-			cteParts[i] = b.dialect.FormatCTE(cte.Name, cte.Query)
-		}
-		parts = append(parts, "WITH "+strings.Join(cteParts, ", "))
-	}
-
-	// Add SELECT clause
-	if b.query.Select != nil {
-		parts = append(parts, b.dialect.FormatSelect(
-			b.query.Select.Fields,
-			b.query.Select.Distinct,
-			b.query.Select.DistinctOn,
-		))
-	}
-
-	// Add FROM clause
-	if b.query.From != nil {
-		parts = append(parts, b.dialect.FormatFrom(b.query.From.Table, b.query.From.Alias))
-	}
-
-	// Add JOINs
-	for _, join := range b.query.Joins {
-		parts = append(parts, b.dialect.FormatJoin(join))
-	}
-
-	// Add WHERE clause
-	if b.query.Where != nil {
-		whereSQL := b.dialect.FormatWhere(b.query.Where)
-		if whereSQL != "" {
-			parts = append(parts, whereSQL)
-		}
-	}
-
-	// Add GROUP BY clause
-	if b.query.GroupBy != nil {
-		parts = append(parts, b.dialect.FormatGroupBy(b.query.GroupBy.Fields))
-	}
-
-	// Add HAVING clause
-	if b.query.Having != nil {
-		havingSQL := b.dialect.FormatHaving(b.query.Having)
-		if havingSQL != "" {
-			parts = append(parts, havingSQL)
-		}
-	}
-
-	// Add ORDER BY clause
-	if b.query.OrderBy != nil {
-		for _, field := range b.query.OrderBy.Fields {
-			parts = append(parts, b.dialect.FormatOrderBy(field.Field, field.Direction))
-		}
-	}
-
-	// Add LIMIT clause
-	if b.query.Limit != nil {
-		parts = append(parts, b.dialect.FormatLimit(*b.query.Limit))
-	}
-
-	// Add OFFSET clause
-	if b.query.Offset != nil {
-		parts = append(parts, b.dialect.FormatOffset(*b.query.Offset))
-	}
-
-	// Add UNION clauses
-	for _, union := range b.query.Unions {
-		parts = append(parts, b.dialect.FormatUnion(union.Query, union.All))
-	}
-
-	// Add RETURNING clause
-	if len(b.query.Returning) > 0 {
-		parts = append(parts, b.dialect.FormatReturning(b.query.Returning))
-	}
-
-	return strings.Join(parts, " ")
+// ToSQL converts the query to SQL and returns both the SQL string and arguments
+func (b *Builder) ToSQL() (string, []interface{}) {
+	return b.dialect.FormatQuery(b.query)
 }
 
 // Condition helper methods

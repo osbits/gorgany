@@ -159,35 +159,50 @@ func TestBuilder_ToSQL(t *testing.T) {
 	tests := []struct {
 		name     string
 		builder  func() *Builder
-		expected string
+		expected struct {
+			sql  string
+			args []interface{}
+		}
 	}{
 		{
-			name: "simple select",
+			name: "Simple SELECT",
 			builder: func() *Builder {
 				b := NewBuilder()
 				b.Select("id", "name")
 				b.From("users")
 				return b
 			},
-			expected: "SELECT id, name FROM users",
+			expected: struct {
+				sql  string
+				args []interface{}
+			}{
+				sql:  "SELECT id, name FROM users",
+				args: nil,
+			},
 		},
 		{
-			name: "select with where",
+			name: "SELECT with WHERE condition",
 			builder: func() *Builder {
 				b := NewBuilder()
 				b.Select("id", "name")
 				b.From("users")
 				b.Where(&dbCore.BinaryCondition{
-					Left:     "id",
-					Operator: "=",
-					Right:    1,
+					Left:     "age",
+					Operator: ">",
+					Right:    18,
 				})
 				return b
 			},
-			expected: "SELECT id, name FROM users WHERE id = ?",
+			expected: struct {
+				sql  string
+				args []interface{}
+			}{
+				sql:  "SELECT id, name FROM users WHERE age > ?",
+				args: []interface{}{18},
+			},
 		},
 		{
-			name: "select with join",
+			name: "SELECT with JOIN and conditions",
 			builder: func() *Builder {
 				b := NewBuilder()
 				b.Select("users.id", "users.name", "orders.id")
@@ -195,17 +210,28 @@ func TestBuilder_ToSQL(t *testing.T) {
 				b.InnerJoin("orders", &dbCore.RawCondition{
 					SQL: "users.id = orders.user_id",
 				})
+				b.Where(&dbCore.BinaryCondition{
+					Left:     "users.status",
+					Operator: "=",
+					Right:    "active",
+				})
 				return b
 			},
-			expected: "SELECT users.id, users.name, orders.id FROM users INNER JOIN orders ON users.id = orders.user_id",
+			expected: struct {
+				sql  string
+				args []interface{}
+			}{
+				sql:  "SELECT users.id, users.name, orders.id FROM users INNER JOIN orders ON users.id = orders.user_id WHERE users.status = ?",
+				args: []interface{}{"active"},
+			},
 		},
 		{
-			name: "select with group by and having",
+			name: "SELECT with GROUP BY and HAVING",
 			builder: func() *Builder {
 				b := NewBuilder()
-				b.Select("status", "COUNT(*)")
+				b.Select("user_id", "COUNT(*) as order_count")
 				b.From("orders")
-				b.GroupBy("status")
+				b.GroupBy("user_id")
 				b.Having(&dbCore.BinaryCondition{
 					Left:     "COUNT(*)",
 					Operator: ">",
@@ -213,15 +239,121 @@ func TestBuilder_ToSQL(t *testing.T) {
 				})
 				return b
 			},
-			expected: "SELECT status, COUNT(*) FROM orders GROUP BY status HAVING COUNT(*) > ?",
+			expected: struct {
+				sql  string
+				args []interface{}
+			}{
+				sql:  "SELECT user_id, COUNT(*) as order_count FROM orders GROUP BY user_id HAVING COUNT(*) > ?",
+				args: []interface{}{5},
+			},
+		},
+		{
+			name: "SELECT with IN condition",
+			builder: func() *Builder {
+				b := NewBuilder()
+				b.Select("id", "name")
+				b.From("users")
+				b.Where(&dbCore.InCondition{
+					Field:  "status",
+					Values: []interface{}{"active", "pending"},
+				})
+				return b
+			},
+			expected: struct {
+				sql  string
+				args []interface{}
+			}{
+				sql:  "SELECT id, name FROM users WHERE status IN (?, ?)",
+				args: []interface{}{"active", "pending"},
+			},
+		},
+		{
+			name: "SELECT with BETWEEN condition",
+			builder: func() *Builder {
+				b := NewBuilder()
+				b.Select("id", "name")
+				b.From("users")
+				b.Where(&dbCore.BetweenCondition{
+					Field: "age",
+					Lower: 18,
+					Upper: 65,
+				})
+				return b
+			},
+			expected: struct {
+				sql  string
+				args []interface{}
+			}{
+				sql:  "SELECT id, name FROM users WHERE age BETWEEN ? AND ?",
+				args: []interface{}{18, 65},
+			},
+		},
+		{
+			name: "SELECT with subquery",
+			builder: func() *Builder {
+				subquery := NewBuilder().
+					Select("user_id").
+					From("orders").
+					Where(&dbCore.BinaryCondition{
+						Left:     "status",
+						Operator: "=",
+						Right:    "completed",
+					}).
+					Build()
+
+				b := NewBuilder()
+				b.Select("id", "name")
+				b.From("users")
+				b.Where(&dbCore.InCondition{
+					Field:      "id",
+					IsSubquery: true,
+					Subquery:   subquery,
+				})
+				return b
+			},
+			expected: struct {
+				sql  string
+				args []interface{}
+			}{
+				sql:  "SELECT id, name FROM users WHERE id IN (SELECT user_id FROM orders WHERE status = ?)",
+				args: []interface{}{"completed"},
+			},
+		},
+		{
+			name: "SELECT with CTE",
+			builder: func() *Builder {
+				cteQuery := NewBuilder().
+					Select("user_id", "COUNT(*) as order_count").
+					From("orders").
+					GroupBy("user_id").
+					Build()
+
+				b := NewBuilder()
+				b.WithCTE("user_orders", cteQuery)
+				b.Select("u.id", "u.name", "uo.order_count")
+				b.From("users u")
+				b.InnerJoin("user_orders uo", &dbCore.RawCondition{
+					SQL: "u.id = uo.user_id",
+				})
+				return b
+			},
+			expected: struct {
+				sql  string
+				args []interface{}
+			}{
+				sql:  "WITH user_orders AS (SELECT user_id, COUNT(*) as order_count FROM orders GROUP BY user_id) SELECT u.id, u.name, uo.order_count FROM users u INNER JOIN user_orders uo ON u.id = uo.user_id",
+				args: nil,
+			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			builder := tt.builder()
-			sql := builder.ToSQL()
-			assert.Equal(t, tt.expected, sql)
+			sql, args := builder.ToSQL()
+
+			assert.Equal(t, tt.expected.sql, sql)
+			assert.Equal(t, tt.expected.args, args)
 		})
 	}
 }
@@ -347,8 +479,9 @@ func TestBuilder_RawSQL(t *testing.T) {
 		SQL: "age > 18 AND status = 'active'",
 	})
 
-	sql := builder.ToSQL()
+	sql, args := builder.ToSQL()
 	assert.Equal(t, "SELECT id, name FROM users WHERE age > 18 AND status = 'active'", sql)
+	assert.Nil(t, args)
 }
 
 func TestBuilder_ComplexSubquery(t *testing.T) {
@@ -393,30 +526,10 @@ func TestBuilder_ComplexSubquery(t *testing.T) {
 		Subquery:   subquery,
 	})
 
-	sql := builder.ToSQL()
+	sql, args := builder.ToSQL()
 	expected := "SELECT id, name, email FROM users WHERE id IN (SELECT user_id FROM orders WHERE status = ? GROUP BY user_id HAVING COUNT(*) > ?)"
 	assert.Equal(t, expected, sql)
-
-	// Verify that the query has the correct arguments
-	query := builder.Build()
-	assert.NotNil(t, query.Where)
-	assert.Len(t, query.Where.Conditions, 1)
-
-	inCondition, ok := query.Where.Conditions[0].(*dbCore.InCondition)
-	assert.True(t, ok)
-	assert.NotNil(t, inCondition.Subquery)
-
-	// Verify subquery conditions
-	assert.Len(t, inCondition.Subquery.Where.Conditions, 1)
-	binaryCondition, ok := inCondition.Subquery.Where.Conditions[0].(*dbCore.BinaryCondition)
-	assert.True(t, ok)
-	assert.Equal(t, "active", binaryCondition.Right)
-
-	// Verify HAVING condition
-	assert.NotNil(t, inCondition.Subquery.Having)
-	havingBinaryCondition, ok := inCondition.Subquery.Having.Condition.(*dbCore.BinaryCondition)
-	assert.True(t, ok)
-	assert.Equal(t, 5, havingBinaryCondition.Right)
+	assert.Equal(t, []interface{}{"active", 5}, args)
 }
 
 func TestBuilder_NestedSubqueries(t *testing.T) {
@@ -471,9 +584,10 @@ func TestBuilder_NestedSubqueries(t *testing.T) {
 		Subquery:   middleSubquery,
 	})
 
-	sql := builder.ToSQL()
+	sql, args := builder.ToSQL()
 	expected := "SELECT id, name FROM users WHERE id IN (SELECT id FROM orders WHERE id IN (SELECT product_id FROM order_items WHERE quantity > ?))"
 	assert.Equal(t, expected, sql)
+	assert.Equal(t, []interface{}{10}, args)
 }
 
 func TestBuilder_RawWithParameters(t *testing.T) {
@@ -485,10 +599,9 @@ func TestBuilder_RawWithParameters(t *testing.T) {
 		Args: []interface{}{18, "active"},
 	})
 
-	sql := builder.ToSQL()
-	// Note: In a real implementation, you would need to handle parameter binding
-	// This is just a test to ensure the raw SQL is properly formatted
+	sql, args := builder.ToSQL()
 	assert.Equal(t, "SELECT id, name FROM users WHERE age > ? AND status = ?", sql)
+	assert.Equal(t, []interface{}{18, "active"}, args)
 }
 
 func TestBuilder_ComplexRawCondition(t *testing.T) {
@@ -499,9 +612,10 @@ func TestBuilder_ComplexRawCondition(t *testing.T) {
 		SQL: "EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id AND orders.status = 'active') AND (age > 18 OR (age = 18 AND parent_consent = true))",
 	})
 
-	sql := builder.ToSQL()
+	sql, args := builder.ToSQL()
 	expected := "SELECT id, name, email FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id AND orders.status = 'active') AND (age > 18 OR (age = 18 AND parent_consent = true))"
 	assert.Equal(t, expected, sql)
+	assert.Nil(t, args)
 }
 
 func TestBuilder_ColumnComparison(t *testing.T) {
@@ -514,8 +628,9 @@ func TestBuilder_ColumnComparison(t *testing.T) {
 		Operator: ">",
 		Right:    18,
 	})
-	sql := builder.ToSQL()
+	sql, args := builder.ToSQL()
 	assert.Equal(t, "SELECT id, name FROM users WHERE age > ?", sql)
+	assert.Equal(t, []interface{}{18}, args)
 
 	// Test raw condition (column to column)
 	builder = NewBuilder()
@@ -524,8 +639,9 @@ func TestBuilder_ColumnComparison(t *testing.T) {
 	builder.Where(&dbCore.RawCondition{
 		SQL: "age > min_age",
 	})
-	sql = builder.ToSQL()
+	sql, args = builder.ToSQL()
 	assert.Equal(t, "SELECT id, name FROM users WHERE age > min_age", sql)
+	assert.Nil(t, args)
 
 	// Test complex raw condition with multiple column comparisons
 	builder = NewBuilder()
@@ -534,6 +650,7 @@ func TestBuilder_ColumnComparison(t *testing.T) {
 	builder.Where(&dbCore.RawCondition{
 		SQL: "age > min_age AND (max_age IS NULL OR age < max_age)",
 	})
-	sql = builder.ToSQL()
+	sql, args = builder.ToSQL()
 	assert.Equal(t, "SELECT id, name FROM users WHERE age > min_age AND (max_age IS NULL OR age < max_age)", sql)
+	assert.Nil(t, args)
 }
