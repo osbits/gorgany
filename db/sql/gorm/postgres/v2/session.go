@@ -2,8 +2,9 @@ package v2
 
 import (
 	"context"
-	"git.qix.sx/gorgany/gorgany.git/db/sql/core"
 	"sync"
+
+	"git.qix.sx/gorgany/gorgany.git/db/sql/core"
 
 	"gorm.io/gorm"
 )

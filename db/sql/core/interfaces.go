@@ -106,6 +106,28 @@ type IQueryBuilder interface {
 	// Window function helper methods
 	Over(name string) string
 
+	// Condition helper methods
+	Eq(field interface{}, value interface{}) IQueryBuilder
+	Neq(field interface{}, value interface{}) IQueryBuilder
+	Gt(field interface{}, value interface{}) IQueryBuilder
+	Gte(field interface{}, value interface{}) IQueryBuilder
+	Lt(field interface{}, value interface{}) IQueryBuilder
+	Lte(field interface{}, value interface{}) IQueryBuilder
+	In(field interface{}, values ...interface{}) IQueryBuilder
+	NotIn(field interface{}, values ...interface{}) IQueryBuilder
+	InSubquery(field interface{}, subquery *Query) IQueryBuilder
+	NotInSubquery(field interface{}, subquery *Query) IQueryBuilder
+	Between(field interface{}, lower interface{}, upper interface{}) IQueryBuilder
+	NotBetween(field interface{}, lower interface{}, upper interface{}) IQueryBuilder
+	Exists(subquery *Query) IQueryBuilder
+	NotExists(subquery *Query) IQueryBuilder
+	Like(field interface{}, pattern interface{}) IQueryBuilder
+	NotLike(field interface{}, pattern interface{}) IQueryBuilder
+	LikeEscape(field interface{}, pattern interface{}, escape string) IQueryBuilder
+	NotLikeEscape(field interface{}, pattern interface{}, escape string) IQueryBuilder
+	IsNull(field interface{}) IQueryBuilder
+	IsNotNull(field interface{}) IQueryBuilder
+
 	// Query finalization
 	Build() *Query
 	ToSQL() string

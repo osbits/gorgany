@@ -1,8 +1,9 @@
 package v2
 
 import (
-	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
 	"strings"
+
+	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
 )
 
 // Builder implements the QueryBuilder interface
@@ -340,4 +341,160 @@ func (b *Builder) ToSQL() string {
 	}
 
 	return strings.Join(parts, " ")
+}
+
+// Condition helper methods
+func (b *Builder) Eq(field interface{}, value interface{}) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.BinaryCondition{
+		Left:     field,
+		Operator: "=",
+		Right:    value,
+	})
+}
+
+func (b *Builder) Neq(field interface{}, value interface{}) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.BinaryCondition{
+		Left:     field,
+		Operator: "!=",
+		Right:    value,
+	})
+}
+
+func (b *Builder) Gt(field interface{}, value interface{}) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.BinaryCondition{
+		Left:     field,
+		Operator: ">",
+		Right:    value,
+	})
+}
+
+func (b *Builder) Gte(field interface{}, value interface{}) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.BinaryCondition{
+		Left:     field,
+		Operator: ">=",
+		Right:    value,
+	})
+}
+
+func (b *Builder) Lt(field interface{}, value interface{}) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.BinaryCondition{
+		Left:     field,
+		Operator: "<",
+		Right:    value,
+	})
+}
+
+func (b *Builder) Lte(field interface{}, value interface{}) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.BinaryCondition{
+		Left:     field,
+		Operator: "<=",
+		Right:    value,
+	})
+}
+
+func (b *Builder) In(field interface{}, values ...interface{}) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.InCondition{
+		Field:  field,
+		Values: values,
+	})
+}
+
+func (b *Builder) NotIn(field interface{}, values ...interface{}) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.InCondition{
+		Field:  field,
+		Values: values,
+		Not:    true,
+	})
+}
+
+func (b *Builder) InSubquery(field interface{}, subquery *dbCore.Query) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.InCondition{
+		Field:      field,
+		IsSubquery: true,
+		Subquery:   subquery,
+	})
+}
+
+func (b *Builder) NotInSubquery(field interface{}, subquery *dbCore.Query) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.InCondition{
+		Field:      field,
+		IsSubquery: true,
+		Subquery:   subquery,
+		Not:        true,
+	})
+}
+
+func (b *Builder) Between(field interface{}, lower interface{}, upper interface{}) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.BetweenCondition{
+		Field: field,
+		Lower: lower,
+		Upper: upper,
+	})
+}
+
+func (b *Builder) NotBetween(field interface{}, lower interface{}, upper interface{}) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.BetweenCondition{
+		Field: field,
+		Lower: lower,
+		Upper: upper,
+		Not:   true,
+	})
+}
+
+func (b *Builder) Exists(subquery *dbCore.Query) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.ExistsCondition{
+		Query: subquery,
+	})
+}
+
+func (b *Builder) NotExists(subquery *dbCore.Query) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.ExistsCondition{
+		Query: subquery,
+		Not:   true,
+	})
+}
+
+func (b *Builder) Like(field interface{}, pattern interface{}) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.LikeCondition{
+		Field:   field,
+		Pattern: pattern,
+	})
+}
+
+func (b *Builder) NotLike(field interface{}, pattern interface{}) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.LikeCondition{
+		Field:   field,
+		Pattern: pattern,
+		Not:     true,
+	})
+}
+
+func (b *Builder) LikeEscape(field interface{}, pattern interface{}, escape string) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.LikeCondition{
+		Field:   field,
+		Pattern: pattern,
+		Escape:  escape,
+	})
+}
+
+func (b *Builder) NotLikeEscape(field interface{}, pattern interface{}, escape string) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.LikeCondition{
+		Field:   field,
+		Pattern: pattern,
+		Escape:  escape,
+		Not:     true,
+	})
+}
+
+func (b *Builder) IsNull(field interface{}) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.IsNullCondition{
+		Field: field,
+	})
+}
+
+func (b *Builder) IsNotNull(field interface{}) dbCore.IQueryBuilder {
+	return b.Where(&dbCore.IsNullCondition{
+		Field: field,
+		Not:   true,
+	})
 }
