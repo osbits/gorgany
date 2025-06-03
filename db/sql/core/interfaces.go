@@ -4,32 +4,18 @@ import (
 	"context"
 )
 
-// DatabaseFeatures represents database-specific capabilities
-type DatabaseFeatures interface {
-	SupportsJoinType(joinType string) bool
-	SupportsWindowFunctions() bool
-	SupportsCTE() bool
-	SupportsUnion() bool
-	SupportsDistinctOn() bool
-	SupportsReturning() bool
-	SupportsJSONOperations() bool
-	SupportsArrayOperations() bool
-	SupportsFullTextSearch() bool
-}
-
-// QueryExecutor handles the execution of queries
+// IQueryExecutor handles the execution of queries
 type IQueryExecutor interface {
-	// Execute executes a query without returning results
-	Execute(ctx context.Context, query *Query) error
-	// ExecuteWithResult executes a query and stores the results in the provided destination
-	ExecuteWithResult(ctx context.Context, query *Query, result interface{}) error
-	// Count executes a COUNT query
-	Count(ctx context.Context, query *Query) (int64, error)
-	// ExecuteRaw executes a raw SQL query without returning results
-	ExecuteRaw(ctx context.Context, sql string, args ...interface{}) error
-	// ExecuteRawWithResult executes a raw SQL query and stores the results in the provided destination
-	ExecuteRawWithResult(ctx context.Context, result interface{}, sql string, args ...interface{}) error
-	// CountRaw executes a raw SQL COUNT query
+	Exec(ctx context.Context, q *Query) error
+
+	QueryOne(ctx context.Context, q *Query, dest interface{}) error
+
+	QueryList(ctx context.Context, q *Query, dest interface{}) error
+
+	Count(ctx context.Context, q *Query) (int64, error)
+
+	ExecRaw(ctx context.Context, sql string, args ...interface{}) error
+	QueryRaw(ctx context.Context, dest interface{}, sql string, args ...interface{}) error
 	CountRaw(ctx context.Context, sql string, args ...interface{}) (int64, error)
 }
 

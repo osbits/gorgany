@@ -20,14 +20,20 @@ func NewExecutor(db *gorm.DB) *Executor {
 	return &Executor{db: db}
 }
 
-// Execute executes a query without returning results
-func (e *Executor) Execute(ctx context.Context, query *core.Query) error {
+// Exec executes a query without returning results
+func (e *Executor) Exec(ctx context.Context, query *core.Query) error {
 	gormQuery := e.buildGormQuery(query)
 	return gormQuery.Exec("").Error
 }
 
-// ExecuteWithResult executes a query and stores the results in the provided destination
-func (e *Executor) ExecuteWithResult(ctx context.Context, query *core.Query, result interface{}) error {
+// QueryOne executes a query and stores the result in the provided destination
+func (e *Executor) QueryOne(ctx context.Context, query *core.Query, result interface{}) error {
+	gormQuery := e.buildGormQuery(query)
+	return gormQuery.First(result).Error
+}
+
+// QueryList executes a query and stores the results in the provided destination
+func (e *Executor) QueryList(ctx context.Context, query *core.Query, result interface{}) error {
 	gormQuery := e.buildGormQuery(query)
 	return gormQuery.Find(result).Error
 }
@@ -40,13 +46,13 @@ func (e *Executor) Count(ctx context.Context, query *core.Query) (int64, error) 
 	return count, err
 }
 
-// ExecuteRaw executes a raw SQL query without returning results
-func (e *Executor) ExecuteRaw(ctx context.Context, sql string, args ...interface{}) error {
+// ExecRaw executes a raw SQL query without returning results
+func (e *Executor) ExecRaw(ctx context.Context, sql string, args ...interface{}) error {
 	return e.db.Exec(sql, args...).Error
 }
 
-// ExecuteRawWithResult executes a raw SQL query and stores the results in the provided destination
-func (e *Executor) ExecuteRawWithResult(ctx context.Context, result interface{}, sql string, args ...interface{}) error {
+// QueryRaw executes a raw SQL query and stores the results in the provided destination
+func (e *Executor) QueryRaw(ctx context.Context, result interface{}, sql string, args ...interface{}) error {
 	return e.db.Raw(sql, args...).Scan(result).Error
 }
 
