@@ -3,10 +3,12 @@ package service
 import (
 	"errors"
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"reflect"
+	"strings"
 	"sync"
 	"unsafe"
+
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 )
 
 // binding holds resolver and cached instance for singletons
@@ -15,7 +17,7 @@ type binding struct {
 	concrete    interface{}
 	isSingleton bool
 
-	initOnce sync.Once
+	initOnce *sync.Once
 }
 
 // Container is the IoC container implementation
@@ -23,14 +25,14 @@ type Container struct {
 	mu          sync.RWMutex
 	bindings    map[reflect.Type]map[string]*binding
 	initMu      sync.Mutex
-	initialized map[interface{}]bool // Change to interface{} instead of uintptr
+	initOnceMap map[interface{}]*sync.Once
 }
 
 // NewContainer creates a new Container
 func NewContainer() *Container {
 	return &Container{
 		bindings:    make(map[reflect.Type]map[string]*binding),
-		initialized: make(map[interface{}]bool),
+		initOnceMap: make(map[interface{}]*sync.Once),
 	}
 }
 
@@ -41,7 +43,7 @@ func (c *Container) Reset() {
 	c.bindings = make(map[reflect.Type]map[string]*binding)
 	c.initMu.Lock()
 	defer c.initMu.Unlock()
-	c.initialized = make(map[interface{}]bool)
+	c.initOnceMap = make(map[interface{}]*sync.Once)
 }
 
 // Public registration methods
@@ -169,6 +171,7 @@ func (c *Container) namedResolveInternal(abstraction interface{}, name string) e
 }
 
 func (c *Container) resolve(t reflect.Type, name string, chain map[reflect.Type]interface{}) (interface{}, error) {
+	// First try direct type resolution
 	c.mu.RLock()
 	if m, ok := c.bindings[t]; ok {
 		if b, found := m[name]; found {
@@ -181,23 +184,33 @@ func (c *Container) resolve(t reflect.Type, name string, chain map[reflect.Type]
 		}
 	}
 	c.mu.RUnlock()
+
 	// interface: find concrete binding that implements t
 	if t.Kind() == reflect.Interface {
 		c.mu.RLock()
+		bindings := make([]*binding, 0)
+		// Collect all potential bindings first to minimize lock time
 		for keyType, m := range c.bindings {
-			if keyType.Implements(t) {
+			if keyType.Implements(t) || (keyType.Kind() == reflect.Ptr && keyType.Elem().Implements(t)) {
 				if b, found := m[name]; found {
-					c.mu.RUnlock()
-					return c.getInstance(b, chain)
+					bindings = append(bindings, b)
 				}
 				if b, found := m[""]; found {
-					c.mu.RUnlock()
-					return c.getInstance(b, chain)
+					bindings = append(bindings, b)
 				}
 			}
 		}
 		c.mu.RUnlock()
+
+		// Try to get instance from collected bindings
+		for _, b := range bindings {
+			inst, err := c.getInstance(b, chain)
+			if err == nil {
+				return inst, nil
+			}
+		}
 	}
+
 	// pointer-to-struct auto-register
 	if t.Kind() == reflect.Ptr && t.Elem().Kind() == reflect.Struct {
 		c.mu.Lock()
@@ -320,13 +333,26 @@ func (c *Container) fill(target interface{}, chain map[reflect.Type]interface{})
 					return err
 				}
 			}
-
 			continue
 		}
 
-		if tag, ok := field.Tag.Lookup("container"); !ok || tag != "inject" {
+		// Parse container tag
+		tag, ok := field.Tag.Lookup("container")
+		if !ok {
 			continue
 		}
+
+		// Parse tag options
+		var injectName string
+		if tag != "inject" {
+			// Check for named injection
+			if strings.HasPrefix(tag, "inject:") {
+				injectName = strings.TrimPrefix(tag, "inject:")
+			} else {
+				continue
+			}
+		}
+
 		fv := s.Field(i)
 		ftype := field.Type
 		var keyType reflect.Type
@@ -341,7 +367,7 @@ func (c *Container) fill(target interface{}, chain map[reflect.Type]interface{})
 			continue
 		}
 
-		inst, err := c.resolve(keyType, "", chain)
+		inst, err := c.resolve(keyType, injectName, chain)
 		if err != nil {
 			return err
 		}
@@ -376,33 +402,17 @@ func (c *Container) fill(target interface{}, chain map[reflect.Type]interface{})
 	}
 
 	if initObj, ok := target.(core.Initiator); ok {
-		typ := reflect.TypeOf(target)
-		c.mu.RLock()
-		typeBindings := c.bindings[typ]
-		c.mu.RUnlock()
-		if typeBindings != nil {
-			for _, b := range typeBindings {
-				b.initOnce.Do(func() {
-					initObj.Init()
-				})
-				return nil
-			}
+		c.initMu.Lock()
+		initOnce, exists := c.initOnceMap[target]
+		if !exists {
+			initOnce = &sync.Once{}
+			c.initOnceMap[target] = initOnce
 		}
+		c.initMu.Unlock()
 
-		for t, bindNames := range c.bindings {
-			if t.Kind() != reflect.Interface {
-				continue
-			}
-			for _, b := range bindNames {
-				if typ.Implements(t) {
-					b.initOnce.Do(func() {
-						initObj.Init()
-					})
-					return nil
-				}
-			}
-		}
-		initObj.Init()
+		initOnce.Do(func() {
+			initObj.Init()
+		})
 	}
 
 	return nil

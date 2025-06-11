@@ -41,10 +41,10 @@ func (p *RouteProvider) Register(c core.IContainer) {
 	c.SingletonLazy(func() core.Router {
 		return &router.ChiRouterAdapter{}
 	})
-	//
-	//c.SingletonLazy(func(r core.Router) core.RouteLinker {
-	//	return r
-	//})
+
+	c.SingletonLazy(func(r core.Router) core.RouteLinker {
+		return r
+	})
 }
 
 func (p *RouteProvider) Boot(c core.IContainer) {
