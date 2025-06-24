@@ -155,8 +155,172 @@ func (d *PostgresDialect) FormatReturning(fields []string) (string, []interface{
 	return fmt.Sprintf("RETURNING %s", strings.Join(fields, ", ")), nil
 }
 
+// FormatQuery converts a query to SQL and returns both the SQL string and arguments
+func (d *PostgresDialect) FormatQuery(q *dbCore.Query) (string, []interface{}) {
+	var sql string
+	var args []interface{}
+
+	// Handle INSERT queries
+	if q.Insert != nil {
+		sql, args = d.formatInsert(q)
+	} else if q.Update != nil {
+		// Handle UPDATE queries
+		sql, args = d.formatUpdate(q)
+	} else if q.Delete != nil {
+		// Handle DELETE queries
+		sql, args = d.formatDelete(q)
+	} else {
+		// Handle SELECT queries (existing code)
+		sql, args = d.formatSelect(q)
+	}
+
+	return sql, args
+}
+
+// formatInsert generates SQL for INSERT queries
+func (d *PostgresDialect) formatInsert(q *dbCore.Query) (string, []interface{}) {
+	var sqlBuilder strings.Builder
+	var args []interface{}
+
+	sqlBuilder.WriteString("INSERT INTO ")
+	sqlBuilder.WriteString(q.Insert.Table)
+
+	// Add columns
+	if len(q.Insert.Columns) > 0 {
+		sqlBuilder.WriteString(" (")
+		sqlBuilder.WriteString(strings.Join(q.Insert.Columns, ", "))
+		sqlBuilder.WriteString(")")
+	}
+
+	// Add values or select
+	if q.Insert.FromQuery != nil {
+		// INSERT ... SELECT ...
+		selectSQL, selectArgs := d.formatSelect(q.Insert.FromQuery)
+		sqlBuilder.WriteString(" ")
+		sqlBuilder.WriteString(selectSQL)
+		args = append(args, selectArgs...)
+	} else if len(q.Insert.Values) > 0 {
+		// INSERT ... VALUES ...
+		sqlBuilder.WriteString(" VALUES ")
+
+		valueSets := make([]string, len(q.Insert.Values))
+		for i, valueSet := range q.Insert.Values {
+			placeholders := make([]string, len(valueSet))
+			for j, value := range valueSet {
+				placeholders[j] = d.Placeholder(len(args) + 1)
+				args = append(args, value)
+			}
+			valueSets[i] = "(" + strings.Join(placeholders, ", ") + ")"
+		}
+
+		sqlBuilder.WriteString(strings.Join(valueSets, ", "))
+	}
+
+	// Add ON CONFLICT clause if specified
+	if q.Insert.OnConflict != nil {
+		sqlBuilder.WriteString(" ON CONFLICT")
+
+		if len(q.Insert.OnConflict.Columns) > 0 {
+			sqlBuilder.WriteString(" (")
+			sqlBuilder.WriteString(strings.Join(q.Insert.OnConflict.Columns, ", "))
+			sqlBuilder.WriteString(")")
+		}
+
+		if q.Insert.OnConflict.Action == "DO NOTHING" {
+			sqlBuilder.WriteString(" DO NOTHING")
+		} else if q.Insert.OnConflict.Action == "DO UPDATE" {
+			sqlBuilder.WriteString(" DO UPDATE SET ")
+
+			updates := make([]string, 0, len(q.Insert.OnConflict.SetValues))
+			for field, value := range q.Insert.OnConflict.SetValues {
+				updates = append(updates, field+" = "+d.Placeholder(len(args)+1))
+				args = append(args, value)
+			}
+
+			sqlBuilder.WriteString(strings.Join(updates, ", "))
+		}
+	}
+
+	// Add RETURNING clause if specified
+	if len(q.Returning) > 0 {
+		sqlBuilder.WriteString(" RETURNING ")
+		sqlBuilder.WriteString(strings.Join(q.Returning, ", "))
+	}
+
+	return sqlBuilder.String(), args
+}
+
+// formatUpdate generates SQL for UPDATE queries
+func (d *PostgresDialect) formatUpdate(q *dbCore.Query) (string, []interface{}) {
+	var sqlBuilder strings.Builder
+	var args []interface{}
+
+	sqlBuilder.WriteString("UPDATE ")
+	sqlBuilder.WriteString(q.Update.Table)
+	sqlBuilder.WriteString(" SET ")
+
+	// Add SET values
+	updates := make([]string, 0, len(q.Update.Values))
+	for field, value := range q.Update.Values {
+		updates = append(updates, field+" = "+d.Placeholder(len(args)+1))
+		args = append(args, value)
+	}
+
+	sqlBuilder.WriteString(strings.Join(updates, ", "))
+
+	// Add WHERE clause if specified
+	if q.Where != nil {
+		whereSQL, whereArgs := q.Where.ToSQL()
+		if whereSQL != "" {
+			sqlBuilder.WriteString(" WHERE ")
+			sqlBuilder.WriteString(whereSQL)
+			args = append(args, whereArgs...)
+		}
+	}
+
+	// Add RETURNING clause if specified
+	if len(q.Returning) > 0 {
+		sqlBuilder.WriteString(" RETURNING ")
+		sqlBuilder.WriteString(strings.Join(q.Returning, ", "))
+	}
+
+	return sqlBuilder.String(), args
+}
+
+// formatDelete generates SQL for DELETE queries
+func (d *PostgresDialect) formatDelete(q *dbCore.Query) (string, []interface{}) {
+	var sqlBuilder strings.Builder
+	var args []interface{}
+
+	sqlBuilder.WriteString("DELETE FROM ")
+	sqlBuilder.WriteString(q.Delete.Table)
+
+	// Add WHERE clause if specified
+	if q.Where != nil {
+		whereSQL, whereArgs := q.Where.ToSQL()
+		if whereSQL != "" {
+			sqlBuilder.WriteString(" WHERE ")
+			sqlBuilder.WriteString(whereSQL)
+			args = append(args, whereArgs...)
+		}
+	}
+
+	// Add RETURNING clause if specified
+	if len(q.Returning) > 0 {
+		sqlBuilder.WriteString(" RETURNING ")
+		sqlBuilder.WriteString(strings.Join(q.Returning, ", "))
+	}
+
+	return sqlBuilder.String(), args
+}
+
+// Placeholder generates a placeholder for prepared statements
+func (d *PostgresDialect) Placeholder(index int) string {
+	return fmt.Sprintf("$%d", index)
+}
+
 // FormatQuery formats a complete query
-func (d *PostgresDialect) FormatQuery(query *dbCore.Query) (string, []interface{}) {
+func (d *PostgresDialect) formatSelect(query *dbCore.Query) (string, []interface{}) {
 	var parts []string
 	var allArgs []interface{}
 
@@ -180,6 +344,8 @@ func (d *PostgresDialect) FormatQuery(query *dbCore.Query) (string, []interface{
 		)
 		parts = append(parts, selectSQL)
 		allArgs = append(allArgs, selectArgs...)
+	} else {
+		parts = append(parts, "SELECT *")
 	}
 
 	// Add FROM clause

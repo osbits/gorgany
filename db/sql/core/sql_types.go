@@ -20,6 +20,9 @@ type Query struct {
 	Unions    []*UnionClause
 	Windows   []*WindowClause
 	Returning []string // For INSERT/UPDATE/DELETE operations
+	Insert    *InsertClause
+	Update    *UpdateClause
+	Delete    *DeleteClause
 }
 
 // SelectClause represents the SELECT part of a query
@@ -35,6 +38,33 @@ type FromClause struct {
 	Alias      string
 	Subquery   *Query
 	IsSubquery bool
+}
+
+// InsertClause represents an INSERT operation
+type InsertClause struct {
+	Table      string
+	Columns    []string
+	Values     [][]interface{}
+	FromQuery  *Query // For INSERT ... SELECT ...
+	OnConflict *OnConflictClause
+}
+
+// UpdateClause represents an UPDATE operation
+type UpdateClause struct {
+	Table  string
+	Values map[string]interface{}
+}
+
+// DeleteClause represents a DELETE operation
+type DeleteClause struct {
+	Table string
+}
+
+// OnConflictClause represents an ON CONFLICT clause for PostgreSQL
+type OnConflictClause struct {
+	Columns   []string
+	Action    string // "DO NOTHING" or "DO UPDATE"
+	SetValues map[string]interface{}
 }
 
 // WhereClause represents the WHERE part of a query

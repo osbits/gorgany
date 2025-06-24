@@ -430,3 +430,105 @@ func (b *Builder) IsNotNull(field interface{}) dbCore.IQueryBuilder {
 		Not:   true,
 	})
 }
+
+// Insert starts building an INSERT query
+func (b *Builder) Insert(table string) dbCore.IQueryBuilder {
+	b.query.Insert = &dbCore.InsertClause{
+		Table: table,
+	}
+	return b
+}
+
+// Columns specifies the columns for an INSERT operation
+func (b *Builder) Columns(columns ...string) dbCore.IQueryBuilder {
+	if b.query.Insert == nil {
+		return b
+	}
+	b.query.Insert.Columns = columns
+	return b
+}
+
+// Values adds a row of values for an INSERT operation
+func (b *Builder) Values(values ...interface{}) dbCore.IQueryBuilder {
+	if b.query.Insert == nil {
+		return b
+	}
+	b.query.Insert.Values = append(b.query.Insert.Values, values)
+	return b
+}
+
+// FromSelect specifies a SELECT query to use as the source for an INSERT operation
+func (b *Builder) FromSelect(query *dbCore.Query) dbCore.IQueryBuilder {
+	if b.query.Insert == nil {
+		return b
+	}
+	b.query.Insert.FromQuery = query
+	return b
+}
+
+// OnConflict starts building an ON CONFLICT clause
+func (b *Builder) OnConflict(columns ...string) dbCore.IQueryBuilder {
+	if b.query.Insert == nil {
+		return b
+	}
+	b.query.Insert.OnConflict = &dbCore.OnConflictClause{
+		Columns: columns,
+	}
+	return b
+}
+
+// DoNothing completes an ON CONFLICT clause with DO NOTHING
+func (b *Builder) DoNothing() dbCore.IQueryBuilder {
+	if b.query.Insert == nil || b.query.Insert.OnConflict == nil {
+		return b
+	}
+	b.query.Insert.OnConflict.Action = "DO NOTHING"
+	return b
+}
+
+// DoUpdate completes an ON CONFLICT clause with DO UPDATE SET
+func (b *Builder) DoUpdate(setValues map[string]interface{}) dbCore.IQueryBuilder {
+	if b.query.Insert == nil || b.query.Insert.OnConflict == nil {
+		return b
+	}
+	b.query.Insert.OnConflict.Action = "DO UPDATE"
+	b.query.Insert.OnConflict.SetValues = setValues
+	return b
+}
+
+// Update starts building an UPDATE query
+func (b *Builder) Update(table string) dbCore.IQueryBuilder {
+	b.query.Update = &dbCore.UpdateClause{
+		Table:  table,
+		Values: make(map[string]interface{}),
+	}
+	return b
+}
+
+// Set adds field=value pairs to an UPDATE operation
+func (b *Builder) Set(field string, value interface{}) dbCore.IQueryBuilder {
+	if b.query.Update == nil {
+		return b
+	}
+	b.query.Update.Values[field] = value
+	return b
+}
+
+// SetMap adds multiple field=value pairs to an UPDATE operation
+func (b *Builder) SetMap(values map[string]interface{}) dbCore.IQueryBuilder {
+	if b.query.Update == nil {
+		return b
+	}
+	for k, v := range values {
+		b.query.Update.Values[k] = v
+	}
+	return b
+}
+
+// Delete starts building a DELETE query
+func (b *Builder) Delete(table string) dbCore.IQueryBuilder {
+	b.query.Delete = &dbCore.DeleteClause{
+		Table: table,
+	}
+	return b
+}

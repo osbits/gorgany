@@ -24,8 +24,29 @@ type IQueryExecutor interface {
 	Count(ctx context.Context, q *Query) (int64, error)
 
 	ExecRaw(ctx context.Context, sql string, args ...interface{}) error
-	QueryRaw(ctx context.Context, dest interface{}, sql string, args ...interface{}) error
+	QueryRaw(ctx context.Context, dest interface{}, sql string, args ...interface{}) QueryResult
 	CountRaw(ctx context.Context, sql string, args ...interface{}) (int64, error)
+}
+
+// QueryResult contains the result of a query operation
+type QueryResult struct {
+	// Error is the error that occurred during the query, if any
+	Error error
+
+	// RowsAffected is the number of rows affected by the query
+	RowsAffected int64
+
+	// Found indicates whether any rows were found by the query
+	Found bool
+}
+
+// QueryResultAware is an interface for objects that need to be aware of query results
+type QueryResultAware interface {
+	// SetQueryResult sets the query result metadata
+	SetQueryResult(result *QueryResult)
+
+	// GetQueryResult gets the query result metadata
+	GetQueryResult() *QueryResult
 }
 
 // ISession defines the interface for database sessions

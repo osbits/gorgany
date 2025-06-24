@@ -52,8 +52,23 @@ func (e *Executor) ExecRaw(ctx context.Context, sql string, args ...interface{})
 }
 
 // QueryRaw executes a raw SQL query and stores the results in the provided destination
-func (e *Executor) QueryRaw(ctx context.Context, result interface{}, sql string, args ...interface{}) error {
-	return e.db.Raw(sql, args...).Scan(result).Error
+func (e *Executor) QueryRaw(ctx context.Context, result interface{}, sql string, args ...interface{}) core.QueryResult {
+	// Check if result is nil
+	if result == nil {
+		return core.QueryResult{Error: fmt.Errorf("destination cannot be nil")}
+	}
+
+	db := e.db.Raw(sql, args...)
+	err := db.Scan(result).Error
+
+	// Create query result metadata
+	queryResult := core.QueryResult{
+		Error:        err,
+		RowsAffected: db.RowsAffected,
+		Found:        db.RowsAffected > 0,
+	}
+
+	return queryResult
 }
 
 // CountRaw executes a raw SQL COUNT query

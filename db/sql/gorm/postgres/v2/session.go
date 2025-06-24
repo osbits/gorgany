@@ -12,6 +12,7 @@ import (
 // sessionImpl implements the ISession interface
 type sessionImpl struct {
 	executor *Executor
+	query    *Builder
 	mu       sync.RWMutex
 }
 
@@ -35,7 +36,10 @@ func (s *sessionImpl) Executor() core.IQueryExecutor {
 
 // Query creates a new query builder
 func (s *sessionImpl) Query() core.IQueryBuilder {
-	return NewBuilder()
+	if s.query == nil {
+		s.query = NewBuilder()
+	}
+	return s.query
 }
 
 // Transaction executes the provided function within a transaction
