@@ -207,7 +207,7 @@ func (d *PostgresDialect) formatInsert(q *dbCore.Query) (string, []interface{}) 
 		for i, valueSet := range q.Insert.Values {
 			placeholders := make([]string, len(valueSet))
 			for j, value := range valueSet {
-				placeholders[j] = d.Placeholder(len(args) + 1)
+				placeholders[j] = "?"
 				args = append(args, value)
 			}
 			valueSets[i] = "(" + strings.Join(placeholders, ", ") + ")"
@@ -233,7 +233,7 @@ func (d *PostgresDialect) formatInsert(q *dbCore.Query) (string, []interface{}) 
 
 			updates := make([]string, 0, len(q.Insert.OnConflict.SetValues))
 			for field, value := range q.Insert.OnConflict.SetValues {
-				updates = append(updates, field+" = "+d.Placeholder(len(args)+1))
+				updates = append(updates, field+" = "+"?")
 				args = append(args, value)
 			}
 
@@ -262,7 +262,7 @@ func (d *PostgresDialect) formatUpdate(q *dbCore.Query) (string, []interface{}) 
 	// Add SET values
 	updates := make([]string, 0, len(q.Update.Values))
 	for field, value := range q.Update.Values {
-		updates = append(updates, field+" = "+d.Placeholder(len(args)+1))
+		updates = append(updates, field+" = "+"?")
 		args = append(args, value)
 	}
 
@@ -312,11 +312,6 @@ func (d *PostgresDialect) formatDelete(q *dbCore.Query) (string, []interface{}) 
 	}
 
 	return sqlBuilder.String(), args
-}
-
-// Placeholder generates a placeholder for prepared statements
-func (d *PostgresDialect) Placeholder(index int) string {
-	return fmt.Sprintf("$%d", index)
 }
 
 // FormatQuery formats a complete query
