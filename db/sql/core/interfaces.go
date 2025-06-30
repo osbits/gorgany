@@ -9,22 +9,22 @@ type IDataSource interface {
 	// NewSession creates a new database session
 	NewSession() (ISession, error)
 
+	GetDriver() (any, error)
+
 	// Close closes the database connection
 	Close() error
 }
 
 // IQueryExecutor handles the execution of queries
 type IQueryExecutor interface {
-	Exec(ctx context.Context, q *Query) error
+	Exec(ctx context.Context, q IQueryBuilder) QueryResult
 
-	QueryOne(ctx context.Context, q *Query, dest interface{}) error
+	Find(ctx context.Context, q IQueryBuilder, dest interface{}) QueryResult
 
-	QueryList(ctx context.Context, q *Query, dest interface{}) error
+	Count(ctx context.Context, q IQueryBuilder) (int64, error)
 
-	Count(ctx context.Context, q *Query) (int64, error)
-
-	ExecRaw(ctx context.Context, sql string, args ...interface{}) error
-	QueryRaw(ctx context.Context, dest interface{}, sql string, args ...interface{}) QueryResult
+	ExecRaw(ctx context.Context, sql string, args ...interface{}) QueryResult
+	FindRaw(ctx context.Context, dest interface{}, sql string, args ...interface{}) QueryResult
 	CountRaw(ctx context.Context, sql string, args ...interface{}) (int64, error)
 }
 
@@ -59,6 +59,8 @@ type ISession interface {
 
 	// Transaction executes the provided function within a transaction
 	Transaction(ctx context.Context, fn func(IDBTransaction) error) error
+
+	DataSource() IDataSource
 
 	// Close closes the session
 	Close() error
@@ -168,6 +170,32 @@ type IQueryBuilder interface {
 	NotLikeEscape(field interface{}, pattern interface{}, escape string) IQueryBuilder
 	IsNull(field interface{}) IQueryBuilder
 	IsNotNull(field interface{}) IQueryBuilder
+
+	// Missing methods for state inspection
+	HasFrom() bool
+	HasWhere() bool
+	HasJoin() bool
+	HasOrderBy() bool
+	HasGroupBy() bool
+	HasLimit() bool
+	HasOffset() bool
+
+	// Missing methods for INSERT operations
+	Insert(table string) IQueryBuilder
+	Columns(columns ...string) IQueryBuilder
+	Values(values ...interface{}) IQueryBuilder
+	FromSelect(query *Query) IQueryBuilder
+	OnConflict(columns ...string) IQueryBuilder
+	DoNothing() IQueryBuilder
+	DoUpdate(setValues map[string]interface{}) IQueryBuilder
+
+	// Missing methods for UPDATE operations
+	Update(table string) IQueryBuilder
+	Set(field string, value interface{}) IQueryBuilder
+	SetMap(values map[string]interface{}) IQueryBuilder
+
+	// Missing methods for DELETE operations
+	Delete(table string) IQueryBuilder
 
 	// Query finalization
 	Build() *Query

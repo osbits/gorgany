@@ -628,7 +628,7 @@ func TestAll(t *testing.T) {
 	mockDS := NewMockDataSource()
 
 	// Configure the mock executor
-	mockDS.session.executor.queryRawFunc = func(ctx context.Context, dest interface{}, sql string, args ...interface{}) error {
+	mockDS.session.executor.queryRawFunc = func(ctx context.Context, dest interface{}, sql string, args ...interface{}) dbCore.QueryResult {
 		// Check that the SQL query is correct
 		expectedSQL := "SELECT * FROM test_entities"
 		if sql != expectedSQL {
@@ -638,7 +638,11 @@ func TestAll(t *testing.T) {
 		// Set the destination slice
 		entities, ok := dest.(*[]*TestEntity)
 		if !ok {
-			return errors.New("destination is not a *[]*TestEntity")
+			return dbCore.QueryResult{
+				Error:        errors.New("destination is not a *[]*TestEntity"),
+				RowsAffected: 0,
+				Found:        false,
+			}
 		}
 
 		// Create test entities
@@ -669,7 +673,11 @@ func TestAll(t *testing.T) {
 			})
 		}
 
-		return nil
+		return dbCore.QueryResult{
+			Error:        errors.New("destination is not a *[]*TestEntity"),
+			RowsAffected: 0,
+			Found:        false,
+		}
 	}
 
 	// Create an ORM instance
@@ -711,7 +719,7 @@ func TestRawQueryAll(t *testing.T) {
 	mockDS := NewMockDataSource()
 
 	// Configure the mock executor
-	mockDS.session.executor.queryRawFunc = func(ctx context.Context, dest interface{}, sql string, args ...interface{}) error {
+	mockDS.session.executor.queryRawFunc = func(ctx context.Context, dest interface{}, sql string, args ...interface{}) dbCore.QueryResult {
 		// Check that the SQL query is correct
 		expectedSQL := "SELECT * FROM test_entities"
 		if sql != expectedSQL {
@@ -721,7 +729,11 @@ func TestRawQueryAll(t *testing.T) {
 		// Set the destination slice
 		entities, ok := dest.(*[]*TestEntity)
 		if !ok {
-			return errors.New("destination is not a *[]*TestEntity")
+			return dbCore.QueryResult{
+				Error:        errors.New("destination is not a *[]*TestEntity"),
+				RowsAffected: 0,
+				Found:        false,
+			}
 		}
 
 		// Create test entities
@@ -752,7 +764,11 @@ func TestRawQueryAll(t *testing.T) {
 			})
 		}
 
-		return nil
+		return dbCore.QueryResult{
+			Error:        nil,
+			RowsAffected: 0,
+			Found:        false,
+		}
 	}
 
 	// Create an ORM instance

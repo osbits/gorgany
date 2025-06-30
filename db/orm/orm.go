@@ -5,14 +5,15 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"reflect"
+	"strings"
+	"sync"
+
 	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
 	v2 "git.qix.sx/gorgany/gorgany.git/db/sql/gorm/postgres/v2"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
-	"reflect"
-	"strings"
-	"sync"
 )
 
 // EntityMeta stores metadata about an entity
@@ -31,7 +32,7 @@ type EntityMeta struct {
 	// Query info
 	LastQuery    string
 	LastArgs     []interface{}
-	QueryBuilder *v2.Builder
+	QueryBuilder dbCore.IQueryBuilder
 	QueryResult  *dbCore.QueryResult // Stores metadata about the last query execution
 
 	// Relationships
@@ -97,25 +98,13 @@ const (
 // EntityNotFound is returned when an entity can't be found
 var EntityNotFound = errors.New("entity not found")
 
-// Hooks interface defines methods that entities can implement for lifecycle hooks
-type Hooks interface {
-	BeforeSave(*gorm.DB) error
-	AfterSave(*gorm.DB) error
-	BeforeCreate(*gorm.DB) error
-	AfterCreate(*gorm.DB) error
-	BeforeUpdate(*gorm.DB) error
-	AfterUpdate(*gorm.DB) error
-	BeforeDelete(*gorm.DB) error
-	AfterDelete(*gorm.DB) error
-}
-
 // ORM provides generic ORM operations for any entity type
 type ORM[T EntityWithMeta] struct {
-	db dbCore.IDataSource
+	db dbCore.ISession
 }
 
 // New creates a new ORM instance for the given entity type
-func New[T EntityWithMeta](db dbCore.IDataSource) *ORM[T] {
+func New[T EntityWithMeta](db dbCore.ISession) *ORM[T] {
 	return &ORM[T]{
 		db: db,
 	}
@@ -140,11 +129,6 @@ func (o *ORM[T]) Find(id interface{}) (T, error) {
 		meta.PrimaryKey = entitySchema.PrimaryFieldDBNames[0]
 	}
 
-	session, err := o.db.NewSession()
-	if err != nil {
-		return entity, err
-	}
-
 	rEntity := reflect.ValueOf(entity)
 	indirectEntityType := util.IndirectType(rEntity.Type())
 
@@ -162,7 +146,7 @@ func (o *ORM[T]) Find(id interface{}) (T, error) {
 
 	// Create a new builder or use the existing one
 	if meta.QueryBuilder == nil {
-		meta.QueryBuilder = v2.NewBuilder()
+		meta.QueryBuilder = o.db.Query()
 	}
 
 	// Build the query
@@ -173,15 +157,13 @@ func (o *ORM[T]) Find(id interface{}) (T, error) {
 		meta.PrimaryKey = primaryKey
 	}
 
-	builder.From(tableName).Eq(primaryKey, id).Limit(1)
+	sql, args := builder.From(tableName).Eq(primaryKey, id).Limit(1).ToSQL()
 
-	// Convert to SQL
-	sql, args := builder.ToSQL()
 	meta.LastQuery = sql
 	meta.LastArgs = args
 
 	// Execute the query
-	queryResult := session.Executor().QueryRaw(context.Background(), &entity, sql, args...)
+	queryResult := o.db.Executor().FindRaw(context.Background(), &entity, sql, args...)
 	if err != nil {
 		return entity, fmt.Errorf("failed to execute Find in ORM for %s: %w", indirectEntityType.Name(), err)
 	}
@@ -189,7 +171,7 @@ func (o *ORM[T]) Find(id interface{}) (T, error) {
 	// Only set metadata if the entity is not nil
 	if !isNilValue(entity) {
 		// Store the DB connection for later use
-		meta.DataSource = o.db
+		meta.DataSource = o.db.DataSource()
 		meta.QueryResult = &queryResult
 		meta.IsLoaded = queryResult.Found
 
@@ -203,138 +185,6 @@ func (o *ORM[T]) Find(id interface{}) (T, error) {
 	}
 
 	return entity, nil
-}
-
-// First retrieves the first entity that matches the query builder conditions
-func (o *ORM[T]) First() (T, error) {
-	// Create a new entity
-	var entity T
-
-	meta := &EntityMeta{
-		PrimaryKey:      "id", // Default, will be overridden by schema if available
-		LoadedColumns:   make(map[string]bool),
-		LoadedRelations: make(map[string]bool),
-	}
-
-	// Try to use schema.Parse to get primary key information
-	schemaCache := &sync.Map{}
-	entitySchema, err := schema.Parse(entity, schemaCache, schema.NamingStrategy{})
-	if err == nil && len(entitySchema.PrimaryFieldDBNames) > 0 {
-		// Update primary key in meta
-		meta.PrimaryKey = entitySchema.PrimaryFieldDBNames[0]
-	}
-
-	session, err := o.db.NewSession()
-	if err != nil {
-		return entity, err
-	}
-
-	rEntity := reflect.ValueOf(entity)
-	indirectEntityType := util.IndirectType(rEntity.Type())
-
-	// Get table name
-	tableName := meta.TableName
-	if tableName == "" {
-		if entitySchema != nil {
-			tableName = entitySchema.Table
-		} else {
-			namer := schema.NamingStrategy{}
-			tableName = namer.TableName(indirectEntityType.Name())
-		}
-		meta.TableName = tableName
-	}
-
-	// Create a new builder or use the existing one
-	builder := meta.QueryBuilder
-	if builder == nil {
-		builder = v2.NewBuilder()
-		meta.QueryBuilder = builder
-		builder.From(tableName)
-	}
-
-	// Add limit if not present
-	builder.Limit(1)
-
-	// Convert to SQL
-	sql, args := builder.ToSQL()
-	meta.LastQuery = sql
-	meta.LastArgs = args
-
-	// Execute the query
-	queryResult := session.Executor().QueryRaw(context.Background(), &entity, sql, args...)
-	if err != nil {
-		return entity, fmt.Errorf("failed to execute First in ORM for %s: %w", indirectEntityType.Name(), err)
-	}
-
-	// Only set metadata if the entity is not nil
-	if !isNilValue(entity) {
-		// Store the DB connection for later use
-		meta.DataSource = o.db
-		meta.QueryResult = &queryResult
-		meta.IsLoaded = queryResult.Found
-
-		// If rows were found, update other metadata
-		if meta.IsLoaded {
-			meta.IsNew = false
-			meta.IsDirty = false
-		}
-
-		entity.SetMeta(meta)
-	}
-
-	return entity, nil
-}
-
-// Where adds a where condition to the query builder
-func (o *ORM[T]) Where(field interface{}, operator string, value interface{}) *ORM[T] {
-	// Create a sample entity to get metadata
-	var sample T
-	meta := sample.GetMeta()
-
-	// Create query builder if needed
-	if meta.QueryBuilder == nil {
-		builder := v2.NewBuilder()
-
-		// Get table name
-		tableName := meta.TableName
-		if tableName == "" {
-			rSample := reflect.ValueOf(sample)
-			indirectSampleType := util.IndirectType(rSample.Type())
-			namer := schema.NamingStrategy{}
-			tableName = namer.TableName(indirectSampleType.Name())
-			meta.TableName = tableName
-		}
-
-		if tableName != "" {
-			builder.From(tableName)
-		}
-
-		meta.QueryBuilder = builder
-	}
-
-	// Add condition based on operator
-	if operator == "=" {
-		meta.QueryBuilder.Eq(field, value)
-	} else if operator == "!=" {
-		meta.QueryBuilder.Neq(field, value)
-	} else if operator == ">" {
-		meta.QueryBuilder.Gt(field, value)
-	} else if operator == ">=" {
-		meta.QueryBuilder.Gte(field, value)
-	} else if operator == "<" {
-		meta.QueryBuilder.Lt(field, value)
-	} else if operator == "<=" {
-		meta.QueryBuilder.Lte(field, value)
-	} else {
-		// Add a custom condition
-		meta.QueryBuilder.Where(&dbCore.BinaryCondition{
-			Left:     field,
-			Operator: operator,
-			Right:    value,
-		})
-	}
-
-	return o
 }
 
 // All retrieves all entities that match the query builder conditions
@@ -345,11 +195,6 @@ func (o *ORM[T]) All() ([]T, error) {
 	// Create a sample entity to get metadata
 	var sample T
 	meta := sample.GetMeta()
-
-	session, err := o.db.NewSession()
-	if err != nil {
-		return entities, err
-	}
 
 	rSample := reflect.ValueOf(sample)
 	indirectSampleType := util.IndirectType(rSample.Type())
@@ -365,7 +210,7 @@ func (o *ORM[T]) All() ([]T, error) {
 	// Create builder if needed
 	builder := meta.QueryBuilder
 	if builder == nil {
-		builder = v2.NewBuilder()
+		builder = o.db.Query()
 		if tableName != "" {
 			builder.From(tableName)
 		}
@@ -377,9 +222,9 @@ func (o *ORM[T]) All() ([]T, error) {
 	meta.LastArgs = args
 
 	// Execute the query
-	queryResult := session.Executor().QueryRaw(context.Background(), &entities, sql, args...)
-	if err != nil {
-		return entities, fmt.Errorf("failed to execute All in ORM for %s: %w", indirectSampleType.Name(), err)
+	queryResult := o.db.Executor().FindRaw(context.Background(), &entities, sql, args...)
+	if queryResult.Error != nil {
+		return entities, fmt.Errorf("failed to execute All in ORM for %s: %w", indirectSampleType.Name(), queryResult.Error)
 	}
 
 	// Check if any results were found
@@ -405,7 +250,7 @@ func (o *ORM[T]) All() ([]T, error) {
 				IsDirty:         false,
 				LoadedColumns:   make(map[string]bool),
 				LoadedRelations: make(map[string]bool),
-				DataSource:      o.db,
+				DataSource:      o.db.DataSource(),
 				LastQuery:       sql,
 				LastArgs:        args,
 				QueryResult:     &queryResult,
@@ -415,7 +260,7 @@ func (o *ORM[T]) All() ([]T, error) {
 			entityMeta.IsLoaded = true // We know entities were found if we're here
 			entityMeta.IsNew = false
 			entityMeta.IsDirty = false
-			entityMeta.DataSource = o.db
+			entityMeta.DataSource = o.db.DataSource()
 			entityMeta.LastQuery = sql
 			entityMeta.LastArgs = args
 			entityMeta.QueryResult = &queryResult
@@ -439,25 +284,20 @@ func (o *ORM[T]) RawQuery(query string, args ...interface{}) (T, error) {
 		LoadedRelations: make(map[string]bool),
 	}
 
-	session, err := o.db.NewSession()
-	if err != nil {
-		return entity, err
-	}
-
 	// Store query info
 	meta.LastQuery = query
 	meta.LastArgs = args
 
 	// Execute the query
-	queryResult := session.Executor().QueryRaw(context.Background(), &entity, query, args...)
-	if err != nil {
-		return entity, fmt.Errorf("failed to execute RawQuery in ORM: %w", err)
+	queryResult := o.db.Executor().FindRaw(context.Background(), &entity, query, args...)
+	if queryResult.Error != nil {
+		return entity, fmt.Errorf("failed to execute RawQuery in ORM: %w", queryResult.Error)
 	}
 
 	// Only set metadata if the entity is not nil
 	if !isNilValue(entity) {
 		// Store the DB connection for later use
-		meta.DataSource = o.db
+		meta.DataSource = o.db.DataSource()
 		meta.QueryResult = &queryResult
 		meta.IsLoaded = queryResult.Found
 
@@ -488,15 +328,10 @@ func (o *ORM[T]) RawQueryAll(query string, args ...interface{}) ([]T, error) {
 	// Create a slice to hold the results
 	var entities []T
 
-	session, err := o.db.NewSession()
-	if err != nil {
-		return entities, err
-	}
-
 	// Execute the query
-	queryResult := session.Executor().QueryRaw(context.Background(), &entities, query, args...)
-	if err != nil {
-		return entities, fmt.Errorf("failed to execute RawQueryAll in ORM: %w", err)
+	queryResult := o.db.Executor().FindRaw(context.Background(), &entities, query, args...)
+	if queryResult.Error != nil {
+		return entities, fmt.Errorf("failed to execute RawQueryAll in ORM: %w", queryResult.Error)
 	}
 
 	// Check if any results were found
@@ -521,7 +356,7 @@ func (o *ORM[T]) RawQueryAll(query string, args ...interface{}) ([]T, error) {
 				PrimaryKey:      "id",
 				LoadedColumns:   make(map[string]bool),
 				LoadedRelations: make(map[string]bool),
-				DataSource:      o.db,
+				DataSource:      o.db.DataSource(),
 				LastQuery:       query,
 				LastArgs:        args,
 				QueryResult:     &queryResult,
@@ -531,7 +366,7 @@ func (o *ORM[T]) RawQueryAll(query string, args ...interface{}) ([]T, error) {
 			meta.IsLoaded = true // We know entities were found if we're here
 			meta.IsNew = false
 			meta.IsDirty = false
-			meta.DataSource = o.db
+			meta.DataSource = o.db.DataSource()
 			meta.LastQuery = query
 			meta.LastArgs = args
 			meta.QueryResult = &queryResult
@@ -550,9 +385,9 @@ func (o *ORM[T]) RawQueryAll(query string, args ...interface{}) ([]T, error) {
 }
 
 // Save saves an entity (creates if new, updates if existing)
-func (o *ORM[T]) Save(entity T) (T, error) {
+func (o *ORM[T]) Save(entity T) error {
 	if isNilValue(entity) {
-		return entity, errors.New("entity cannot be nil")
+		return errors.New("entity cannot be nil")
 	}
 
 	meta := entity.GetMeta()
@@ -574,15 +409,10 @@ func (o *ORM[T]) Save(entity T) (T, error) {
 		meta.PrimaryKey = entitySchema.PrimaryFieldDBNames[0]
 	}
 
-	session, err := o.db.NewSession()
-	if err != nil {
-		return entity, err
-	}
-
 	// Execute hooks if entity implements them
 	if hook, ok := any(entity).(interface{ BeforeSave(*gorm.DB) error }); ok {
 		if err := hook.BeforeSave(nil); err != nil {
-			return entity, err
+			return err
 		}
 	}
 
@@ -591,40 +421,40 @@ func (o *ORM[T]) Save(entity T) (T, error) {
 		// This is a create operation
 		if hook, ok := any(entity).(interface{ BeforeCreate(*gorm.DB) error }); ok {
 			if err := hook.BeforeCreate(nil); err != nil {
-				return entity, err
+				return err
 			}
 		}
 
 		// Execute create operation
-		err = session.Executor().QueryOne(context.Background(), buildInsertQuery(entity, meta), entity)
-		if err != nil {
-			return entity, fmt.Errorf("failed to create entity: %w", err)
+		queryRes := o.db.Executor().Find(context.Background(), buildInsertQuery(entity, meta), entity)
+		if queryRes.Error != nil {
+			return fmt.Errorf("failed to create entity: %w", queryRes.Error)
 		}
 
 		// Update metadata
 		meta.IsNew = false
 		meta.IsLoaded = true
 		meta.IsDirty = false
-		meta.DataSource = o.db
+		meta.DataSource = o.db.DataSource()
 
 		// Execute after hooks
 		if hook, ok := any(entity).(interface{ AfterCreate(*gorm.DB) error }); ok {
 			if err := hook.AfterCreate(nil); err != nil {
-				return entity, err
+				return err
 			}
 		}
 	} else {
 		// This is an update operation
 		if hook, ok := any(entity).(interface{ BeforeUpdate(*gorm.DB) error }); ok {
 			if err := hook.BeforeUpdate(nil); err != nil {
-				return entity, err
+				return err
 			}
 		}
 
 		// Execute update operation
-		err = session.Executor().Exec(context.Background(), buildUpdateQuery(entity, meta))
-		if err != nil {
-			return entity, fmt.Errorf("failed to update entity: %w", err)
+		queryResult := o.db.Executor().Exec(context.Background(), buildUpdateQuery(entity, meta))
+		if queryResult.Error != nil {
+			return fmt.Errorf("failed to update entity: %w", queryResult.Error)
 		}
 
 		// Update metadata
@@ -633,7 +463,7 @@ func (o *ORM[T]) Save(entity T) (T, error) {
 		// Execute after hooks
 		if hook, ok := any(entity).(interface{ AfterUpdate(*gorm.DB) error }); ok {
 			if err := hook.AfterUpdate(nil); err != nil {
-				return entity, err
+				return err
 			}
 		}
 	}
@@ -641,17 +471,17 @@ func (o *ORM[T]) Save(entity T) (T, error) {
 	// Execute after hooks
 	if hook, ok := any(entity).(interface{ AfterSave(*gorm.DB) error }); ok {
 		if err := hook.AfterSave(nil); err != nil {
-			return entity, err
+			return err
 		}
 	}
 
-	return entity, nil
+	return nil
 }
 
 // Create creates a new entity
-func (o *ORM[T]) Create(entity T) (T, error) {
+func (o *ORM[T]) Create(entity T) error {
 	if isNilValue(entity) {
-		return entity, errors.New("entity cannot be nil")
+		return errors.New("entity cannot be nil")
 	}
 
 	meta := entity.GetMeta()
@@ -676,21 +506,16 @@ func (o *ORM[T]) Create(entity T) (T, error) {
 	// Always set IsNew for Create operation
 	meta.IsNew = true
 
-	session, err := o.db.NewSession()
-	if err != nil {
-		return entity, err
-	}
-
 	// Execute hooks if entity implements them
 	if hook, ok := any(entity).(interface{ BeforeSave(*gorm.DB) error }); ok {
 		if err := hook.BeforeSave(nil); err != nil {
-			return entity, err
+			return err
 		}
 	}
 
 	if hook, ok := any(entity).(interface{ BeforeCreate(*gorm.DB) error }); ok {
 		if err := hook.BeforeCreate(nil); err != nil {
-			return entity, err
+			return err
 		}
 	}
 
@@ -712,59 +537,49 @@ func (o *ORM[T]) Create(entity T) (T, error) {
 	}
 
 	// Create a builder for the INSERT query
-	builder := v2.NewBuilder()
-	builder.Insert(tableName)
+	var builder dbCore.IQueryBuilder
+	builder = v2.NewBuilder()
+
+	builder = builder.Insert(tableName)
 
 	// Extract field values using our new function that supports embedded structs
 	columns, values := extractFieldsForInsert(val, meta)
 
-	builder.Columns(columns...)
-	builder.Values(values...)
+	builder = builder.Columns(columns...).Values(values...)
 
-	// Add RETURNING clause for primary key if needed
-	builder.Returning(meta.PrimaryKey)
+	var returningCols []string
+	seen := make(map[string]struct{})
 
-	// Build the query
-	query := builder.Build()
+	for _, f := range entitySchema.PrimaryFields {
+		if _, ok := seen[f.DBName]; !ok {
+			returningCols = append(returningCols, f.DBName)
+			seen[f.DBName] = struct{}{}
+		}
+	}
+	for _, f := range entitySchema.Fields {
+		if f.AutoIncrement || f.HasDefaultValue {
+			if _, ok := seen[f.DBName]; !ok {
+				returningCols = append(returningCols, f.DBName)
+				seen[f.DBName] = struct{}{}
+			}
+		}
+	}
+
+	builder = builder.Returning(returningCols...)
 
 	// Execute the query
 	result := map[string]interface{}{}
-	err = session.Executor().QueryOne(context.Background(), query, &result)
-	if err != nil {
-		return entity, fmt.Errorf("failed to create entity: %w", err)
+	queryRes := o.db.Executor().Find(context.Background(), builder, &result)
+	if queryRes.Error != nil {
+		return fmt.Errorf("failed to create entity: %w", queryRes.Error)
 	}
 
-	if id, ok := result[meta.PrimaryKey]; ok {
-		// Find the field in the struct that corresponds to the primary key
-		for i := 0; i < val.NumField(); i++ {
-			field := val.Field(i)
-			fieldType := val.Type().Field(i)
-
-			// Skip unexported fields or fields that can't be set
-			if !field.CanSet() {
-				continue
-			}
-
-			// Check if this field corresponds to the primary key
-			columnName := namer.ColumnName(tableName, fieldType.Name)
-			gormTag := fieldType.Tag.Get("gorm")
-			if gormTag != "" {
-				parts := strings.Split(gormTag, ";")
-				for _, part := range parts {
-					if strings.HasPrefix(part, "column:") {
-						columnName = strings.TrimPrefix(part, "column:")
-						break
-					}
-				}
-			}
-
-			if columnName == meta.PrimaryKey || fieldType.Name == meta.PrimaryKey {
-				// Found the matching field, now set its value
-				idVal := reflect.ValueOf(id)
-				if idVal.Type().ConvertibleTo(field.Type()) {
-					field.Set(idVal.Convert(field.Type()))
-					break
-				}
+	destVal := reflect.Indirect(reflect.ValueOf(entity))
+	for _, col := range returningCols {
+		if val, ok := result[col]; ok {
+			if sf := entitySchema.LookUpField(col); sf != nil {
+				// Set — это schema.Field.Set, он правильно обходит вложенные поля
+				sf.Set(context.Background(), destVal, val)
 			}
 		}
 	}
@@ -773,28 +588,28 @@ func (o *ORM[T]) Create(entity T) (T, error) {
 	meta.IsNew = false
 	meta.IsLoaded = true
 	meta.IsDirty = false
-	meta.DataSource = o.db
+	meta.DataSource = o.db.DataSource()
 
 	// Execute after hooks
 	if hook, ok := any(entity).(interface{ AfterCreate(*gorm.DB) error }); ok {
 		if err := hook.AfterCreate(nil); err != nil {
-			return entity, err
+			return err
 		}
 	}
 
 	if hook, ok := any(entity).(interface{ AfterSave(*gorm.DB) error }); ok {
 		if err := hook.AfterSave(nil); err != nil {
-			return entity, err
+			return err
 		}
 	}
 
-	return entity, nil
+	return nil
 }
 
 // Update updates an existing entity
-func (o *ORM[T]) Update(entity T) (T, error) {
+func (o *ORM[T]) Update(entity T) error {
 	if isNilValue(entity) {
-		return entity, errors.New("entity cannot be nil")
+		return errors.New("entity cannot be nil")
 	}
 
 	meta := entity.GetMeta()
@@ -818,21 +633,16 @@ func (o *ORM[T]) Update(entity T) (T, error) {
 	// Mark as not new for update operation
 	meta.IsNew = false
 
-	session, err := o.db.NewSession()
-	if err != nil {
-		return entity, err
-	}
-
 	// Execute hooks if entity implements them
 	if hook, ok := any(entity).(interface{ BeforeSave(*gorm.DB) error }); ok {
 		if err := hook.BeforeSave(nil); err != nil {
-			return entity, err
+			return err
 		}
 	}
 
 	if hook, ok := any(entity).(interface{ BeforeUpdate(*gorm.DB) error }); ok {
 		if err := hook.BeforeUpdate(nil); err != nil {
-			return entity, err
+			return err
 		}
 	}
 
@@ -853,62 +663,58 @@ func (o *ORM[T]) Update(entity T) (T, error) {
 	}
 
 	// Create a builder for the UPDATE query
-	builder := v2.NewBuilder()
-	builder.Update(tableName)
+	builder := o.db.Query().Update(tableName)
 
 	// Extract field values using our new function that supports embedded structs
 	pkValue, updateFields := extractFieldsForUpdate(val, meta)
 
 	// Add fields to SET clause
 	for columnName, value := range updateFields {
-		builder.Set(columnName, value)
+		builder = builder.Set(columnName, value)
 	}
 
 	// Check primary key
 	if pkValue == nil || isZeroValue(pkValue) {
-		return entity, fmt.Errorf("cannot update entity with zero primary key value")
+		return fmt.Errorf("cannot update entity with zero primary key value")
 	}
 
 	// Add WHERE clause for primary key
-	builder.Where(&dbCore.BinaryCondition{
+	builder = builder.Where(&dbCore.BinaryCondition{
 		Left:     meta.PrimaryKey,
 		Operator: "=",
 		Right:    pkValue,
 	})
 
-	// Build the query
-	query := builder.Build()
-
 	// Execute the query
-	err = session.Executor().Exec(context.Background(), query)
-	if err != nil {
-		return entity, fmt.Errorf("failed to update entity: %w", err)
+	queryRes := o.db.Executor().Exec(context.Background(), builder)
+	if queryRes.Error != nil {
+		return fmt.Errorf("failed to update entity: %w", queryRes.Error)
 	}
 
 	// Update metadata
 	meta.IsDirty = false
-	meta.DataSource = o.db
+	meta.DataSource = o.db.DataSource()
 
 	// Execute after hooks
 	if hook, ok := any(entity).(interface{ AfterUpdate(*gorm.DB) error }); ok {
 		if err := hook.AfterUpdate(nil); err != nil {
-			return entity, err
+			return err
 		}
 	}
 
 	if hook, ok := any(entity).(interface{ AfterSave(*gorm.DB) error }); ok {
 		if err := hook.AfterSave(nil); err != nil {
-			return entity, err
+			return err
 		}
 	}
 
-	return entity, nil
+	return nil
 }
 
 // Delete deletes an entity
-func (o *ORM[T]) Delete(entity T) (T, error) {
+func (o *ORM[T]) Delete(entity T) error {
 	if isNilValue(entity) {
-		return entity, errors.New("entity cannot be nil")
+		return errors.New("entity cannot be nil")
 	}
 
 	meta := entity.GetMeta()
@@ -927,19 +733,14 @@ func (o *ORM[T]) Delete(entity T) (T, error) {
 	entitySchema, err := schema.Parse(entity, schemaCache, schema.NamingStrategy{})
 	if err == nil && len(entitySchema.PrimaryFieldDBNames) > 0 {
 		// Update primary key in meta
-		meta.PrimaryKey = entitySchema.PrimaryFieldDBNames[0]
+		meta.PrimaryKey = entitySchema.PrimaryFields[0].Name
 		pkValueFieldName = entitySchema.PrimaryFields[0].Name
-	}
-
-	session, err := o.db.NewSession()
-	if err != nil {
-		return entity, err
 	}
 
 	// Execute hooks if entity implements them
 	if hook, ok := any(entity).(interface{ BeforeDelete(*gorm.DB) error }); ok {
 		if err := hook.BeforeDelete(nil); err != nil {
-			return entity, err
+			return err
 		}
 	}
 
@@ -972,48 +773,39 @@ func (o *ORM[T]) Delete(entity T) (T, error) {
 	}
 
 	if pkValue == nil || isZeroValue(pkValue) {
-		return entity, fmt.Errorf("cannot delete entity with zero primary key value")
+		return fmt.Errorf("cannot delete entity with zero primary key value")
 	}
 
 	// Create a builder for the DELETE query
-	builder := v2.NewBuilder()
-	builder.Delete(tableName)
+	builder := o.db.Query().Delete(tableName)
 
 	// Add WHERE clause for primary key
-	builder.Where(&dbCore.BinaryCondition{
+	builder = builder.Where(&dbCore.BinaryCondition{
 		Left:     meta.PrimaryKey,
 		Operator: "=",
 		Right:    pkValue,
 	})
 
-	// Build the query
-	query := builder.Build()
-
 	// Execute the query
-	err = session.Executor().Exec(context.Background(), query)
-	if err != nil {
-		return entity, fmt.Errorf("failed to delete entity: %w", err)
+	queryRes := o.db.Executor().Exec(context.Background(), builder)
+	if queryRes.Error != nil {
+		return fmt.Errorf("failed to delete entity: %w", queryRes.Error)
 	}
 
 	// Execute after hooks
 	if hook, ok := any(entity).(interface{ AfterDelete(*gorm.DB) error }); ok {
 		if err := hook.AfterDelete(nil); err != nil {
-			return entity, err
+			return err
 		}
 	}
 
-	return entity, nil
+	return nil
 }
 
 // Count returns the count of entities that match the query builder conditions
 func (o *ORM[T]) Count() (int64, error) {
 	// Create a sample entity to get metadata
 	var sample T
-
-	session, err := o.db.NewSession()
-	if err != nil {
-		return 0, err
-	}
 
 	rSample := reflect.ValueOf(sample)
 	indirectSampleType := util.IndirectType(rSample.Type())
@@ -1026,33 +818,15 @@ func (o *ORM[T]) Count() (int64, error) {
 	}
 
 	// Create a copy of the builder for the count query
-	countBuilder := *builder
-	countBuilder.Select("COUNT(*)")
-
-	// Convert to SQL
-	sql, args := countBuilder.ToSQL()
+	sql, args := builder.Select("COUNT(*)").ToSQL()
 
 	// Execute the query
-	count, err := session.Executor().CountRaw(context.Background(), sql, args...)
+	count, err := o.db.Executor().CountRaw(context.Background(), sql, args...)
 	if err != nil {
 		return 0, fmt.Errorf("failed to execute Count in ORM: %w", err)
 	}
 
 	return count, nil
-}
-
-// WithBuilder returns a new ORM instance with the specified query builder
-func (o *ORM[T]) WithBuilder(builder *v2.Builder) *ORM[T] {
-	// Create a sample entity to get metadata
-	var sample T
-	meta := sample.GetMeta()
-
-	// Set the builder
-	meta.QueryBuilder = builder
-
-	// Return a copy of the ORM
-	clone := *o
-	return &clone
 }
 
 // Refresh reloads the entity from the database
@@ -1148,7 +922,7 @@ func (o *ORM[T]) Refresh(entity T) error {
 	meta.IsLoaded = true
 	meta.IsNew = false
 	meta.IsDirty = false
-	meta.DataSource = o.db
+	meta.DataSource = o.db.DataSource()
 
 	return nil
 }
@@ -1181,7 +955,7 @@ func isPrimaryKeyAutoIncrement(field reflect.StructField) bool {
 }
 
 // Helper function to build an INSERT query
-func buildInsertQuery(entity interface{}, meta *EntityMeta) *dbCore.Query {
+func buildInsertQuery(entity interface{}, meta *EntityMeta) dbCore.IQueryBuilder {
 	val := reflect.ValueOf(entity)
 	if val.Kind() == reflect.Ptr {
 		val = val.Elem()
@@ -1198,19 +972,20 @@ func buildInsertQuery(entity interface{}, meta *EntityMeta) *dbCore.Query {
 	}
 
 	// Create a builder for the INSERT query
-	builder := v2.NewBuilder()
-	builder.Insert(tableName)
+	var builder dbCore.IQueryBuilder
+	builder = v2.NewBuilder()
+
+	builder = builder.Insert(tableName)
 
 	// Extract field values
 	columns, values := extractFieldsForInsert(val, meta)
 
-	builder.Columns(columns...)
-	builder.Values(values...)
+	builder = builder.
+		Columns(columns...).
+		Values(values...).
+		Returning(meta.PrimaryKey)
 
-	// Add RETURNING clause for primary key if needed
-	builder.Returning(meta.PrimaryKey)
-
-	return builder.Build()
+	return builder
 }
 
 // extractFieldsForInsert extracts fields from a struct and its embedded structs for INSERT operations
@@ -1311,7 +1086,7 @@ func extractFieldsFromStruct(val reflect.Value, meta *EntityMeta, columns *[]str
 }
 
 // Helper function to build an UPDATE query
-func buildUpdateQuery(entity interface{}, meta *EntityMeta) *dbCore.Query {
+func buildUpdateQuery(entity interface{}, meta *EntityMeta) dbCore.IQueryBuilder {
 	val := reflect.ValueOf(entity)
 	if val.Kind() == reflect.Ptr {
 		val = val.Elem()
@@ -1328,8 +1103,7 @@ func buildUpdateQuery(entity interface{}, meta *EntityMeta) *dbCore.Query {
 	}
 
 	// Create a builder for the UPDATE query
-	builder := v2.NewBuilder()
-	builder.Update(tableName)
+	builder := v2.NewBuilder().Update(tableName)
 
 	// Extract field values for update
 	pkValue, updateFields := extractFieldsForUpdate(val, meta)
@@ -1341,17 +1115,17 @@ func buildUpdateQuery(entity interface{}, meta *EntityMeta) *dbCore.Query {
 
 	// Add fields to SET clause
 	for columnName, value := range updateFields {
-		builder.Set(columnName, value)
+		builder = builder.Set(columnName, value)
 	}
 
 	// Add WHERE clause for primary key
-	builder.Where(&dbCore.BinaryCondition{
+	builder = builder.Where(&dbCore.BinaryCondition{
 		Left:     meta.PrimaryKey,
 		Operator: "=",
 		Right:    pkValue,
 	})
 
-	return builder.Build()
+	return builder
 }
 
 // extractFieldsForUpdate extracts fields from a struct and its embedded structs for UPDATE operations
@@ -1678,18 +1452,12 @@ func (o *ORM[T]) LoadRelation(entity T, relationName string) error {
 				if pkField.IsValid() {
 					pkValue = pkField.Interface()
 
-					// Create a new session
-					session, err := o.db.NewSession()
-					if err != nil {
-						return err
-					}
-
 					// Handle different relation types
 					switch relationship.Type {
 					case schema.HasOne, schema.HasMany:
 						if len(relationship.References) > 0 {
 							foreignKey = relationship.References[0].ForeignKey.DBName
-							err = o.loadHasRelation(session, entity, relationName, relationField, foreignKey, pkValue, relationship)
+							err = o.loadHasRelation(entity, relationName, relationField, foreignKey, pkValue, relationship)
 							if err == nil {
 								// Mark relation as loaded
 								meta.LoadedRelations[relationName] = true
@@ -1699,7 +1467,7 @@ func (o *ORM[T]) LoadRelation(entity T, relationName string) error {
 					case schema.BelongsTo:
 						if len(relationship.References) > 0 {
 							foreignKey = relationship.References[0].ForeignKey.DBName
-							err = o.loadBelongsToRelation(session, entity, relationName, relationField, foreignKey, pkValue, relationship)
+							err = o.loadBelongsToRelation(entity, relationName, relationField, foreignKey, pkValue, relationship)
 							if err == nil {
 								// Mark relation as loaded
 								meta.LoadedRelations[relationName] = true
@@ -1710,7 +1478,7 @@ func (o *ORM[T]) LoadRelation(entity T, relationName string) error {
 						if relationship.JoinTable != nil && len(relationship.References) > 0 {
 							joinTable := relationship.JoinTable.Name
 							references = relationship.References[0].PrimaryKey.DBName
-							err = o.loadManyToManyRelation(session, entity, relationName, relationField, joinTable, references, relationship.Field.Tag.Get("gorm"), relationship)
+							err = o.loadManyToManyRelation(entity, relationName, relationField, joinTable, references, relationship.Field.Tag.Get("gorm"), relationship)
 							if err == nil {
 								// Mark relation as loaded
 								meta.LoadedRelations[relationName] = true
@@ -1739,7 +1507,6 @@ func (o *ORM[T]) LoadRelation(entity T, relationName string) error {
 
 // loadHasRelation loads hasOne or hasMany relations
 func (o *ORM[T]) loadHasRelation(
-	session dbCore.ISession,
 	entity T,
 	relationName string,
 	relationField reflect.Value,
@@ -1779,13 +1546,16 @@ func (o *ORM[T]) loadHasRelation(
 	foreignKey = relationship.References[0].ForeignKey.DBName
 
 	// Build query to load related entities
-	builder := v2.NewBuilder()
-	builder.Select("*").From(tableName)
-	builder.Where(&dbCore.BinaryCondition{
-		Left:     foreignKey,
-		Operator: "=",
-		Right:    pkValue,
-	})
+	var builder dbCore.IQueryBuilder
+	builder = v2.NewBuilder()
+	builder = builder.
+		Select("*").
+		From(tableName).
+		Where(&dbCore.BinaryCondition{
+			Left:     foreignKey,
+			Operator: "=",
+			Right:    pkValue,
+		})
 
 	// Execute query
 	if isSlice {
@@ -1797,9 +1567,9 @@ func (o *ORM[T]) loadHasRelation(
 		destSlice := reflect.New(reflect.SliceOf(reflect.TypeOf(reflect.New(relatedEntityType).Interface())))
 
 		// Execute query to get all related entities
-		err := session.Executor().QueryList(context.Background(), builder.Build(), destSlice.Interface())
-		if err != nil {
-			return err
+		queryRes := o.db.Executor().Find(context.Background(), builder, destSlice.Interface())
+		if queryRes.Error != nil {
+			return queryRes.Error
 		}
 
 		// Get the slice value
@@ -1828,13 +1598,13 @@ func (o *ORM[T]) loadHasRelation(
 		elem := reflect.New(elemType)
 
 		// Execute query to get the related entity
-		err := session.Executor().QueryOne(context.Background(), builder.Build(), elem.Interface())
-		if err != nil {
-			if err == sql.ErrNoRows {
+		queryRes := o.db.Executor().Find(context.Background(), builder, elem.Interface())
+		if queryRes.Error != nil {
+			if queryRes.Error == sql.ErrNoRows {
 				// No related entity found, leave the field as is
 				return nil
 			}
-			return err
+			return queryRes.Error
 		}
 
 		// Set the result to the relation field
@@ -1850,7 +1620,6 @@ func (o *ORM[T]) loadHasRelation(
 
 // loadBelongsToRelation loads belongsTo relations
 func (o *ORM[T]) loadBelongsToRelation(
-	session dbCore.ISession,
 	entity T,
 	relationName string,
 	relationField reflect.Value,
@@ -1878,13 +1647,16 @@ func (o *ORM[T]) loadBelongsToRelation(
 	primaryKey := relationship.References[0].PrimaryKey.DBName
 
 	// Build query to load related entity
-	builder := v2.NewBuilder()
-	builder.Select("*").From(tableName)
-	builder.Where(&dbCore.BinaryCondition{
-		Left:     primaryKey, // Use the primary key from relationship or default to 'id'
-		Operator: "=",
-		Right:    pkValue,
-	})
+	var builder dbCore.IQueryBuilder
+	builder = v2.NewBuilder()
+	builder = builder.
+		Select("*").
+		From(tableName).
+		Where(&dbCore.BinaryCondition{
+			Left:     primaryKey, // Use the primary key from relationship or default to 'id'
+			Operator: "=",
+			Right:    pkValue,
+		})
 
 	// Create a new element to unmarshal into
 	elemType := relationField.Type()
@@ -1894,13 +1666,13 @@ func (o *ORM[T]) loadBelongsToRelation(
 	elem := reflect.New(elemType)
 
 	// Execute query to get the related entity
-	err := session.Executor().QueryOne(context.Background(), builder.Build(), elem.Interface())
-	if err != nil {
-		if err == sql.ErrNoRows {
+	queryRes := o.db.Executor().Find(context.Background(), builder, elem.Interface())
+	if queryRes.Error != nil {
+		if queryRes.Error == sql.ErrNoRows {
 			// No related entity found, leave the field as is
 			return nil
 		}
-		return err
+		return queryRes.Error
 	}
 
 	// Set the result to the relation field
@@ -1915,7 +1687,6 @@ func (o *ORM[T]) loadBelongsToRelation(
 
 // loadManyToManyRelation loads many-to-many relations
 func (o *ORM[T]) loadManyToManyRelation(
-	session dbCore.ISession,
 	entity T,
 	relationName string,
 	relationField reflect.Value,
@@ -1925,7 +1696,6 @@ func (o *ORM[T]) loadManyToManyRelation(
 	relationship *schema.Relationship,
 ) error {
 	var joinFKName, referenceFKName string
-	var err error
 
 	// Use schema relationship to get join field names
 	if relationship == nil || relationship.JoinTable == nil {
@@ -2009,9 +1779,9 @@ func (o *ORM[T]) loadManyToManyRelation(
 	destSlice := reflect.New(reflect.SliceOf(reflect.TypeOf(reflect.New(elemType).Interface())))
 
 	// Execute query to get all related entities
-	err = session.Executor().QueryList(context.Background(), builder.Build(), destSlice.Interface())
-	if err != nil {
-		return err
+	queryResult := o.db.Executor().Find(context.Background(), builder, destSlice.Interface())
+	if queryResult.Error != nil {
+		return queryResult.Error
 	}
 
 	// Get the slice value
@@ -2033,4 +1803,105 @@ func (o *ORM[T]) loadManyToManyRelation(
 	relationField.Set(resultSlice)
 
 	return nil
+}
+
+// AllByQuery executes the given query builder and returns all results
+func (o *ORM[T]) AllByQuery(qb dbCore.IQueryBuilder) ([]T, error) {
+	var entities []T
+
+	sql, args := qb.ToSQL()
+
+	queryResult := o.db.Executor().FindRaw(context.Background(), &entities, sql, args...)
+	if queryResult.Error != nil {
+		return entities, fmt.Errorf("failed to execute AllByQuery in ORM: %w", queryResult.Error)
+	}
+
+	// Update metadata for each entity
+	for i := range entities {
+		if isNilValue(entities[i]) {
+			continue
+		}
+		meta := entities[i].GetMeta()
+		if meta == nil {
+			meta = &EntityMeta{
+				IsLoaded:        true,
+				IsNew:           false,
+				IsDirty:         false,
+				PrimaryKey:      "id",
+				LoadedColumns:   make(map[string]bool),
+				LoadedRelations: make(map[string]bool),
+				DataSource:      o.db.DataSource(),
+				LastQuery:       sql,
+				LastArgs:        args,
+				QueryResult:     &queryResult,
+			}
+			entities[i].SetMeta(meta)
+		} else {
+			meta.IsLoaded = true
+			meta.IsNew = false
+			meta.IsDirty = false
+			meta.DataSource = o.db.DataSource()
+			meta.LastQuery = sql
+			meta.LastArgs = args
+			meta.QueryResult = &queryResult
+		}
+	}
+
+	return entities, nil
+}
+
+// FirstByQuery executes the given query builder and returns the first result
+func (o *ORM[T]) FirstByQuery(qb dbCore.IQueryBuilder) (T, error) {
+	var entity T
+
+	qb.Limit(1)
+	sql, args := qb.ToSQL()
+
+	queryResult := o.db.Executor().FindRaw(context.Background(), &entity, sql, args...)
+	if queryResult.Error != nil {
+		return entity, fmt.Errorf("failed to execute FirstByQuery in ORM: %w", queryResult.Error)
+	}
+
+	if !isNilValue(entity) {
+		meta := entity.GetMeta()
+		if meta == nil {
+			meta = &EntityMeta{
+				IsLoaded:        queryResult.Found,
+				IsNew:           false,
+				IsDirty:         false,
+				PrimaryKey:      "id",
+				LoadedColumns:   make(map[string]bool),
+				LoadedRelations: make(map[string]bool),
+				DataSource:      o.db.DataSource(),
+				LastQuery:       sql,
+				LastArgs:        args,
+				QueryResult:     &queryResult,
+			}
+			entity.SetMeta(meta)
+		} else {
+			meta.IsLoaded = queryResult.Found
+			meta.IsNew = false
+			meta.IsDirty = false
+			meta.DataSource = o.db.DataSource()
+			meta.LastQuery = sql
+			meta.LastArgs = args
+			meta.QueryResult = &queryResult
+		}
+	}
+
+	return entity, nil
+}
+
+// CountByQuery executes the given query builder and returns the count
+func (o *ORM[T]) CountByQuery(qb dbCore.IQueryBuilder) (int64, error) {
+	// Set the builder to select COUNT(*)
+	qb.Select("COUNT(*)")
+	sql, args := qb.ToSQL()
+
+	count, err := o.db.Executor().CountRaw(context.Background(), sql, args...)
+	if err != nil {
+		return 0, fmt.Errorf("failed to execute CountByQuery in ORM: %w", err)
+	}
+
+	return count, nil
 }

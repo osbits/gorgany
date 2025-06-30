@@ -3,15 +3,14 @@ package v2
 import (
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/db/sql/core"
-	"git.qix.sx/gorgany/gorgany.git/db/sql/gorm/plugin"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"time"
 )
 
-// dataSourceImpl implements the IDataSource interface
-type dataSourceImpl struct {
+// gormPostgresDataSource implements the IDataSource interface
+type gormPostgresDataSource struct {
 	db *gorm.DB
 }
 
@@ -27,8 +26,8 @@ func NewDataSource(config map[string]any) core.IDataSource {
 
 	db.Logger.LogMode(logger.Info)
 
-	db.Callback().Query().Before("gorm:query").Register("extended_model_processor_add_type_to_where", plugin.ExtendedModelProcessor{}.AddModelTypeToWhere)
-	db.Callback().Create().After("gorm:after_create").Register("after_create", plugin.ExtendedModelProcessor{}.AddModelTypeAfterInsert)
+	//db.Callback().Query().Before("gorm:query").Register("extended_model_processor_add_type_to_where", plugin.ExtendedModelProcessor{}.AddModelTypeToWhere)
+	//db.Callback().Create().After("gorm:after_create").Register("after_create", plugin.ExtendedModelProcessor{}.AddModelTypeAfterInsert)
 
 	if propsRaw, ok := config["properties"]; ok {
 		rawDb, err := db.DB()
@@ -59,7 +58,7 @@ func NewDataSource(config map[string]any) core.IDataSource {
 		db = db.Debug()
 	}
 
-	return &dataSourceImpl{
+	return &gormPostgresDataSource{
 		db: db,
 	}
 }
@@ -69,8 +68,12 @@ func getDsn(config map[string]any) string {
 		config["host"], config["port"], config["username"], config["password"], config["db"], config["ssl"])
 }
 
+func (ds *gormPostgresDataSource) GetDriver() (any, error) {
+	return ds.db, nil
+}
+
 // Close closes the database connection
-func (ds *dataSourceImpl) Close() error {
+func (ds *gormPostgresDataSource) Close() error {
 	sqlDB, err := ds.db.DB()
 	if err != nil {
 		return err

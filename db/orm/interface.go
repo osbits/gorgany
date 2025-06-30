@@ -3,7 +3,6 @@ package orm
 
 import (
 	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
-	v2 "git.qix.sx/gorgany/gorgany.git/db/sql/gorm/postgres/v2"
 )
 
 // IORM defines the interface for ORM operations
@@ -14,37 +13,31 @@ type IORM[T EntityWithMeta] interface {
 	// Find finds an entity by its ID and returns it
 	Find(id interface{}) (T, error)
 
-	// First retrieves the first entity that matches the query builder conditions
-	First() (T, error)
-
-	// All retrieves all entities that match the query builder conditions
-	All() ([]T, error)
-
 	// Save saves an entity (creates if new, updates if existing)
-	Save(entity T) (T, error)
+	Save(entity T) error
 
 	// Create creates a new entity
-	Create(entity T) (T, error)
+	Create(entity T) error
 
 	// Update updates an existing entity
-	Update(entity T) (T, error)
+	Update(entity T) error
 
 	// Delete deletes an entity
-	Delete(entity T) (T, error)
+	Delete(entity T) error
 
 	// Refresh reloads an entity from the database
 	Refresh(entity T) error
 
-	// Query Building
+	// Stateless Query Execution
 
-	// Where adds a condition to the query builder
-	Where(field interface{}, operator string, value interface{}) *ORM[T]
+	// AllByQuery executes the given query builder and returns all results
+	AllByQuery(qb dbCore.IQueryBuilder) ([]T, error)
 
-	// WithBuilder sets a custom query builder
-	WithBuilder(builder *v2.Builder) *ORM[T]
+	// FirstByQuery executes the given query builder and returns the first result
+	FirstByQuery(qb dbCore.IQueryBuilder) (T, error)
 
-	// Count returns the number of entities that match the query builder conditions
-	Count() (int64, error)
+	// CountByQuery executes the given query builder and returns the count
+	CountByQuery(qb dbCore.IQueryBuilder) (int64, error)
 
 	// Raw Query Execution
 
@@ -58,9 +51,4 @@ type IORM[T EntityWithMeta] interface {
 
 	// LoadRelation loads a specific relation for an entity
 	LoadRelation(entity T, relationName string) error
-}
-
-// NewORM creates a new ORM instance for the given entity type
-func NewORM[T EntityWithMeta](db dbCore.IDataSource) IORM[T] {
-	return New[T](db)
 }

@@ -12,6 +12,7 @@ import (
 
 type MigrateCommand struct {
 	dataContext core.IDataContext `container:"inject"`
+	dbContext   core.IDBContext   `container:"inject"`
 }
 
 func (thiz MigrateCommand) GetName() string {
@@ -43,9 +44,17 @@ func (thiz MigrateCommand) Execute(ctx context.Context) {
 }
 
 func (thiz MigrateCommand) up(ctx context.Context) {
-	gormInstance := db.Builder().GetConnection().Driver().(*gorm.DB)
+	driver, err := thiz.dbContext.GetDataSource(core.DefaultKeyInRegistrar).GetDriver()
+	if err != nil {
+		panic(err)
+	}
 
-	err := gormInstance.AutoMigrate(&db.Migration{})
+	gormInstance, ok := driver.(*gorm.DB)
+	if !ok {
+		panic("Diff command can`t be executed, because driver is not gorm.DB")
+	}
+
+	err = gormInstance.AutoMigrate(&db.Migration{})
 	if err != nil {
 		panic("Unable to migrate table `migrations`")
 	}

@@ -32,6 +32,7 @@ type DiffCommand struct {
 	modelStructAlreadyAdded map[string]bool
 	pivotTables             map[string]bool
 	domainContext           core.IDomainContext `container:"inject"`
+	dbContext               core.IDBContext     `container:"inject"`
 }
 
 func (thiz DiffCommand) GetName() string {
@@ -42,7 +43,16 @@ func (thiz DiffCommand) Execute(ctx context.Context) {
 	thiz.modelStructAlreadyAdded = make(map[string]bool)
 	thiz.pivotTables = make(map[string]bool)
 
-	gormDb := db.Builder().GetConnection().Driver().(*gorm.DB)
+	driver, err := thiz.dbContext.GetDataSource(core.DefaultKeyInRegistrar).GetDriver()
+	if err != nil {
+		panic(err)
+	}
+
+	gormDb, ok := driver.(*gorm.DB)
+	if !ok {
+		panic("Diff command can`t be executed, because driver is not gorm.DB")
+	}
+
 	tx := gormDb.Begin()
 	defer tx.Rollback()
 

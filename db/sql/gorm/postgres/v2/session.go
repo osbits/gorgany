@@ -11,13 +11,14 @@ import (
 
 // sessionImpl implements the ISession interface
 type sessionImpl struct {
-	executor *Executor
-	query    *Builder
-	mu       sync.RWMutex
+	executor   *Executor
+	query      *Builder
+	dataSource core.IDataSource
+	mu         sync.RWMutex
 }
 
 // NewSession creates a new database session
-func (ds *dataSourceImpl) NewSession() (core.ISession, error) {
+func (ds *gormPostgresDataSource) NewSession() (core.ISession, error) {
 	// Create a new GORM session
 	session := ds.db.Session(&gorm.Session{})
 	if session.Error != nil {
@@ -25,8 +26,13 @@ func (ds *dataSourceImpl) NewSession() (core.ISession, error) {
 	}
 
 	return &sessionImpl{
-		executor: NewExecutor(session),
+		executor:   NewExecutor(session),
+		dataSource: ds,
 	}, nil
+}
+
+func (s *sessionImpl) DataSource() core.IDataSource {
+	return s.dataSource
 }
 
 // Executor returns the query executor for this session
