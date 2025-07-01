@@ -16,8 +16,70 @@ func extractFieldsForInsert(val reflect.Value, meta *EntityMeta) ([]string, []in
 	columnMap := make(map[string]bool)
 	schemaCache := &sync.Map{}
 	entitySchema, err := schema.Parse(val.Interface(), schemaCache, schema.NamingStrategy{})
-	extractFieldsFromStruct(val, meta, &columns, &values, columnMap, false, entitySchema, err == nil)
+	relations := map[string]struct{}{}
+	if err == nil && entitySchema != nil {
+		for relName := range entitySchema.Relationships.Relations {
+			relations[relName] = struct{}{}
+		}
+	}
+	extractFieldsFromStructSkipRelations(val, meta, &columns, &values, columnMap, false, entitySchema, err == nil, relations)
 	return columns, values
+}
+
+// extractFieldsFromStructSkipRelations is like extractFieldsFromStruct but skips relation fields
+func extractFieldsFromStructSkipRelations(val reflect.Value, meta *EntityMeta, columns *[]string, values *[]interface{}, columnMap map[string]bool, isEmbedded bool, entitySchema *schema.Schema, hasSchema bool, relations map[string]struct{}) {
+	for i := 0; i < val.NumField(); i++ {
+		field := val.Field(i)
+		fieldType := val.Type().Field(i)
+		if !field.CanInterface() {
+			continue
+		}
+		if fieldType.Anonymous && util.IndirectType(fieldType.Type).Kind() == reflect.Struct {
+			if fieldType.Name == "BaseEntity" || fieldType.Name == "Meta" || fieldType.Tag.Get("gorm") == "-" {
+				continue
+			}
+			extractFieldsFromStructSkipRelations(field, meta, columns, values, columnMap, true, entitySchema, hasSchema, relations)
+			continue
+		}
+		if fieldType.Name == "Meta" || fieldType.Tag.Get("gorm") == "-" {
+			continue
+		}
+		// Skip relation fields
+		if _, isRelation := relations[fieldType.Name]; isRelation {
+			continue
+		}
+		var columnName string
+		if hasSchema && entitySchema != nil {
+			if field, ok := entitySchema.FieldsByName[fieldType.Name]; ok {
+				columnName = field.DBName
+			} else {
+				columnName = fieldType.Name
+			}
+		} else {
+			columnName = fieldType.Name
+			gormTag := fieldType.Tag.Get("gorm")
+			if gormTag != "" {
+				parts := strings.Split(gormTag, ";")
+				for _, part := range parts {
+					if strings.HasPrefix(part, "column:") {
+						columnName = strings.TrimPrefix(part, "column:")
+						break
+					}
+				}
+			}
+		}
+		if columnMap[columnName] {
+			continue
+		}
+		if columnName == meta.PrimaryKey && isPKAutoIncrement(val.Interface(), fieldType.Name) {
+			if isZeroValue(field.Interface()) {
+				continue
+			}
+		}
+		*columns = append(*columns, columnName)
+		*values = append(*values, field.Interface())
+		columnMap[columnName] = true
+	}
 }
 
 func extractFieldsFromStruct(val reflect.Value, meta *EntityMeta, columns *[]string, values *[]interface{}, columnMap map[string]bool, isEmbedded bool, entitySchema *schema.Schema, hasSchema bool) {

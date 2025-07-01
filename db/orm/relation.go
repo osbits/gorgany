@@ -55,7 +55,7 @@ func (o *ORM[T]) SaveRelations(entity T) error {
 							}
 							fkFieldVal := relEntityValue.FieldByName(fkField)
 							if fkFieldVal.CanSet() {
-								fkFieldVal.Set(pkValue)
+								setForeignKeyValue(fkFieldVal, pkValue)
 							}
 						}
 					}
@@ -85,7 +85,7 @@ func (o *ORM[T]) SaveRelations(entity T) error {
 									}
 									fkFieldVal := relEntityValue.FieldByName(fkField)
 									if fkFieldVal.CanSet() {
-										fkFieldVal.Set(pkValue)
+										setForeignKeyValue(fkFieldVal, pkValue)
 									}
 								}
 							}
@@ -119,7 +119,7 @@ func (o *ORM[T]) SaveRelations(entity T) error {
 							mainEntityValue := entityValue
 							fkFieldVal := mainEntityValue.FieldByName(fkField)
 							if fkFieldVal.CanSet() {
-								fkFieldVal.Set(pkValue)
+								setForeignKeyValue(fkFieldVal, pkValue)
 							}
 						}
 					}
@@ -812,4 +812,35 @@ func (o *ORM[T]) loadManyToManyRelation(
 	relationField.Set(resultSlice)
 
 	return nil
+}
+
+// Helper to set a value with pointer/value conversion
+func setForeignKeyValue(dest reflect.Value, src reflect.Value) {
+	if !dest.CanSet() {
+		return
+	}
+	destType := dest.Type()
+	srcType := src.Type()
+	if destType == srcType {
+		dest.Set(src)
+		return
+	}
+	if destType.Kind() == reflect.Ptr && srcType.Kind() != reflect.Ptr {
+		// e.g., dest is *int, src is int
+		ptr := reflect.New(destType.Elem())
+		ptr.Elem().Set(src)
+		dest.Set(ptr)
+		return
+	}
+	if destType.Kind() != reflect.Ptr && srcType.Kind() == reflect.Ptr {
+		// e.g., dest is int, src is *int
+		if !src.IsNil() {
+			dest.Set(src.Elem())
+		}
+		return
+	}
+	// fallback: try to convert if assignable
+	if src.Type().AssignableTo(dest.Type()) {
+		dest.Set(src)
+	}
 }
