@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"time"
 
 	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
 	v2 "git.qix.sx/gorgany/gorgany.git/db/sql/gorm/postgres/v2"
@@ -15,6 +16,27 @@ import (
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 )
+
+// RelationMeta stores metadata about a loaded relation
+type RelationMeta struct {
+	// Relation type (HasOne, HasMany, BelongsTo, Many2Many)
+	Type string
+
+	// Foreign key used for the relation
+	ForeignKey string
+
+	// Join table (for Many2Many relations)
+	JoinTable string
+
+	// Time when the relation was loaded
+	LoadedAt time.Time
+
+	// Number of related entities loaded (for HasMany and Many2Many relations)
+	Count int
+
+	// Additional metadata
+	Extra map[string]interface{}
+}
 
 // EntityMeta stores metadata about an entity
 type EntityMeta struct {
@@ -36,10 +58,34 @@ type EntityMeta struct {
 	QueryResult  *dbCore.QueryResult // Stores metadata about the last query execution
 
 	// Relationships
-	LoadedRelations map[string]bool
+	RelationMeta map[string]*RelationMeta // Detailed metadata for loaded relations
 
 	// Gorm internals
 	DataSource dbCore.IDataSource
+}
+
+// IsRelationLoaded checks if a relation has been loaded
+func (e *EntityMeta) IsRelationLoaded(relationName string) bool {
+	return e.RelationMeta != nil && e.RelationMeta[relationName] != nil
+}
+
+// SetRelationLoaded marks a relation as loaded and stores metadata about it
+func (e *EntityMeta) SetRelationLoaded(relationName string, meta *RelationMeta) {
+	// Initialize map if needed
+	if e.RelationMeta == nil {
+		e.RelationMeta = make(map[string]*RelationMeta)
+	}
+
+	// Set relation metadata
+	e.RelationMeta[relationName] = meta
+}
+
+// GetRelationMeta gets metadata for a loaded relation
+func (e *EntityMeta) GetRelationMeta(relationName string) *RelationMeta {
+	if e.RelationMeta == nil {
+		return nil
+	}
+	return e.RelationMeta[relationName]
 }
 
 // SetQueryResult sets the query result metadata
@@ -69,10 +115,10 @@ type BaseEntity struct {
 func (e *BaseEntity) GetMeta() *EntityMeta {
 	if e.Meta == nil {
 		e.Meta = &EntityMeta{
-			PrimaryKey:      "id",
-			IsNew:           true,
-			LoadedColumns:   make(map[string]bool),
-			LoadedRelations: make(map[string]bool),
+			PrimaryKey:    "id",
+			IsNew:         true,
+			LoadedColumns: make(map[string]bool),
+			RelationMeta:  make(map[string]*RelationMeta),
 		}
 	}
 	return e.Meta
@@ -116,9 +162,9 @@ func (o *ORM[T]) Find(id interface{}) (T, error) {
 	var entity T
 
 	meta := &EntityMeta{
-		PrimaryKey:      "id", // Default, will be overridden by schema if available
-		LoadedColumns:   make(map[string]bool),
-		LoadedRelations: make(map[string]bool),
+		PrimaryKey:    "id", // Default, will be overridden by schema if available
+		LoadedColumns: make(map[string]bool),
+		RelationMeta:  make(map[string]*RelationMeta),
 	}
 
 	// Try to use schema.Parse to get primary key information
@@ -243,17 +289,17 @@ func (o *ORM[T]) All() ([]T, error) {
 		entityMeta := entities[i].GetMeta()
 		if entityMeta == nil {
 			entityMeta = &EntityMeta{
-				TableName:       tableName,
-				PrimaryKey:      meta.PrimaryKey,
-				IsLoaded:        true, // We know entities were found if we're here
-				IsNew:           false,
-				IsDirty:         false,
-				LoadedColumns:   make(map[string]bool),
-				LoadedRelations: make(map[string]bool),
-				DataSource:      o.db.DataSource(),
-				LastQuery:       sql,
-				LastArgs:        args,
-				QueryResult:     &queryResult,
+				TableName:     tableName,
+				PrimaryKey:    meta.PrimaryKey,
+				IsLoaded:      true, // We know entities were found if we're here
+				IsNew:         false,
+				IsDirty:       false,
+				LoadedColumns: make(map[string]bool),
+				RelationMeta:  make(map[string]*RelationMeta),
+				DataSource:    o.db.DataSource(),
+				LastQuery:     sql,
+				LastArgs:      args,
+				QueryResult:   &queryResult,
 			}
 			entities[i].SetMeta(entityMeta)
 		} else {
@@ -279,9 +325,9 @@ func (o *ORM[T]) RawQuery(query string, args ...interface{}) (T, error) {
 
 	// Initialize metadata
 	meta := &EntityMeta{
-		PrimaryKey:      "id",
-		LoadedColumns:   make(map[string]bool),
-		LoadedRelations: make(map[string]bool),
+		PrimaryKey:    "id",
+		LoadedColumns: make(map[string]bool),
+		RelationMeta:  make(map[string]*RelationMeta),
 	}
 
 	// Store query info
@@ -350,16 +396,16 @@ func (o *ORM[T]) RawQueryAll(query string, args ...interface{}) ([]T, error) {
 		meta := entities[i].GetMeta()
 		if meta == nil {
 			meta = &EntityMeta{
-				IsLoaded:        true, // We know entities were found if we're here
-				IsNew:           false,
-				IsDirty:         false,
-				PrimaryKey:      "id",
-				LoadedColumns:   make(map[string]bool),
-				LoadedRelations: make(map[string]bool),
-				DataSource:      o.db.DataSource(),
-				LastQuery:       query,
-				LastArgs:        args,
-				QueryResult:     &queryResult,
+				IsLoaded:      true, // We know entities were found if we're here
+				IsNew:         false,
+				IsDirty:       false,
+				PrimaryKey:    "id",
+				LoadedColumns: make(map[string]bool),
+				RelationMeta:  make(map[string]*RelationMeta),
+				DataSource:    o.db.DataSource(),
+				LastQuery:     query,
+				LastArgs:      args,
+				QueryResult:   &queryResult,
 			}
 			entities[i].SetMeta(meta)
 		} else {
@@ -393,10 +439,10 @@ func (o *ORM[T]) Save(entity T) error {
 	meta := entity.GetMeta()
 	if meta == nil {
 		meta = &EntityMeta{
-			PrimaryKey:      "id",
-			LoadedColumns:   make(map[string]bool),
-			LoadedRelations: make(map[string]bool),
-			IsNew:           true,
+			PrimaryKey:    "id",
+			LoadedColumns: make(map[string]bool),
+			RelationMeta:  make(map[string]*RelationMeta),
+			IsNew:         true,
 		}
 		entity.SetMeta(meta)
 	}
@@ -487,10 +533,10 @@ func (o *ORM[T]) Create(entity T) error {
 	meta := entity.GetMeta()
 	if meta == nil {
 		meta = &EntityMeta{
-			PrimaryKey:      "id",
-			LoadedColumns:   make(map[string]bool),
-			LoadedRelations: make(map[string]bool),
-			IsNew:           true,
+			PrimaryKey:    "id",
+			LoadedColumns: make(map[string]bool),
+			RelationMeta:  make(map[string]*RelationMeta),
+			IsNew:         true,
 		}
 		entity.SetMeta(meta)
 	}
@@ -615,9 +661,9 @@ func (o *ORM[T]) Update(entity T) error {
 	meta := entity.GetMeta()
 	if meta == nil {
 		meta = &EntityMeta{
-			PrimaryKey:      "id",
-			LoadedColumns:   make(map[string]bool),
-			LoadedRelations: make(map[string]bool),
+			PrimaryKey:    "id",
+			LoadedColumns: make(map[string]bool),
+			RelationMeta:  make(map[string]*RelationMeta),
 		}
 		entity.SetMeta(meta)
 	}
@@ -720,9 +766,9 @@ func (o *ORM[T]) Delete(entity T) error {
 	meta := entity.GetMeta()
 	if meta == nil {
 		meta = &EntityMeta{
-			PrimaryKey:      "id", // Default, will be overridden by schema if available
-			LoadedColumns:   make(map[string]bool),
-			LoadedRelations: make(map[string]bool),
+			PrimaryKey:    "id", // Default, will be overridden by schema if available
+			LoadedColumns: make(map[string]bool),
+			RelationMeta:  make(map[string]*RelationMeta),
 		}
 		entity.SetMeta(meta)
 	}
@@ -838,9 +884,9 @@ func (o *ORM[T]) Refresh(entity T) error {
 	meta := entity.GetMeta()
 	if meta == nil {
 		meta = &EntityMeta{
-			PrimaryKey:      "id", // Default, will be overridden by schema if available
-			LoadedColumns:   make(map[string]bool),
-			LoadedRelations: make(map[string]bool),
+			PrimaryKey:    "id", // Default, will be overridden by schema if available
+			LoadedColumns: make(map[string]bool),
+			RelationMeta:  make(map[string]*RelationMeta),
 		}
 		entity.SetMeta(meta)
 	}
@@ -1409,18 +1455,121 @@ func findFieldValueInEmbedded(val reflect.Value, fieldName string) interface{} {
 }
 
 // LoadRelation loads a specific relation for an entity
-func (o *ORM[T]) LoadRelation(entity T, relationName string) error {
+// It supports both direct relations and nested relations using dot notation (e.g., "User.Roles")
+func (o *ORM[T]) LoadRelation(entity T, relationPath string) error {
 	if isNilValue(entity) {
 		return errors.New("entity cannot be nil")
 	}
 
+	// Check if the relation path contains nested relations
+	parts := strings.Split(relationPath, ".")
+	if len(parts) > 1 {
+		// This is a nested relation, handle it recursively
+		return o.loadNestedRelation(entity, parts)
+	}
+
+	// This is a direct relation, load it normally
+	return o.loadDirectRelation(entity, relationPath)
+}
+
+// loadNestedRelation loads a nested relation path (e.g., "User.Roles")
+func (o *ORM[T]) loadNestedRelation(entity T, relationParts []string) error {
+	if len(relationParts) == 0 {
+		return nil // Nothing to load
+	}
+
+	// Load the first level relation
+	firstRelation := relationParts[0]
+	err := o.loadDirectRelation(entity, firstRelation)
+	if err != nil {
+		return fmt.Errorf("failed to load first-level relation '%s': %w", firstRelation, err)
+	}
+
+	// If there are more parts, we need to load nested relations
+	if len(relationParts) > 1 {
+		// Get the loaded relation value
+		entityValue := reflect.ValueOf(entity)
+		if entityValue.Kind() == reflect.Ptr {
+			entityValue = entityValue.Elem()
+		}
+
+		relationField := entityValue.FieldByName(firstRelation)
+		if !relationField.IsValid() {
+			return fmt.Errorf("relation field '%s' not found after loading", firstRelation)
+		}
+
+		// Handle different types of relations (single entity or slice)
+		if relationField.Kind() == reflect.Slice {
+			// This is a slice relation (hasMany or many2many)
+			// We need to load the nested relation for each item in the slice
+			for i := 0; i < relationField.Len(); i++ {
+				item := relationField.Index(i)
+
+				// If it's a pointer, get the element
+				if item.Kind() == reflect.Ptr && !item.IsNil() {
+					// Get the entity from the item
+					relatedEntity := item.Interface()
+
+					// Check if the related entity implements EntityWithMeta
+					if entityWithMeta, ok := relatedEntity.(EntityWithMeta); ok {
+						// Create a new ORM for the related entity type
+						relatedORM := New[EntityWithMeta](o.db)
+
+						// Load the nested relation on the related entity
+						err := relatedORM.LoadRelation(entityWithMeta, strings.Join(relationParts[1:], "."))
+						if err != nil {
+							return fmt.Errorf("failed to load nested relation '%s' on item %d: %w",
+								strings.Join(relationParts[1:], "."), i, err)
+						}
+					} else {
+						return fmt.Errorf("related entity for '%s' at index %d does not implement EntityWithMeta", firstRelation, i)
+					}
+				}
+			}
+		} else {
+			// This is a single entity relation (hasOne or belongsTo)
+			// If it's a pointer and not nil, load the nested relation
+			if (relationField.Kind() == reflect.Ptr && !relationField.IsNil()) ||
+				(relationField.Kind() == reflect.Struct) {
+
+				var relatedEntity interface{}
+				if relationField.Kind() == reflect.Ptr {
+					relatedEntity = relationField.Interface()
+				} else {
+					// If it's a struct, we need to get a pointer to it
+					relatedEntity = relationField.Addr().Interface()
+				}
+
+				// Check if the related entity implements EntityWithMeta
+				if entityWithMeta, ok := relatedEntity.(EntityWithMeta); ok {
+					// Create a new ORM for the related entity type
+					relatedORM := New[EntityWithMeta](o.db)
+
+					// Load the nested relation on the related entity
+					err := relatedORM.LoadRelation(entityWithMeta, strings.Join(relationParts[1:], "."))
+					if err != nil {
+						return fmt.Errorf("failed to load nested relation '%s': %w",
+							strings.Join(relationParts[1:], "."), err)
+					}
+				} else {
+					return fmt.Errorf("related entity for '%s' does not implement EntityWithMeta", firstRelation)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// loadDirectRelation loads a direct (non-nested) relation for an entity
+func (o *ORM[T]) loadDirectRelation(entity T, relationName string) error {
 	meta := entity.GetMeta()
 	if meta == nil {
 		return errors.New("entity meta cannot be nil")
 	}
 
 	// Check if relation is already loaded
-	if meta.LoadedRelations[relationName] {
+	if meta.IsRelationLoaded(relationName) {
 		return nil // Already loaded
 	}
 
@@ -1439,70 +1588,120 @@ func (o *ORM[T]) LoadRelation(entity T, relationName string) error {
 	// Try to use schema.Parse to get relation information
 	schemaCache := &sync.Map{}
 	entitySchema, err := schema.Parse(entity, schemaCache, schema.NamingStrategy{})
-	if err == nil {
-		// If schema parsing succeeded, try to use it
-		if relationship, exists := entitySchema.Relationships.Relations[relationName]; exists {
-			// Get primary key value
-			var pkValue interface{}
-			var foreignKey, references string
-
-			// Get primary key field and value
-			if len(entitySchema.PrimaryFieldDBNames) > 0 {
-				pkField := entityValue.FieldByName(entitySchema.PrimaryFields[0].Name)
-				if pkField.IsValid() {
-					pkValue = pkField.Interface()
-
-					// Handle different relation types
-					switch relationship.Type {
-					case schema.HasOne, schema.HasMany:
-						if len(relationship.References) > 0 {
-							foreignKey = relationship.References[0].ForeignKey.DBName
-							err = o.loadHasRelation(entity, relationName, relationField, foreignKey, pkValue, relationship)
-							if err == nil {
-								// Mark relation as loaded
-								meta.LoadedRelations[relationName] = true
-								return nil
-							}
-						}
-					case schema.BelongsTo:
-						if len(relationship.References) > 0 {
-							foreignKey = relationship.References[0].ForeignKey.DBName
-							err = o.loadBelongsToRelation(entity, relationName, relationField, foreignKey, pkValue, relationship)
-							if err == nil {
-								// Mark relation as loaded
-								meta.LoadedRelations[relationName] = true
-								return nil
-							}
-						}
-					case schema.Many2Many:
-						if relationship.JoinTable != nil && len(relationship.References) > 0 {
-							joinTable := relationship.JoinTable.Name
-							references = relationship.References[0].PrimaryKey.DBName
-							err = o.loadManyToManyRelation(entity, relationName, relationField, joinTable, references, relationship.Field.Tag.Get("gorm"), relationship)
-							if err == nil {
-								// Mark relation as loaded
-								meta.LoadedRelations[relationName] = true
-								return nil
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Return error if schema parsing fails or relation not found
 	if err != nil {
 		return fmt.Errorf("failed to parse entity schema: %w", err)
 	}
 
 	// Check if the relationship exists in the schema
-	if _, exists := entitySchema.Relationships.Relations[relationName]; !exists {
+	relationship, exists := entitySchema.Relationships.Relations[relationName]
+	if !exists {
 		return fmt.Errorf("relation '%s' not found in entity schema", relationName)
 	}
 
-	// If we reached here, it means the schema was parsed successfully but the relation loading failed
-	return fmt.Errorf("failed to load relation '%s': schema information was incomplete or invalid", relationName)
+	// Get primary key value
+	var pkValue interface{}
+	var foreignKey, references string
+
+	// Get primary key field and value
+	if len(entitySchema.PrimaryFieldDBNames) == 0 {
+		return fmt.Errorf("entity has no primary key fields defined")
+	}
+
+	pkField := entityValue.FieldByName(entitySchema.PrimaryFields[0].Name)
+	if !pkField.IsValid() {
+		return fmt.Errorf("primary key field '%s' not found", entitySchema.PrimaryFields[0].Name)
+	}
+
+	pkValue = pkField.Interface()
+
+	// Handle different relation types
+	switch relationship.Type {
+	case schema.HasOne, schema.HasMany:
+		if len(relationship.References) == 0 {
+			return fmt.Errorf("hasOne/hasMany relation '%s' has no references defined", relationName)
+		}
+
+		foreignKey = relationship.References[0].ForeignKey.DBName
+		err = o.loadHasRelation(entity, relationName, relationField, foreignKey, pkValue, relationship)
+		if err != nil {
+			return fmt.Errorf("failed to load hasOne/hasMany relation '%s': %w", relationName, err)
+		}
+
+	case schema.BelongsTo:
+		if len(relationship.References) == 0 {
+			return fmt.Errorf("belongsTo relation '%s' has no references defined", relationName)
+		}
+
+		foreignKey = relationship.References[0].ForeignKey.DBName
+		foreignKeyField := entityValue.FieldByName(relationship.References[0].ForeignKey.Name)
+		if !foreignKeyField.IsValid() {
+			return fmt.Errorf("foreign key field '%s' not found for belongsTo relation '%s'",
+				relationship.References[0].ForeignKey.Name, relationName)
+		}
+
+		err = o.loadBelongsToRelation(entity, relationName, relationField, foreignKeyField.Interface(), relationship)
+		if err != nil {
+			return fmt.Errorf("failed to load belongsTo relation '%s': %w", relationName, err)
+		}
+
+	case schema.Many2Many:
+		if relationship.JoinTable == nil {
+			return fmt.Errorf("many2many relation '%s' has no join table defined", relationName)
+		}
+
+		if len(relationship.References) == 0 {
+			return fmt.Errorf("many2many relation '%s' has no references defined", relationName)
+		}
+
+		joinTable := relationship.JoinTable.Name
+		references = relationship.References[0].PrimaryKey.DBName
+		err = o.loadManyToManyRelation(entity, relationName, relationField, joinTable, references,
+			relationship.Field.Tag.Get("gorm"), relationship)
+		if err != nil {
+			return fmt.Errorf("failed to load many2many relation '%s': %w", relationName, err)
+		}
+
+	default:
+		return fmt.Errorf("unsupported relation type for '%s'", relationName)
+	}
+
+	// Create relation metadata
+	relationMeta := &RelationMeta{
+		LoadedAt: time.Now(),
+	}
+
+	// Set relation type
+	switch relationship.Type {
+	case schema.HasOne:
+		relationMeta.Type = "HasOne"
+	case schema.HasMany:
+		relationMeta.Type = "HasMany"
+		// Count the number of related entities if it's a slice
+		if relationField.Kind() == reflect.Slice {
+			relationMeta.Count = relationField.Len()
+		}
+	case schema.BelongsTo:
+		relationMeta.Type = "BelongsTo"
+	case schema.Many2Many:
+		relationMeta.Type = "Many2Many"
+		// Count the number of related entities if it's a slice
+		if relationField.Kind() == reflect.Slice {
+			relationMeta.Count = relationField.Len()
+		}
+		// Set join table for Many2Many relations
+		if relationship.JoinTable != nil {
+			relationMeta.JoinTable = relationship.JoinTable.Name
+		}
+	}
+
+	// Set foreign key
+	if len(relationship.References) > 0 {
+		relationMeta.ForeignKey = relationship.References[0].ForeignKey.DBName
+	}
+
+	// Mark relation as loaded with metadata
+	meta.SetRelationLoaded(relationName, relationMeta)
+	return nil
 }
 
 // loadHasRelation loads hasOne or hasMany relations
@@ -1557,6 +1756,12 @@ func (o *ORM[T]) loadHasRelation(
 			Right:    pkValue,
 		})
 
+	// Create relation metadata
+	relationType := "HasMany"
+	if !isSlice {
+		relationType = "HasOne"
+	}
+
 	// Execute query
 	if isSlice {
 		// Create a new slice to hold results
@@ -1575,9 +1780,38 @@ func (o *ORM[T]) loadHasRelation(
 		// Get the slice value
 		destSliceVal := destSlice.Elem()
 
-		// Copy elements to the result slice
+		// Copy elements to the result slice and add metadata to each entity
 		for i := 0; i < destSliceVal.Len(); i++ {
 			item := destSliceVal.Index(i)
+
+			// Add metadata to the entity
+			if item.Kind() == reflect.Ptr && !item.IsNil() {
+				if entityWithMeta, ok := item.Interface().(EntityWithMeta); ok {
+					// Create relation metadata for this entity
+					relationMeta := &RelationMeta{
+						Type:       relationType,
+						ForeignKey: foreignKey,
+						LoadedAt:   time.Now(),
+					}
+
+					// Set metadata on the entity
+					meta := entityWithMeta.GetMeta()
+					if meta == nil {
+						meta = &EntityMeta{
+							TableName:     tableName,
+							PrimaryKey:    "id", // Default
+							IsLoaded:      true,
+							IsNew:         false,
+							LoadedColumns: make(map[string]bool),
+							RelationMeta:  make(map[string]*RelationMeta),
+						}
+						entityWithMeta.SetMeta(meta)
+					}
+
+					// Set the relation metadata
+					meta.SetRelationLoaded("Parent", relationMeta)
+				}
+			}
 
 			// Append to result slice based on whether the relation field expects pointers or values
 			if relationField.Type().Elem().Kind() == reflect.Ptr {
@@ -1607,6 +1841,33 @@ func (o *ORM[T]) loadHasRelation(
 			return queryRes.Error
 		}
 
+		// Add metadata to the entity
+		if entityWithMeta, ok := elem.Interface().(EntityWithMeta); ok {
+			// Create relation metadata for this entity
+			relationMeta := &RelationMeta{
+				Type:       relationType,
+				ForeignKey: foreignKey,
+				LoadedAt:   time.Now(),
+			}
+
+			// Set metadata on the entity
+			meta := entityWithMeta.GetMeta()
+			if meta == nil {
+				meta = &EntityMeta{
+					TableName:     tableName,
+					PrimaryKey:    "id", // Default
+					IsLoaded:      true,
+					IsNew:         false,
+					LoadedColumns: make(map[string]bool),
+					RelationMeta:  make(map[string]*RelationMeta),
+				}
+				entityWithMeta.SetMeta(meta)
+			}
+
+			// Set the relation metadata
+			meta.SetRelationLoaded("Parent", relationMeta)
+		}
+
 		// Set the result to the relation field
 		if relationField.Type().Kind() == reflect.Ptr {
 			relationField.Set(elem)
@@ -1623,7 +1884,6 @@ func (o *ORM[T]) loadBelongsToRelation(
 	entity T,
 	relationName string,
 	relationField reflect.Value,
-	foreignKey string,
 	pkValue interface{},
 	relationship *schema.Relationship,
 ) error {
@@ -1643,8 +1903,8 @@ func (o *ORM[T]) loadBelongsToRelation(
 		return fmt.Errorf("cannot load belongsTo relation '%s': foreign key reference information is missing", relationName)
 	}
 
-	foreignKey = relationship.References[0].ForeignKey.DBName
 	primaryKey := relationship.References[0].PrimaryKey.DBName
+	foreignKey := relationship.References[0].ForeignKey.DBName
 
 	// Build query to load related entity
 	var builder dbCore.IQueryBuilder
@@ -1673,6 +1933,33 @@ func (o *ORM[T]) loadBelongsToRelation(
 			return nil
 		}
 		return queryRes.Error
+	}
+
+	// Add metadata to the entity
+	if entityWithMeta, ok := elem.Interface().(EntityWithMeta); ok {
+		// Create relation metadata for this entity
+		relationMeta := &RelationMeta{
+			Type:       "BelongsTo",
+			ForeignKey: foreignKey,
+			LoadedAt:   time.Now(),
+		}
+
+		// Set metadata on the entity
+		meta := entityWithMeta.GetMeta()
+		if meta == nil {
+			meta = &EntityMeta{
+				TableName:     tableName,
+				PrimaryKey:    primaryKey, // Use the primary key from relationship
+				IsLoaded:      true,
+				IsNew:         false,
+				LoadedColumns: make(map[string]bool),
+				RelationMeta:  make(map[string]*RelationMeta),
+			}
+			entityWithMeta.SetMeta(meta)
+		}
+
+		// Set the relation metadata
+		meta.SetRelationLoaded("Parent", relationMeta)
 	}
 
 	// Set the result to the relation field
@@ -1787,9 +2074,39 @@ func (o *ORM[T]) loadManyToManyRelation(
 	// Get the slice value
 	destSliceVal := destSlice.Elem()
 
-	// Copy elements to the result slice
+	// Copy elements to the result slice and add metadata to each entity
 	for i := 0; i < destSliceVal.Len(); i++ {
 		item := destSliceVal.Index(i)
+
+		// Add metadata to the entity
+		if item.Kind() == reflect.Ptr && !item.IsNil() {
+			if entityWithMeta, ok := item.Interface().(EntityWithMeta); ok {
+				// Create relation metadata for this entity
+				relationMeta := &RelationMeta{
+					Type:       "Many2Many",
+					JoinTable:  joinTable,
+					ForeignKey: referenceFKName,
+					LoadedAt:   time.Now(),
+				}
+
+				// Set metadata on the entity
+				meta := entityWithMeta.GetMeta()
+				if meta == nil {
+					meta = &EntityMeta{
+						TableName:     relatedTableName,
+						PrimaryKey:    "id", // Default
+						IsLoaded:      true,
+						IsNew:         false,
+						LoadedColumns: make(map[string]bool),
+						RelationMeta:  make(map[string]*RelationMeta),
+					}
+					entityWithMeta.SetMeta(meta)
+				}
+
+				// Set the relation metadata
+				meta.SetRelationLoaded("Parent", relationMeta)
+			}
+		}
 
 		// Append to result slice based on whether the relation field expects pointers or values
 		if relationField.Type().Elem().Kind() == reflect.Ptr {
@@ -1824,16 +2141,16 @@ func (o *ORM[T]) AllByQuery(qb dbCore.IQueryBuilder) ([]T, error) {
 		meta := entities[i].GetMeta()
 		if meta == nil {
 			meta = &EntityMeta{
-				IsLoaded:        true,
-				IsNew:           false,
-				IsDirty:         false,
-				PrimaryKey:      "id",
-				LoadedColumns:   make(map[string]bool),
-				LoadedRelations: make(map[string]bool),
-				DataSource:      o.db.DataSource(),
-				LastQuery:       sql,
-				LastArgs:        args,
-				QueryResult:     &queryResult,
+				IsLoaded:      true,
+				IsNew:         false,
+				IsDirty:       false,
+				PrimaryKey:    "id",
+				LoadedColumns: make(map[string]bool),
+				RelationMeta:  make(map[string]*RelationMeta),
+				DataSource:    o.db.DataSource(),
+				LastQuery:     sql,
+				LastArgs:      args,
+				QueryResult:   &queryResult,
 			}
 			entities[i].SetMeta(meta)
 		} else {
@@ -1866,16 +2183,16 @@ func (o *ORM[T]) FirstByQuery(qb dbCore.IQueryBuilder) (T, error) {
 		meta := entity.GetMeta()
 		if meta == nil {
 			meta = &EntityMeta{
-				IsLoaded:        queryResult.Found,
-				IsNew:           false,
-				IsDirty:         false,
-				PrimaryKey:      "id",
-				LoadedColumns:   make(map[string]bool),
-				LoadedRelations: make(map[string]bool),
-				DataSource:      o.db.DataSource(),
-				LastQuery:       sql,
-				LastArgs:        args,
-				QueryResult:     &queryResult,
+				IsLoaded:      queryResult.Found,
+				IsNew:         false,
+				IsDirty:       false,
+				PrimaryKey:    "id",
+				LoadedColumns: make(map[string]bool),
+				RelationMeta:  make(map[string]*RelationMeta),
+				DataSource:    o.db.DataSource(),
+				LastQuery:     sql,
+				LastArgs:      args,
+				QueryResult:   &queryResult,
 			}
 			entity.SetMeta(meta)
 		} else {
