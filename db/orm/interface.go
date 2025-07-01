@@ -5,50 +5,50 @@ import (
 	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
 )
 
-// IORM defines the interface for ORM operations
-// T must implement EntityWithMeta
-type IORM[T EntityWithMeta] interface {
-	// Basic CRUD Operations
-
-	// Find finds an entity by its ID and returns it
-	Find(id interface{}) (T, error)
-
-	// Save saves an entity (creates if new, updates if existing)
+// Saver defines methods for saving, creating, updating, and deleting entities in the ORM.
+type Saver[T EntityWithMeta] interface {
+	// Save persists the given entity to the database, creating or updating as needed.
 	Save(entity T) error
-
-	// Create creates a new entity
+	// Create inserts a new entity into the database.
 	Create(entity T) error
-
-	// Update updates an existing entity
+	// Update modifies an existing entity in the database.
 	Update(entity T) error
-
-	// Delete deletes an entity
+	// Delete removes the given entity from the database.
 	Delete(entity T) error
+}
 
-	// Refresh reloads an entity from the database
-	Refresh(entity T) error
-
-	// Stateless Query Execution
-
-	// AllByQuery executes the given query builder and returns all results
-	AllByQuery(qb dbCore.IQueryBuilder) ([]T, error)
-
-	// FirstByQuery executes the given query builder and returns the first result
-	FirstByQuery(qb dbCore.IQueryBuilder) (T, error)
-
-	// CountByQuery executes the given query builder and returns the count
-	CountByQuery(qb dbCore.IQueryBuilder) (int64, error)
-
-	// Raw Query Execution
-
-	// RawQuery executes a raw SQL query and returns the first result
+// Finder defines methods for retrieving entities from the database.
+type Finder[T EntityWithMeta] interface {
+	// Find retrieves an entity by its primary key.
+	Find(id interface{}) (T, error)
+	// All retrieves all entities of the given type.
+	All() ([]T, error)
+	// RawQuery executes a raw SQL query and returns the first result.
 	RawQuery(query string, args ...interface{}) (T, error)
-
-	// RawQueryAll executes a raw SQL query and returns all results
+	// RawQueryAll executes a raw SQL query and returns all results.
 	RawQueryAll(query string, args ...interface{}) ([]T, error)
+	// Count returns the number of entities of the given type.
+	Count() (int64, error)
+	// AllByQuery executes the given query builder and returns all results.
+	AllByQuery(qb dbCore.IQueryBuilder) ([]T, error)
+	// FirstByQuery executes the given query builder and returns the first result.
+	FirstByQuery(qb dbCore.IQueryBuilder) (T, error)
+	// CountByQuery executes the given query builder and returns the count.
+	CountByQuery(qb dbCore.IQueryBuilder) (int64, error)
+}
 
-	// Relation Loading
+// RelationLoader defines methods for loading and saving entity relations.
+type RelationLoader[T EntityWithMeta] interface {
+	// LoadRelation loads a specific relation (or nested relation) for the given entity.
+	LoadRelation(entity T, relationPath string) error
+	// SaveRelations saves all relations of the given entity.
+	SaveRelations(entity T) error
+}
 
-	// LoadRelation loads a specific relation for an entity
-	LoadRelation(entity T, relationName string) error
+// IORM is the main ORM interface, embedding Saver, Finder, and RelationLoader.
+// It provides a unified API for all ORM operations.
+type IORM[T EntityWithMeta] interface {
+	Saver[T]
+	Finder[T]
+	RelationLoader[T]
 }

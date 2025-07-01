@@ -171,7 +171,6 @@ type IQueryBuilder interface {
 	IsNull(field interface{}) IQueryBuilder
 	IsNotNull(field interface{}) IQueryBuilder
 
-	// Missing methods for state inspection
 	HasFrom() bool
 	HasWhere() bool
 	HasJoin() bool
@@ -180,7 +179,6 @@ type IQueryBuilder interface {
 	HasLimit() bool
 	HasOffset() bool
 
-	// Missing methods for INSERT operations
 	Insert(table string) IQueryBuilder
 	Columns(columns ...string) IQueryBuilder
 	Values(values ...interface{}) IQueryBuilder
@@ -189,15 +187,12 @@ type IQueryBuilder interface {
 	DoNothing() IQueryBuilder
 	DoUpdate(setValues map[string]interface{}) IQueryBuilder
 
-	// Missing methods for UPDATE operations
 	Update(table string) IQueryBuilder
 	Set(field string, value interface{}) IQueryBuilder
 	SetMap(values map[string]interface{}) IQueryBuilder
 
-	// Missing methods for DELETE operations
 	Delete(table string) IQueryBuilder
 
-	// Query finalization
 	Build() *Query
 	ToSQL() (string, []any)
 }
