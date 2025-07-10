@@ -86,7 +86,6 @@ type IViewScope interface {
 
 // ISessionScope defines methods for session management and flash data.
 type ISessionScope interface {
-	Setup()
 	Get() ISession
 	ClearExpiredFlash()
 }

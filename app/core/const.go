@@ -174,3 +174,5 @@ const (
 )
 
 const DefaultLoginUrl = "/login"
+
+const CSRFTokenHeader = "X-CSRF-Token"

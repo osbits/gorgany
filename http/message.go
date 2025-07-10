@@ -6,6 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	err2 "git.qix.sx/gorgany/gorgany.git/err"
+	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/google/uuid"
 	"io"
 	"mime/multipart"
 	"net"
@@ -15,11 +18,6 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
-	"time"
-
-	err2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/util"
-	"github.com/google/uuid"
 
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
@@ -356,72 +354,13 @@ func NewHTTPSessionScope(ctx context.Context, authContext core.IAuthContext, ses
 	return &HTTPSessionScope{Ctx: ctx, Auth: authContext, Storage: sessionStorage}
 }
 
-func (s *HTTPSessionScope) Setup() {
-	if s.inited {
-		return
-	}
-	s.inited = true
-
-	if msgCtx, ok := s.Ctx.Value(core.MessageContextKey).(core.IMessageContext); ok {
-		if msgCtx.GetRequest().Method == http.MethodOptions {
-			return
-		}
-	}
-
+func (s *HTTPSessionScope) Get() core.ISession {
 	strat := s.Auth.ResolveAuthStrategyByContext(s.Ctx)
 	if strat == nil {
-		return
+		return nil
 	}
 
-	session := strat.CurrentSession(s.Ctx)
-	now := time.Now()
-
-	if session != nil && !session.IsExpired() {
-		session.SetExpiry(now.Add(s.Storage.GetSessionLifetime() * time.Second))
-		s.markFlashUsed(session)
-		session.SetLastActivity(time.Now())
-		s.Storage.AddSession(session)
-		s.current = session
-		return
-	}
-
-	if session != nil && session.IsExpired() {
-		s.Storage.DeleteSession(session)
-	}
-
-	newSess, err := strat.NewSessionWithoutUser(s.Ctx)
-	if err != nil {
-		err2.HandleError(err)
-		return
-	}
-	s.Storage.AddSession(newSess)
-	s.current = newSess
-}
-
-func (s *HTTPSessionScope) Get() core.ISession {
-	if !s.inited {
-		s.Setup()
-	}
-	return s.current
-}
-
-func (s *HTTPSessionScope) markFlashUsed(session core.ISession) {
-	raw := session.GetItem(core.OneTimeSessionAttributeKey)
-	if raw == "" {
-		return
-	}
-	otp := model.OneTimeParams{}
-	if err := json.Unmarshal([]byte(raw), &otp); err != nil {
-		err2.HandleError(err)
-		return
-	}
-	otp.Start = false
-	buf, err := json.Marshal(otp)
-	if err != nil {
-		err2.HandleError(err)
-		return
-	}
-	session.SetItem(core.OneTimeSessionAttributeKey, string(buf))
+	return strat.CurrentSession(s.Ctx)
 }
 
 func (s *HTTPSessionScope) ClearExpiredFlash() {
