@@ -34,59 +34,6 @@ var multipartTypeCache = struct {
 	m: make(map[reflect.Type]*typeInfo),
 }
 
-// multipartTypeInfo stores cached reflection information for a type
-type multipartTypeInfo struct {
-	fields  map[string]reflect.StructField
-	methods map[string]reflect.Method
-}
-
-// getMultipartTypeInfo returns cached reflection information for a type
-func getMultipartTypeInfo(t reflect.Type) *typeInfo {
-	indirectT := util.IndirectType(t)
-
-	multipartTypeCache.RLock()
-	if info, ok := multipartTypeCache.m[t]; ok {
-		multipartTypeCache.RUnlock()
-		return info
-	}
-	multipartTypeCache.RUnlock()
-
-	multipartTypeCache.Lock()
-	defer multipartTypeCache.Unlock()
-
-	// Double-check after acquiring write lock
-	if info, ok := multipartTypeCache.m[t]; ok {
-		return info
-	}
-
-	info := &typeInfo{
-		fields:      make(map[string]reflect.StructField),
-		bindMethods: make(map[string]reflect.Method),
-	}
-
-	if indirectT.Kind() == reflect.Struct {
-		for i := 0; i < indirectT.NumField(); i++ {
-			field := indirectT.Field(i)
-			if tag := field.Tag.Get("scheme"); tag != "" {
-				info.fields[tag] = field
-			} else {
-				info.fields[util.CamelCase(field.Name)] = field
-			}
-		}
-
-		for i := 0; i < t.NumMethod(); i++ {
-			method := t.Method(i)
-			if len(method.Name) > 4 && method.Name[:4] == "Bind" {
-				fieldName := method.Name[4:]
-				info.bindMethods[fieldName] = method
-			}
-		}
-	}
-
-	multipartTypeCache.m[t] = info
-	return info
-}
-
 // MultipartParser handles parsing of multipart form data into Go structures
 type MultipartParser struct {
 	message core.HttpMessage
@@ -240,7 +187,7 @@ func (p *MultipartParser) processValue(dest any, value interface{}, key string) 
 		}
 
 		if util.IndirectValue(rvDest).Kind() == reflect.Struct {
-			info := getMultipartTypeInfo(rvDest.Type())
+			info := getTypeInfo(rvDest.Type(), "scheme")
 			if structField, ok := info.fields[key]; ok {
 				field = rvDest.FieldByName(structField.Name)
 			} else {
@@ -376,7 +323,7 @@ func (p *MultipartParser) callBindMethodIfExists(command any, fieldName string, 
 		return false, nil
 	}
 
-	info := getMultipartTypeInfo(t)
+	info := getTypeInfo(t, "scheme")
 
 	if _, ok := info.fields[fieldName]; !ok {
 		return false, nil

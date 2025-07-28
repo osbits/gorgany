@@ -3,71 +3,14 @@ package http
 import (
 	"errors"
 	"fmt"
-	"reflect"
-	"sync"
-
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/db"
 	error2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/service/cache"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"github.com/gorilla/schema"
+	"reflect"
 )
-
-// queryTypeCache stores reflection information for types to avoid repeated lookups
-var queryTypeCache = struct {
-	sync.RWMutex
-	m map[reflect.Type]*typeInfo
-}{
-	m: make(map[reflect.Type]*typeInfo),
-}
-
-// getQueryTypeInfo returns cached reflection information for a type
-func getQueryTypeInfo(t reflect.Type) *typeInfo {
-	indirectT := util.IndirectType(t)
-
-	queryTypeCache.RLock()
-	if info, ok := queryTypeCache.m[t]; ok {
-		queryTypeCache.RUnlock()
-		return info
-	}
-	queryTypeCache.RUnlock()
-
-	queryTypeCache.Lock()
-	defer queryTypeCache.Unlock()
-
-	// Double-check after acquiring write lock
-	if info, ok := queryTypeCache.m[t]; ok {
-		return info
-	}
-
-	info := &typeInfo{
-		fields:      make(map[string]reflect.StructField),
-		bindMethods: make(map[string]reflect.Method),
-	}
-
-	if indirectT.Kind() == reflect.Struct {
-		for i := 0; i < indirectT.NumField(); i++ {
-			field := indirectT.Field(i)
-			if tag := field.Tag.Get("scheme"); tag != "" {
-				info.fields[tag] = field
-			} else {
-				info.fields[util.CamelCase(field.Name)] = field
-			}
-		}
-
-		for i := 0; i < t.NumMethod(); i++ {
-			method := t.Method(i)
-			if len(method.Name) > 4 && method.Name[:4] == "Bind" {
-				fieldName := method.Name[4:]
-				info.bindMethods[fieldName] = method
-			}
-		}
-	}
-
-	queryTypeCache.m[t] = info
-	return info
-}
 
 type QueryParser struct {
 	message core.HttpMessage
@@ -133,7 +76,7 @@ func (p *QueryParser) processValue(dest any, value interface{}, key string) erro
 		}
 
 		if util.IndirectValue(rvDest).Kind() == reflect.Struct {
-			info := getQueryTypeInfo(rvDest.Type())
+			info := getTypeInfo(rvDest.Type(), "scheme")
 			if structField, ok := info.fields[key]; ok {
 				field = rvDest.FieldByName(structField.Name)
 			} else {
@@ -267,7 +210,7 @@ func (p *QueryParser) callBindMethodIfExists(command any, fieldName string, valu
 		return false, nil
 	}
 
-	info := getQueryTypeInfo(t)
+	info := getTypeInfo(t, "scheme")
 
 	if _, ok := info.fields[fieldName]; !ok {
 		return false, nil

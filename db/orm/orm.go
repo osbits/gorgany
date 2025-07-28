@@ -48,17 +48,14 @@ func (o *ORM[T]) Find(id interface{}) (T, error) {
 	rEntity := reflect.ValueOf(entity)
 	indirectEntityType := util.IndirectType(rEntity.Type())
 
-	// Get table name - either from meta or by asking GORM
-	tableName := meta.TableName
-	if tableName == "" {
-		if entitySchema != nil {
-			tableName = entitySchema.Table
-		} else {
-			namer := schema.NamingStrategy{}
-			tableName = namer.TableName(indirectEntityType.Name())
-		}
-		meta.TableName = tableName
+	tableName := ""
+	if entitySchema != nil {
+		tableName = entitySchema.Table
+	} else {
+		namer := schema.NamingStrategy{}
+		tableName = namer.TableName(indirectEntityType.Name())
 	}
+	meta.TableName = tableName
 
 	// Create a new builder or use the existing one
 	if meta.QueryBuilder == nil {
@@ -472,7 +469,24 @@ func (o *ORM[T]) AllByQuery(qb dbCore.IQueryBuilder) ([]T, error) {
 func (o *ORM[T]) FirstByQuery(qb dbCore.IQueryBuilder) (T, error) {
 	var entity T
 
-	qb.Limit(1)
+	schemaCache := &sync.Map{}
+	entitySchema, err := schema.Parse(entity, schemaCache, schema.NamingStrategy{})
+	if err != nil {
+		return entity, fmt.Errorf("failed to parse entity schema in ORM: %w", err)
+	}
+
+	rEntity := reflect.ValueOf(entity)
+	indirectEntityType := util.IndirectType(rEntity.Type())
+
+	tableName := ""
+	if entitySchema != nil {
+		tableName = entitySchema.Table
+	} else {
+		namer := schema.NamingStrategy{}
+		tableName = namer.TableName(indirectEntityType.Name())
+	}
+
+	qb = qb.Limit(1).From(tableName)
 	sql, args := qb.ToSQL()
 
 	queryResult := o.db.Executor().FindRaw(context.Background(), &entity, sql, args...)

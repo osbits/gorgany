@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 
 	"git.qix.sx/gorgany/gorgany.git/app/core"
@@ -38,7 +39,7 @@ type typeInfo struct {
 }
 
 // getTypeInfo returns cached reflection information for a type
-func getTypeInfo(t reflect.Type) *typeInfo {
+func getTypeInfo(t reflect.Type, fieldNameByTag string) *typeInfo {
 	indirectT := util.IndirectType(t)
 
 	typeCache.RLock()
@@ -62,14 +63,7 @@ func getTypeInfo(t reflect.Type) *typeInfo {
 	}
 
 	if indirectT.Kind() == reflect.Struct {
-		for i := 0; i < indirectT.NumField(); i++ {
-			field := indirectT.Field(i)
-			if tag := field.Tag.Get("json"); tag != "" {
-				info.fields[tag] = field
-			} else {
-				info.fields[util.CamelCase(field.Name)] = field
-			}
-		}
+		addStructFields(indirectT, fieldNameByTag, info.fields)
 
 		for i := 0; i < t.NumMethod(); i++ {
 			method := t.Method(i)
@@ -82,6 +76,49 @@ func getTypeInfo(t reflect.Type) *typeInfo {
 
 	typeCache.m[t] = info
 	return info
+}
+
+func addStructFields(structType reflect.Type, tag string, fieldsMap map[string]reflect.StructField) {
+	embeddedFields := make([]reflect.Type, 0)
+	for i := 0; i < structType.NumField(); i++ {
+		field := structType.Field(i)
+
+		if field.Anonymous {
+			embeddedType := field.Type
+			if embeddedType.Kind() == reflect.Ptr {
+				embeddedType = embeddedType.Elem()
+			}
+
+			if embeddedType.Kind() == reflect.Struct {
+				embeddedFields = append(embeddedFields, embeddedType)
+			}
+
+			continue
+		}
+
+		// Handle regular field
+		var fieldName string
+		if tag := field.Tag.Get(tag); tag != "" {
+			splitTag := strings.Split(tag, ",")
+			if len(splitTag) > 1 {
+				fieldName = splitTag[0]
+			} else {
+				fieldName = tag
+			}
+		} else {
+			fieldName = util.CamelCase(field.Name)
+		}
+
+		if _, ok := fieldsMap[fieldName]; ok {
+			continue
+		}
+
+		fieldsMap[fieldName] = field
+	}
+
+	for _, embeddedType := range embeddedFields {
+		addStructFields(embeddedType, tag, fieldsMap)
+	}
 }
 
 // newValidationError creates a ValidationErrors with a single error entry
@@ -183,7 +220,7 @@ func (p *JsonParser) processValue(dest any, value interface{}, key string) error
 
 		// Otherwise try to find a field with a matching JSON tag
 		if util.IndirectValue(rvDest).Kind() == reflect.Struct {
-			info := getTypeInfo(rvDest.Type())
+			info := getTypeInfo(rvDest.Type(), "json")
 			if structField, ok := info.fields[key]; ok {
 				field = rvDest.FieldByName(structField.Name)
 			} else {
@@ -384,7 +421,7 @@ func (p *JsonParser) callBindMethodIfExists(command any, fieldName string, value
 		return false, nil
 	}
 
-	info := getTypeInfo(t)
+	info := getTypeInfo(t, "json")
 
 	// Find the field with the matching JSON tag
 	if _, ok := info.fields[fieldName]; !ok {

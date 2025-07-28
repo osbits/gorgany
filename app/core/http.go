@@ -167,7 +167,7 @@ type HttpFilterCommand interface {
 	AllowFilterFields(ctx context.Context) []string
 }
 
-// HttpAccessCommand defines the interface for HTTP access control
+// HttpAccessCommand defines the interface for HTTP access control. Deprecated
 type HttpAccessCommand interface {
 	// IsAccessAllowed checks if access is allowed for the current context
 	IsAccessAllowed(ctx context.Context) bool

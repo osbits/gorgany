@@ -29,7 +29,7 @@ func (o *ORM[T]) Save(entity T) error {
 		}
 		entity.SetMeta(meta)
 	}
-	if meta.IsNew {
+	if !meta.IsLoaded {
 		return o.createEntity(entity)
 	}
 	return o.updateEntity(entity)
