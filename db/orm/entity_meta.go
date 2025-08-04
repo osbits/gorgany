@@ -22,7 +22,6 @@ type EntityMeta struct {
 	PrimaryKey    string
 	DatabaseName  string
 	IsLoaded      bool
-	IsNew         bool
 	IsDirty       bool
 	LoadedColumns map[string]bool
 	LastQuery     string
@@ -75,7 +74,7 @@ func (e *BaseEntity) GetMeta() *EntityMeta {
 	if e.Meta == nil {
 		e.Meta = &EntityMeta{
 			PrimaryKey:    "id",
-			IsNew:         true,
+			IsLoaded:      true,
 			LoadedColumns: make(map[string]bool),
 			RelationMeta:  make(map[string]*RelationMeta),
 		}

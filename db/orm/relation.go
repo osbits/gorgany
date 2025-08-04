@@ -493,7 +493,6 @@ func (o *ORM[T]) loadHasRelation(
 							TableName:     tableName,
 							PrimaryKey:    "id", // Default
 							IsLoaded:      true,
-							IsNew:         false,
 							LoadedColumns: make(map[string]bool),
 							RelationMeta:  make(map[string]*RelationMeta),
 						}
@@ -549,7 +548,6 @@ func (o *ORM[T]) loadHasRelation(
 					TableName:     tableName,
 					PrimaryKey:    "id", // Default
 					IsLoaded:      true,
-					IsNew:         false,
 					LoadedColumns: make(map[string]bool),
 					RelationMeta:  make(map[string]*RelationMeta),
 				}
@@ -643,7 +641,6 @@ func (o *ORM[T]) loadBelongsToRelation(
 				TableName:     tableName,
 				PrimaryKey:    primaryKey, // Use the primary key from relationship
 				IsLoaded:      true,
-				IsNew:         false,
 				LoadedColumns: make(map[string]bool),
 				RelationMeta:  make(map[string]*RelationMeta),
 			}
@@ -788,7 +785,6 @@ func (o *ORM[T]) loadManyToManyRelation(
 						TableName:     relatedTableName,
 						PrimaryKey:    "id", // Default
 						IsLoaded:      true,
-						IsNew:         false,
 						LoadedColumns: make(map[string]bool),
 						RelationMeta:  make(map[string]*RelationMeta),
 					}

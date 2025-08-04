@@ -90,7 +90,6 @@ func (o *ORM[T]) Find(id interface{}) (T, error) {
 
 		// If rows were found, update other metadata
 		if meta.IsLoaded {
-			meta.IsNew = false
 			meta.IsDirty = false
 		}
 
@@ -157,7 +156,6 @@ func (o *ORM[T]) All() ([]T, error) {
 				TableName:     tableName,
 				PrimaryKey:    primaryKey,
 				IsLoaded:      true, // We know entities were found if we're here
-				IsNew:         false,
 				IsDirty:       false,
 				LoadedColumns: make(map[string]bool),
 				RelationMeta:  make(map[string]*RelationMeta),
@@ -169,7 +167,6 @@ func (o *ORM[T]) All() ([]T, error) {
 			entities[i].SetMeta(entityMeta)
 		} else {
 			entityMeta.IsLoaded = true // We know entities were found if we're here
-			entityMeta.IsNew = false
 			entityMeta.IsDirty = false
 			entityMeta.DataSource = o.db.DataSource()
 			entityMeta.LastQuery = sql
@@ -214,7 +211,6 @@ func (o *ORM[T]) RawQuery(query string, args ...interface{}) (T, error) {
 
 		// If rows were found, update other metadata
 		if meta.IsLoaded {
-			meta.IsNew = false
 			meta.IsDirty = false
 		}
 
@@ -262,7 +258,6 @@ func (o *ORM[T]) RawQueryAll(query string, args ...interface{}) ([]T, error) {
 		if meta == nil {
 			meta = &EntityMeta{
 				IsLoaded:      true, // We know entities were found if we're here
-				IsNew:         false,
 				IsDirty:       false,
 				PrimaryKey:    "id",
 				LoadedColumns: make(map[string]bool),
@@ -275,7 +270,6 @@ func (o *ORM[T]) RawQueryAll(query string, args ...interface{}) ([]T, error) {
 			entities[i].SetMeta(meta)
 		} else {
 			meta.IsLoaded = true // We know entities were found if we're here
-			meta.IsNew = false
 			meta.IsDirty = false
 			meta.DataSource = o.db.DataSource()
 			meta.LastQuery = query
@@ -413,7 +407,6 @@ func (o *ORM[T]) Refresh(entity T) error {
 
 	// Update metadata
 	meta.IsLoaded = true
-	meta.IsNew = false
 	meta.IsDirty = false
 	meta.DataSource = o.db.DataSource()
 
@@ -440,7 +433,6 @@ func (o *ORM[T]) AllByQuery(qb dbCore.IQueryBuilder) ([]T, error) {
 		if meta == nil {
 			meta = &EntityMeta{
 				IsLoaded:      true,
-				IsNew:         false,
 				IsDirty:       false,
 				PrimaryKey:    "id",
 				LoadedColumns: make(map[string]bool),
@@ -453,7 +445,6 @@ func (o *ORM[T]) AllByQuery(qb dbCore.IQueryBuilder) ([]T, error) {
 			entities[i].SetMeta(meta)
 		} else {
 			meta.IsLoaded = true
-			meta.IsNew = false
 			meta.IsDirty = false
 			meta.DataSource = o.db.DataSource()
 			meta.LastQuery = sql
@@ -499,7 +490,6 @@ func (o *ORM[T]) FirstByQuery(qb dbCore.IQueryBuilder) (T, error) {
 		if meta == nil {
 			meta = &EntityMeta{
 				IsLoaded:      queryResult.Found,
-				IsNew:         false,
 				IsDirty:       false,
 				PrimaryKey:    "id",
 				LoadedColumns: make(map[string]bool),
@@ -512,7 +502,6 @@ func (o *ORM[T]) FirstByQuery(qb dbCore.IQueryBuilder) (T, error) {
 			entity.SetMeta(meta)
 		} else {
 			meta.IsLoaded = queryResult.Found
-			meta.IsNew = false
 			meta.IsDirty = false
 			meta.DataSource = o.db.DataSource()
 			meta.LastQuery = sql
@@ -527,7 +516,26 @@ func (o *ORM[T]) FirstByQuery(qb dbCore.IQueryBuilder) (T, error) {
 // CountByQuery executes the given query builder and returns the count
 func (o *ORM[T]) CountByQuery(qb dbCore.IQueryBuilder) (int64, error) {
 	// Set the builder to select COUNT(*)
-	qb.Select("COUNT(*)")
+	var entity T
+
+	schemaCache := &sync.Map{}
+	entitySchema, err := schema.Parse(entity, schemaCache, schema.NamingStrategy{})
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse entity schema in ORM: %w", err)
+	}
+
+	rEntity := reflect.ValueOf(entity)
+	indirectEntityType := util.IndirectType(rEntity.Type())
+
+	tableName := ""
+	if entitySchema != nil {
+		tableName = entitySchema.Table
+	} else {
+		namer := schema.NamingStrategy{}
+		tableName = namer.TableName(indirectEntityType.Name())
+	}
+
+	qb = qb.Select("COUNT(*)").From(tableName)
 	sql, args := qb.ToSQL()
 
 	count, err := o.db.Executor().CountRaw(context.Background(), sql, args...)

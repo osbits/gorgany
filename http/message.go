@@ -355,12 +355,21 @@ func NewHTTPSessionScope(ctx context.Context, authContext core.IAuthContext, ses
 }
 
 func (s *HTTPSessionScope) Get() core.ISession {
+	if s.current != nil {
+		return s.current
+	}
+
 	strat := s.Auth.ResolveAuthStrategyByContext(s.Ctx)
 	if strat == nil {
 		return nil
 	}
 
-	return strat.CurrentSession(s.Ctx)
+	s.current = strat.CurrentSession(s.Ctx)
+	return s.current
+}
+
+func (s *HTTPSessionScope) Set(session core.ISession) {
+	s.current = session
 }
 
 func (s *HTTPSessionScope) ClearExpiredFlash() {

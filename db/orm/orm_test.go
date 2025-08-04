@@ -147,7 +147,6 @@ func (m *MockExecutor) QueryRaw(ctx context.Context, dest interface{}, sql strin
 			TableName:     "test_entities",
 			PrimaryKey:    "id",
 			IsLoaded:      true,
-			IsNew:         false,
 			LoadedColumns: make(map[string]bool),
 		})
 	case *[]TestEntity:
@@ -170,7 +169,6 @@ func (m *MockExecutor) QueryRaw(ctx context.Context, dest interface{}, sql strin
 				TableName:     "test_entities",
 				PrimaryKey:    "id",
 				IsLoaded:      true,
-				IsNew:         false,
 				LoadedColumns: make(map[string]bool),
 			})
 		}
@@ -264,7 +262,6 @@ func TestFind(t *testing.T) {
 			TableName:     "test_entities",
 			PrimaryKey:    "id",
 			IsLoaded:      true,
-			IsNew:         false,
 			LoadedColumns: make(map[string]bool),
 		})
 
@@ -309,9 +306,6 @@ func TestFind(t *testing.T) {
 	}
 	if !meta.IsLoaded {
 		t.Errorf("Expected IsLoaded: true, got: false")
-	}
-	if meta.IsNew {
-		t.Errorf("Expected IsNew: false, got: true")
 	}
 }
 
@@ -369,9 +363,6 @@ func TestCreate(t *testing.T) {
 
 	// Check that the entity metadata was set correctly
 	meta := entity.GetMeta()
-	if meta.IsNew {
-		t.Errorf("Expected IsNew: false, got: true")
-	}
 	if !meta.IsLoaded {
 		t.Errorf("Expected IsLoaded: true, got: false")
 	}
@@ -404,7 +395,6 @@ func TestUpdate(t *testing.T) {
 		TableName:     "test_entities",
 		PrimaryKey:    "id",
 		IsLoaded:      true,
-		IsNew:         false,
 		LoadedColumns: make(map[string]bool),
 	})
 
@@ -447,7 +437,6 @@ func TestDelete(t *testing.T) {
 		TableName:     "test_entities",
 		PrimaryKey:    "id",
 		IsLoaded:      true,
-		IsNew:         false,
 		LoadedColumns: make(map[string]bool),
 	})
 
@@ -515,7 +504,6 @@ func TestLoadRelation(t *testing.T) {
 		TableName:     "test_entities",
 		PrimaryKey:    "id",
 		IsLoaded:      true,
-		IsNew:         false,
 		LoadedColumns: make(map[string]bool),
 	})
 
@@ -539,7 +527,7 @@ func TestSaveRelations(t *testing.T) {
 	mockDS := NewMockDataSource()
 	var orm RelationLoader[*TestEntity] = New[*TestEntity](mockDS.session)
 	entity := &TestEntity{ID: 1, Name: "Test Entity"}
-	entity.SetMeta(&EntityMeta{TableName: "test_entities", PrimaryKey: "id", IsLoaded: true, IsNew: false, LoadedColumns: make(map[string]bool)})
+	entity.SetMeta(&EntityMeta{TableName: "test_entities", PrimaryKey: "id", IsLoaded: true, LoadedColumns: make(map[string]bool)})
 	// Should not panic or error (no relations defined in schema)
 	if err := orm.SaveRelations(entity); err != nil {
 		t.Errorf("Expected no error, got: %v", err)
@@ -583,7 +571,6 @@ func TestRawQuery(t *testing.T) {
 			TableName:     "test_entities",
 			PrimaryKey:    "id",
 			IsLoaded:      true,
-			IsNew:         false,
 			LoadedColumns: make(map[string]bool),
 		})
 
@@ -665,7 +652,6 @@ func TestAll(t *testing.T) {
 				TableName:     "test_entities",
 				PrimaryKey:    "id",
 				IsLoaded:      true,
-				IsNew:         false,
 				LoadedColumns: make(map[string]bool),
 			})
 		}
@@ -756,7 +742,6 @@ func TestRawQueryAll(t *testing.T) {
 				TableName:     "test_entities",
 				PrimaryKey:    "id",
 				IsLoaded:      true,
-				IsNew:         false,
 				LoadedColumns: make(map[string]bool),
 			})
 		}

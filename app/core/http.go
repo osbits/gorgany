@@ -90,6 +90,11 @@ type ISessionScope interface {
 	ClearExpiredFlash()
 }
 
+type IEditableSessionScope interface {
+	ISessionScope
+	Set(ISession)
+}
+
 // HttpMessage defines the full HTTP facade for controllers and dispatcher.
 type HttpMessage interface {
 	io.Closer

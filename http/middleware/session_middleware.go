@@ -79,6 +79,10 @@ func (thiz SessionMiddleware) Handle(next func(core.HttpMessage)) func(core.Http
 			return
 		}
 
+		if editableSession, ok := message.Session().(core.IEditableSessionScope); ok {
+			editableSession.Set(newSess)
+		}
+
 		csrfToken, e := thiz.csrfService.GenerateCSRFToken(message.Context(), newSess)
 		if e != nil {
 			err2.HandleError(e)

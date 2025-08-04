@@ -25,7 +25,6 @@ func (o *ORM[T]) Save(entity T) error {
 			PrimaryKey:    "id",
 			LoadedColumns: make(map[string]bool),
 			RelationMeta:  make(map[string]*RelationMeta),
-			IsNew:         true,
 		}
 		entity.SetMeta(meta)
 	}
@@ -150,7 +149,7 @@ func (o *ORM[T]) createEntity(entity T) error {
 			PrimaryKey:    "id",
 			LoadedColumns: make(map[string]bool),
 			RelationMeta:  make(map[string]*RelationMeta),
-			IsNew:         true,
+			IsLoaded:      false,
 		}
 		entity.SetMeta(meta)
 	}
@@ -162,9 +161,6 @@ func (o *ORM[T]) createEntity(entity T) error {
 		// Update primary key in meta
 		meta.PrimaryKey = entitySchema.PrimaryFieldDBNames[0]
 	}
-
-	// Always set IsNew for Create operation
-	meta.IsNew = true
 
 	// Execute hooks if entity implements them
 	if hook, ok := any(entity).(interface{ BeforeSave(*gorm.DB) error }); ok {
@@ -245,7 +241,6 @@ func (o *ORM[T]) createEntity(entity T) error {
 	}
 
 	// Update metadata
-	meta.IsNew = false
 	meta.IsLoaded = true
 	meta.IsDirty = false
 	meta.DataSource = o.db.DataSource()
@@ -292,7 +287,7 @@ func (o *ORM[T]) updateEntity(entity T) error {
 	}
 
 	// Mark as not new for update operation
-	meta.IsNew = false
+	meta.IsLoaded = false
 
 	// Execute hooks if entity implements them
 	if hook, ok := any(entity).(interface{ BeforeSave(*gorm.DB) error }); ok {
