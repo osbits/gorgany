@@ -439,7 +439,6 @@ func (m *Message) Init() {
 	//m.ctx = context.WithValue(msgCtx, core.DbSessionContextKey, db.Connection().WithContext(msgCtx)) // todo: Currently it can be only GORM Postgres DB
 
 	m.Ses = NewHTTPSessionScope(m.ctx, m.authContext, m.sessionStorage)
-	mCtx.session = m.Ses.Get()
 
 	m.Vw = NewHTTPViewScope(m.ctx, m.writer, m.viewEngine)
 	m.CookieManager = cookieManager
@@ -466,7 +465,17 @@ func (m *Message) Session() core.ISessionScope {
 }
 
 func (m *Message) Context() context.Context {
-	return m.ctx
+	msgCtx := m.ctx.Value(core.MessageContextKey)
+	if msgCtx == nil {
+		return context.Background()
+	}
+
+	if msgCtx, ok := msgCtx.(*messageContext); ok {
+		msgCtx.session = m.Ses.Get()
+		return m.ctx
+	}
+
+	return context.Background()
 }
 
 // RedirectWithFlash saves flash data and redirects.
