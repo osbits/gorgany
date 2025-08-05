@@ -16,7 +16,7 @@ import (
 
 // ORM provides generic ORM operations for any entity type
 type ORM[T EntityWithMeta] struct {
-	db dbCore.ISession
+	db dbCore.ISession `container:"inject"`
 }
 
 // New creates a new ORM instance for the given entity type

@@ -11,6 +11,16 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 )
 
+var emergencyContainerFactory func() core.IEmergencyContainer
+
+func SetEmergencyContainerFactory(factory func() core.IEmergencyContainer) {
+	emergencyContainerFactory = factory
+}
+
+func EmergencyContainer() core.IEmergencyContainer {
+	return emergencyContainerFactory()
+}
+
 // binding holds resolver and cached instance for singletons
 type binding struct {
 	resolver    interface{}

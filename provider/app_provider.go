@@ -5,6 +5,7 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/auth"
 	"git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/model"
+	"git.qix.sx/gorgany/gorgany.git/service"
 	"git.qix.sx/gorgany/gorgany.git/validator"
 	"github.com/spf13/viper"
 )
@@ -27,6 +28,14 @@ func (a AppProvider) Register(container core.IContainer) {
 
 	err.HandleErrorWithStacktrace(container.SingletonLazy(func() core.IValidator {
 		return validator.New()
+	}))
+
+	service.SetEmergencyContainerFactory(func() core.IEmergencyContainer {
+		return container
+	})
+
+	err.HandleErrorWithStacktrace(container.SingletonLazy(func() core.IEmergencyContainer {
+		return container
 	}))
 }
 
