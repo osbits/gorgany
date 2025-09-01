@@ -2,6 +2,9 @@ package provider
 
 import (
 	"fmt"
+
+	dbCmd "git.qix.sx/gorgany/gorgany.git/command/db"
+	"git.qix.sx/gorgany/gorgany.git/db/migration"
 	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
 	"git.qix.sx/gorgany/gorgany.git/db/sql/gorm/postgres/v2"
 
@@ -48,15 +51,20 @@ func (p *DbProvider) AddConnection(name string, ctor func() dbCore.IDataSource) 
 
 func (p *DbProvider) Register(c core.IContainer) {
 	// Register DBContext as singleton
-	c.SingletonLazy(func() *db.DBContext {
+	c.SingletonLazy(func() core.IDBContext {
 		return &db.DBContext{}
+	})
+
+	// Register DataContext for migrations
+	c.SingletonLazy(func() core.IDataContext {
+		return &dbCmd.DataContext{}
 	})
 
 	for _, ctor := range p.connCtors {
 		name, conn := ctor()
 
 		if conn != nil {
-			c.Invoke(func(db *db.DBContext) {
+			c.Invoke(func(db core.IDBContext) {
 				db.RegisterDataSource(name, conn)
 			})
 		}
@@ -78,4 +86,9 @@ func (p *DbProvider) Register(c core.IContainer) {
 	}
 }
 
-func (p *DbProvider) Boot(c core.IContainer) {}
+func (p *DbProvider) Boot(c core.IContainer) {
+	// Register sessions migration
+	c.Invoke(func(dataContext core.IDataContext) {
+		dataContext.AddMigration(migration.NewSessionsMigration())
+	})
+}

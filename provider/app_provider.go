@@ -14,9 +14,40 @@ type AppProvider struct{}
 
 func (a AppProvider) Register(container core.IContainer) {
 
-	err.HandleErrorWithStacktrace(container.SingletonLazy(func() core.ISessionStorage {
-		return auth.NewMemorySession(viper.GetDuration("auth.session.lifeTime"))
-	}))
+	// Register session storage based on configuration
+	sessionStorageType := viper.GetString("auth.session.storage")
+	if sessionStorageType == "database" {
+		// Register session repository for database storage
+		err.HandleErrorWithStacktrace(container.SingletonLazy(func() auth.ISessionRepository {
+			return auth.NewDbSessionRepository()
+		}))
+		
+		// Register session mediator for automatic persistence
+		err.HandleErrorWithStacktrace(container.SingletonLazy(func(repo auth.ISessionRepository) *auth.DbSessionMediator {
+			return auth.NewDbSessionMediator(repo)
+		}))
+		
+		err.HandleErrorWithStacktrace(container.SingletonLazy(func() core.ISessionStorage {
+			return auth.NewDbSessionStorage(viper.GetDuration("auth.session.lifeTime"))
+		}))
+		
+		// Register session factory for database storage with mediator
+		err.HandleErrorWithStacktrace(container.SingletonLazy(func(mediator *auth.DbSessionMediator) auth.ISessionFactory {
+			factory := auth.NewDbSessionFactory()
+			factory.SetMediator(mediator)
+			return factory
+		}))
+	} else {
+		// Default to memory storage
+		err.HandleErrorWithStacktrace(container.SingletonLazy(func() core.ISessionStorage {
+			return auth.NewMemorySession(viper.GetDuration("auth.session.lifeTime"))
+		}))
+		
+		// Register session factory for memory storage
+		err.HandleErrorWithStacktrace(container.SingletonLazy(func() auth.ISessionFactory {
+			return auth.NewMemorySessionFactory()
+		}))
+	}
 
 	err.HandleErrorWithStacktrace(container.SingletonLazy(func() core.IAuthContext {
 		return &auth.AuthContext{}

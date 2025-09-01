@@ -17,6 +17,26 @@ type MockSessionStorage struct {
 	mock.Mock
 }
 
+type MockSessionFactory struct {
+	mock.Mock
+}
+
+func (m *MockSessionFactory) CreateSession(id string, expiry time.Time) core.ISession {
+	args := m.Called(id, expiry)
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(core.ISession)
+}
+
+func (m *MockSessionFactory) CreateSessionWithUser(id string, userId string, expiry time.Time) core.ISession {
+	args := m.Called(id, userId, expiry)
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(core.ISession)
+}
+
 func (m *MockSessionStorage) ClearExpiredSessions() {
 	m.Called()
 }
@@ -156,12 +176,14 @@ func TestStandardAuthStrategy_NewSessionWithoutUser(t *testing.T) {
 	// Setup
 	mockStorage := new(MockSessionStorage)
 	mockUserService := new(MockUserService)
+	mockSessionFactory := new(MockSessionFactory)
 	mockMsgCtx := new(MockMessageContext)
 	mockCookieManager := new(MockCookieManager)
 
 	strategy := &StandardAuthStrategy{
 		sessionManager: mockStorage,
 		userService:    mockUserService,
+		sessionFactory: mockSessionFactory,
 	}
 
 	ctx := context.WithValue(context.Background(), core.MessageContextKey, mockMsgCtx)
@@ -170,6 +192,17 @@ func TestStandardAuthStrategy_NewSessionWithoutUser(t *testing.T) {
 	mockStorage.On("GetSessionLifetime").Return(time.Duration(3600))
 	mockStorage.On("GetSessionById", mock.Anything).Return(nil)
 	mockStorage.On("AddSession", mock.Anything).Return()
+	
+	// Create a test session
+	testSession := &Session{
+		id:           "test-session-id",
+		expiry:       time.Now().Add(time.Hour),
+		createdAt:    time.Now(),
+		lastActivity: time.Now(),
+		attributes:   make(map[string]string),
+	}
+	mockSessionFactory.On("CreateSession", mock.Anything, mock.Anything).Return(testSession)
+	
 	mockMsgCtx.On("GetCookieManager").Return(mockCookieManager)
 	mockCookieManager.On("SetCookie", mock.Anything).Return()
 
@@ -184,6 +217,7 @@ func TestStandardAuthStrategy_NewSessionWithoutUser(t *testing.T) {
 	assert.Empty(t, session.GetUserId())
 
 	mockStorage.AssertExpectations(t)
+	mockSessionFactory.AssertExpectations(t)
 	mockMsgCtx.AssertExpectations(t)
 	mockCookieManager.AssertExpectations(t)
 }
@@ -242,12 +276,14 @@ func TestStandardAuthStrategy_Login(t *testing.T) {
 	// Setup
 	mockStorage := new(MockSessionStorage)
 	mockUserService := new(MockUserService)
+	mockSessionFactory := new(MockSessionFactory)
 	mockMsgCtx := new(MockMessageContext)
 	mockCookieManager := new(MockCookieManager)
 
 	strategy := &StandardAuthStrategy{
 		sessionManager: mockStorage,
 		userService:    mockUserService,
+		sessionFactory: mockSessionFactory,
 	}
 
 	ctx := context.WithValue(context.Background(), core.MessageContextKey, mockMsgCtx)
@@ -257,8 +293,21 @@ func TestStandardAuthStrategy_Login(t *testing.T) {
 	mockStorage.On("GetSessionLifetime").Return(time.Duration(3600))
 	mockStorage.On("GetSessionById", mock.Anything).Return(nil)
 	mockStorage.On("AddSession", mock.Anything).Return()
+	
+	// Create a test session
+	testSession := &Session{
+		id:           "test-session-id",
+		expiry:       time.Now().Add(time.Hour),
+		createdAt:    time.Now(),
+		lastActivity: time.Now(),
+		attributes:   make(map[string]string),
+	}
+	mockSessionFactory.On("CreateSession", mock.Anything, mock.Anything).Return(testSession)
+	
 	mockMsgCtx.On("GetCookieManager").Return(mockCookieManager)
 	mockCookieManager.On("SetCookie", mock.Anything).Return()
+	mockCookieManager.On("GetCookie", core.SessionCookieName).Return(nil)
+	mockMsgCtx.On("GetSession").Return(nil)
 
 	// Test
 	session, err := strategy.Login(user, ctx)
@@ -270,6 +319,7 @@ func TestStandardAuthStrategy_Login(t *testing.T) {
 	assert.True(t, session.GetExpiry().After(time.Now()))
 
 	mockStorage.AssertExpectations(t)
+	mockSessionFactory.AssertExpectations(t)
 	mockMsgCtx.AssertExpectations(t)
 	mockCookieManager.AssertExpectations(t)
 }
@@ -386,12 +436,14 @@ func TestStandardAuthStrategy_RotateSession(t *testing.T) {
 	// Setup
 	mockStorage := new(MockSessionStorage)
 	mockUserService := new(MockUserService)
+	mockSessionFactory := new(MockSessionFactory)
 	mockMsgCtx := new(MockMessageContext)
 	mockCookieManager := new(MockCookieManager)
 
 	strategy := &StandardAuthStrategy{
 		sessionManager: mockStorage,
 		userService:    mockUserService,
+		sessionFactory: mockSessionFactory,
 	}
 
 	ctx := context.WithValue(context.Background(), core.MessageContextKey, mockMsgCtx)
@@ -407,6 +459,17 @@ func TestStandardAuthStrategy_RotateSession(t *testing.T) {
 	mockStorage.On("GetSessionById", mock.Anything).Return(nil)
 	mockStorage.On("AddSession", mock.Anything).Return()
 	mockStorage.On("DeleteSession", oldSession).Return()
+	
+	// Create a test session for the factory
+	testSession := &Session{
+		id:           "new-session-id",
+		expiry:       time.Now().Add(time.Hour),
+		createdAt:    time.Now(),
+		lastActivity: time.Now(),
+		attributes:   make(map[string]string),
+	}
+	mockSessionFactory.On("CreateSession", mock.Anything, mock.Anything).Return(testSession)
+	
 	mockMsgCtx.On("GetCookieManager").Return(mockCookieManager)
 	mockCookieManager.On("SetCookie", mock.Anything).Return()
 
@@ -422,6 +485,7 @@ func TestStandardAuthStrategy_RotateSession(t *testing.T) {
 	assert.True(t, newSession.GetCreatedAt().After(oldSession.GetCreatedAt()))
 
 	mockStorage.AssertExpectations(t)
+	mockSessionFactory.AssertExpectations(t)
 	mockMsgCtx.AssertExpectations(t)
 	mockCookieManager.AssertExpectations(t)
 }

@@ -7,7 +7,6 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 )
 
-// concrete session
 func NewSession(id string, expiry time.Time) *Session {
 	now := time.Now()
 	return &Session{
@@ -32,7 +31,6 @@ func (thiz *Session) GetId() string {
 	return thiz.id
 }
 
-// SetItem is used to set attributes item in session
 func (thiz *Session) SetItem(key string, value string) {
 	thiz.mu.Lock()
 	if thiz.attributes == nil {
@@ -42,7 +40,6 @@ func (thiz *Session) SetItem(key string, value string) {
 	thiz.mu.Unlock()
 }
 
-// GetItem is used to get attributes item in session
 func (thiz *Session) GetItem(key string) string {
 	thiz.mu.Lock()
 	defer thiz.mu.Unlock()
@@ -84,7 +81,24 @@ func (thiz *Session) ClearItems() {
 	thiz.mu.Unlock()
 }
 
-// MemorySession memory-bases session manager
+func (thiz *Session) GetCreatedAt() time.Time {
+	thiz.mu.Lock()
+	defer thiz.mu.Unlock()
+	return thiz.createdAt
+}
+
+func (thiz *Session) GetLastActivity() time.Time {
+	thiz.mu.Lock()
+	defer thiz.mu.Unlock()
+	return thiz.lastActivity
+}
+
+func (thiz *Session) SetLastActivity(t time.Time) {
+	thiz.mu.Lock()
+	thiz.lastActivity = t
+	thiz.mu.Unlock()
+}
+
 type MemorySession struct {
 	sessionLifetime time.Duration
 	sessions        map[string]core.ISession
@@ -140,34 +154,4 @@ func (thiz *MemorySession) GetSessionById(id string) core.ISession {
 
 func (thiz *MemorySession) GetSessionLifetime() time.Duration {
 	return thiz.sessionLifetime
-}
-
-// DbSession, not implemented yet
-type DbSession struct {
-}
-
-func NewDbSession() *DbSession {
-	return &DbSession{}
-}
-
-func (thiz *DbSession) NewSession(username string) string {
-	return ""
-}
-
-func (thiz *Session) GetCreatedAt() time.Time {
-	thiz.mu.Lock()
-	defer thiz.mu.Unlock()
-	return thiz.createdAt
-}
-
-func (thiz *Session) GetLastActivity() time.Time {
-	thiz.mu.Lock()
-	defer thiz.mu.Unlock()
-	return thiz.lastActivity
-}
-
-func (thiz *Session) SetLastActivity(t time.Time) {
-	thiz.mu.Lock()
-	thiz.lastActivity = t
-	thiz.mu.Unlock()
 }

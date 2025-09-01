@@ -24,6 +24,7 @@ type StandardAuthStrategy struct {
 	sessionManager core.ISessionStorage `container:"inject"`
 	userService    core.IUserService    `container:"inject"`
 	csrfService    *CsrfService         `container:"inject"`
+	sessionFactory ISessionFactory      `container:"inject"`
 }
 
 func (thiz *StandardAuthStrategy) NewSessionWithoutUser(ctx context.Context) (core.ISession, error) {
@@ -48,12 +49,7 @@ func (thiz *StandardAuthStrategy) NewSessionWithoutUser(ctx context.Context) (co
 	}
 
 	// Create a new session with appropriate expiry time
-	session = &Session{
-		id:           hashedToken,
-		expiry:       now.Add(time.Second * thiz.sessionManager.GetSessionLifetime()),
-		createdAt:    now,
-		lastActivity: now,
-	}
+	session = thiz.sessionFactory.CreateSession(hashedToken, now.Add(time.Second * thiz.sessionManager.GetSessionLifetime()))
 	thiz.sessionManager.AddSession(session)
 
 	// Generate a CSRF token for the session
