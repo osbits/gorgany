@@ -55,7 +55,7 @@ func (thiz SessionMiddleware) Handle(next func(core.HttpMessage)) func(core.Http
 
 		// If we have a valid session, update it
 		if session != nil && !session.IsExpired() {
-			session.SetExpiry(now.Add(thiz.SessionStorage.GetSessionLifetime() * time.Second))
+			session.SetExpiry(now.Add(time.Duration(thiz.SessionStorage.GetSessionLifetime().Seconds()) * time.Second))
 			thiz.markFlashUsed(session)
 			session.SetLastActivity(time.Now())
 

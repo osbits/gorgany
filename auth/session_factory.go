@@ -54,10 +54,7 @@ func (f *DbSessionFactory) CreateSession(id string, expiry time.Time) core.ISess
 		Attributes:   make(map[string]string),
 	}
 
-	if f.mediator != nil {
-		return NewDbSessionEntityWithMediator(session, f.mediator)
-	}
-	return session
+	return NewDbSessionEntityWithMediator(session, f.mediator)
 }
 
 func (f *DbSessionFactory) CreateSessionWithUser(id string, userId string, expiry time.Time) core.ISession {

@@ -6,21 +6,35 @@ import (
 	"sync"
 	"time"
 
+	"fmt"
+
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/db/orm"
+	grgErr "git.qix.sx/gorgany/gorgany.git/err"
+	"gorm.io/gorm"
+	"gorm.io/gorm/schema"
 )
 
 type AttributesMap map[string]string
 
+func (AttributesMap) GormDataType() string {
+	return "string"
+}
+
+func (AttributesMap) GormDBDataType(db *gorm.DB, _ *schema.Field) string {
+	return "text"
+}
+
+// Value implements driver.Valuer (send JSON text to DB).
 func (m AttributesMap) Value() (driver.Value, error) {
 	if m == nil {
-		return []byte("null"), nil
+		return nil, nil
 	}
 	b, err := json.Marshal(map[string]string(m))
 	if err != nil {
 		return nil, err
 	}
-	return b, nil
+	return string(b), nil
 }
 
 func (m *AttributesMap) Scan(value any) error {
@@ -58,13 +72,13 @@ func (m *AttributesMap) Scan(value any) error {
 }
 
 type DbSessionEntity struct {
-	orm.BaseEntity
-	ID           string        `gorm:"primaryKey;column:id"`
-	UserID       string        `gorm:"column:user_id"`
-	Expiry       time.Time     `gorm:"column:expiry"`
-	CreatedAt    time.Time     `gorm:"column:created_at"`
-	LastActivity time.Time     `gorm:"column:last_activity"`
-	Attributes   AttributesMap `gorm:"column:attributes;type:jsonb;serializer:json"`
+	Meta         orm.EntityMeta `gorm:"-"`
+	ID           string         `gorm:"primaryKey;column:id"`
+	UserID       string         `gorm:"column:user_id"`
+	Expiry       time.Time      `gorm:"column:expiry"`
+	CreatedAt    time.Time      `gorm:"column:created_at"`
+	LastActivity time.Time      `gorm:"column:last_activity"`
+	Attributes   AttributesMap  `gorm:"column:attributes"`
 	mu           sync.Mutex
 }
 
@@ -142,6 +156,14 @@ func (s *DbSessionEntity) ClearItems() {
 	s.mu.Unlock()
 }
 
+func (s *DbSessionEntity) GetMeta() *orm.EntityMeta {
+	return &s.Meta
+}
+
+func (e *DbSessionEntity) SetMeta(meta *orm.EntityMeta) {
+	e.Meta = *meta
+}
+
 type DbSessionStorage struct {
 	sessionLifetime time.Duration
 	mediator        *DbSessionMediator `container:"inject"`
@@ -170,24 +192,24 @@ func (d *DbSessionStorage) ClearExpiredSessions() {
 }
 
 func (d *DbSessionStorage) AddSession(session core.ISession) {
-	dbSession, ok := session.(*DbSessionEntity)
-	if !ok {
-		// Create new session with mediator
-		_, err := d.mediator.CreateSession(
-			session.GetId(),
-			session.GetUserId(),
-			session.GetExpiry(),
-		)
+	dbSession, okMed := session.(*DbSessionEntityWithMediator)
+	if !okMed {
+		grgErr.HandleError(fmt.Errorf("Session is not DbSessionEntityWithMediator"))
+		return
+	}
+
+	existedSession := d.GetSessionById(dbSession.GetId())
+	if existedSession == nil {
+		_, err := d.mediator.CreateSession(dbSession.DbSessionEntity)
 		if err != nil {
-			_ = err
+			grgErr.HandleError(fmt.Errorf("Error creating session: %v", err))
 		}
 		return
 	}
 
-	// Session already exists, just update it
-	err := d.mediator.UpdateSession(dbSession)
-	if err != nil {
-		_ = err
+	if err := d.mediator.UpdateSession(session.(*DbSessionEntityWithMediator).DbSessionEntity); err != nil {
+		grgErr.HandleError(fmt.Errorf("Error updating session: %v", err))
+		return
 	}
 }
 

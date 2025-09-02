@@ -1,6 +1,8 @@
 package provider
 
 import (
+	"time"
+
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/auth"
 	"git.qix.sx/gorgany/gorgany.git/err"
@@ -21,16 +23,16 @@ func (a AppProvider) Register(container core.IContainer) {
 		err.HandleErrorWithStacktrace(container.SingletonLazy(func() auth.ISessionRepository {
 			return auth.NewDbSessionRepository()
 		}))
-		
+
 		// Register session mediator for automatic persistence
 		err.HandleErrorWithStacktrace(container.SingletonLazy(func(repo auth.ISessionRepository) *auth.DbSessionMediator {
 			return auth.NewDbSessionMediator(repo)
 		}))
-		
+
 		err.HandleErrorWithStacktrace(container.SingletonLazy(func() core.ISessionStorage {
-			return auth.NewDbSessionStorage(viper.GetDuration("auth.session.lifeTime"))
+			return auth.NewDbSessionStorage(time.Second * time.Duration(viper.GetInt("auth.session.lifeTime")))
 		}))
-		
+
 		// Register session factory for database storage with mediator
 		err.HandleErrorWithStacktrace(container.SingletonLazy(func(mediator *auth.DbSessionMediator) auth.ISessionFactory {
 			factory := auth.NewDbSessionFactory()
@@ -40,9 +42,9 @@ func (a AppProvider) Register(container core.IContainer) {
 	} else {
 		// Default to memory storage
 		err.HandleErrorWithStacktrace(container.SingletonLazy(func() core.ISessionStorage {
-			return auth.NewMemorySession(viper.GetDuration("auth.session.lifeTime"))
+			return auth.NewMemorySession(time.Second * time.Duration(viper.GetInt("auth.session.lifeTime")))
 		}))
-		
+
 		// Register session factory for memory storage
 		err.HandleErrorWithStacktrace(container.SingletonLazy(func() auth.ISessionFactory {
 			return auth.NewMemorySessionFactory()

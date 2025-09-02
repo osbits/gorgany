@@ -45,18 +45,7 @@ func (m *DbSessionMediator) GetSession(id string) (*DbSessionEntity, error) {
 }
 
 // CreateSession creates a new session and persists it
-func (m *DbSessionMediator) CreateSession(id string, userId string, expiry time.Time) (*DbSessionEntity, error) {
-	now := time.Now()
-	session := &DbSessionEntity{
-		ID:           id,
-		UserID:       userId,
-		Expiry:       expiry,
-		CreatedAt:    now,
-		LastActivity: now,
-		Attributes:   make(map[string]string),
-	}
-
-	// Persist to database
+func (m *DbSessionMediator) CreateSession(session *DbSessionEntity) (*DbSessionEntity, error) {
 	err := m.sessionRepo.Save(session)
 	if err != nil {
 		return nil, err
@@ -64,7 +53,7 @@ func (m *DbSessionMediator) CreateSession(id string, userId string, expiry time.
 
 	// Add to cache
 	m.mu.Lock()
-	m.cache[id] = session
+	m.cache[session.GetId()] = session
 	m.mu.Unlock()
 
 	return session, nil

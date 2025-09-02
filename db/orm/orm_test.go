@@ -52,6 +52,28 @@ type TestEntityWithEmbedded struct {
 	Status string `gorm:"column:status_override"`
 }
 
+// TestEntityWithCustomTableName is a test entity that implements TableName()
+type TestEntityWithCustomTableName struct {
+	BaseEntity
+	ID   int    `gorm:"primaryKey"`
+	Name string `gorm:"column:name"`
+}
+
+func (t *TestEntityWithCustomTableName) TableName() string {
+	return "custom_table_name"
+}
+
+// TestEntityWithValueReceiverTableName is a test entity with TableName() method on value receiver
+type TestEntityWithValueReceiverTableName struct {
+	BaseEntity
+	ID   int    `gorm:"primaryKey"`
+	Name string `gorm:"column:name"`
+}
+
+func (t TestEntityWithValueReceiverTableName) TableName() string {
+	return "value_receiver_table"
+}
+
 // MockSession implements dbCore.ISession for testing
 type MockSession struct {
 	executor *MockExecutor
@@ -783,5 +805,58 @@ func TestRawQueryAll(t *testing.T) {
 	}
 	if entities[1].Name != "Test Entity 2" {
 		t.Errorf("Expected Name: Test Entity 2, got: %s", entities[1].Name)
+	}
+}
+
+// TestCustomTableName tests that entities with custom TableName() methods work correctly
+func TestCustomTableName(t *testing.T) {
+	// Test the GetTableName function directly with pointer receiver
+	entity := &TestEntityWithCustomTableName{
+		ID:   1,
+		Name: "Test",
+	}
+
+	tableName := GetTableName(entity)
+	expectedTableName := "custom_table_name"
+	if tableName != expectedTableName {
+		t.Errorf("Expected table name: %s, got: %s", expectedTableName, tableName)
+	}
+
+	// Test with value receiver
+	valueEntity := TestEntityWithValueReceiverTableName{
+		ID:   1,
+		Name: "Test",
+	}
+
+	valueTableName := GetTableName(valueEntity)
+	expectedValueTableName := "value_receiver_table"
+	if valueTableName != expectedValueTableName {
+		t.Errorf("Expected value receiver table name: %s, got: %s", expectedValueTableName, valueTableName)
+	}
+
+	// Test with a regular entity (should use default naming strategy)
+	regularEntity := &TestEntity{
+		ID:   1,
+		Name: "Test",
+	}
+
+	regularTableName := GetTableName(regularEntity)
+	expectedRegularTableName := "test_entities" // Default naming strategy converts TestEntity to test_entities
+	if regularTableName != expectedRegularTableName {
+		t.Errorf("Expected regular table name: %s, got: %s", expectedRegularTableName, regularTableName)
+	}
+
+	// Test with nil entity
+	nilTableName := GetTableName(nil)
+	if nilTableName != "" {
+		t.Errorf("Expected nil table name to be empty, got: %s", nilTableName)
+	}
+
+	// Test with zero value entity (should still call TableName() method since pointer is not nil)
+	var zeroEntity TestEntityWithCustomTableName
+	zeroTableName := GetTableName(&zeroEntity)
+	expectedZeroTableName := "custom_table_name" // Should still call the method
+	if zeroTableName != expectedZeroTableName {
+		t.Errorf("Expected zero value table name: %s, got: %s", expectedZeroTableName, zeroTableName)
 	}
 }

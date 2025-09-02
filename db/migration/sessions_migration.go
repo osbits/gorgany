@@ -25,7 +25,7 @@ func (m *SessionsMigration) Up() core.MigrationClosure {
 				expiry TIMESTAMP NOT NULL,
 				created_at TIMESTAMP NOT NULL DEFAULT NOW(),
 				last_activity TIMESTAMP NOT NULL DEFAULT NOW(),
-				attributes JSONB DEFAULT '{}'::jsonb
+				attributes TEXT DEFAULT null
 			);
 			
 			-- Create index on expiry for faster cleanup

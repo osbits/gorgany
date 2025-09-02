@@ -92,10 +92,7 @@ func (o *ORM[T]) Delete(entity T) error {
 	// Get table name
 	tableName := meta.TableName
 	if tableName == "" {
-		rEntity := reflect.ValueOf(entity)
-		indirectEntityType := util.IndirectType(rEntity.Type())
-		namer := schema.NamingStrategy{}
-		tableName = namer.TableName(indirectEntityType.Name())
+		tableName = GetTableName(entity)
 		meta.TableName = tableName
 	}
 
@@ -181,14 +178,10 @@ func (o *ORM[T]) createEntity(entity T) error {
 		val = val.Elem()
 	}
 
-	namer := schema.NamingStrategy{}
-
 	// Get table name
 	tableName := meta.TableName
 	if tableName == "" {
-		rEntity := reflect.ValueOf(entity)
-		indirectEntityType := util.IndirectType(rEntity.Type())
-		tableName = namer.TableName(indirectEntityType.Name())
+		tableName = GetTableName(entity)
 		meta.TableName = tableName
 	}
 
@@ -286,9 +279,6 @@ func (o *ORM[T]) updateEntity(entity T) error {
 		meta.PrimaryKey = entitySchema.PrimaryFieldDBNames[0]
 	}
 
-	// Mark as not new for update operation
-	meta.IsLoaded = false
-
 	// Execute hooks if entity implements them
 	if hook, ok := any(entity).(interface{ BeforeSave(*gorm.DB) error }); ok {
 		if err := hook.BeforeSave(nil); err != nil {
@@ -349,6 +339,7 @@ func (o *ORM[T]) updateEntity(entity T) error {
 
 	// Update metadata
 	meta.IsDirty = false
+	meta.IsLoaded = true
 
 	// Execute after hooks
 	if hook, ok := any(entity).(interface{ AfterUpdate(*gorm.DB) error }); ok {

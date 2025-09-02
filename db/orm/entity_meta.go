@@ -74,7 +74,6 @@ func (e *BaseEntity) GetMeta() *EntityMeta {
 	if e.Meta == nil {
 		e.Meta = &EntityMeta{
 			PrimaryKey:    "id",
-			IsLoaded:      true,
 			LoadedColumns: make(map[string]bool),
 			RelationMeta:  make(map[string]*RelationMeta),
 		}

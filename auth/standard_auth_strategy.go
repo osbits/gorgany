@@ -49,7 +49,8 @@ func (thiz *StandardAuthStrategy) NewSessionWithoutUser(ctx context.Context) (co
 	}
 
 	// Create a new session with appropriate expiry time
-	session = thiz.sessionFactory.CreateSession(hashedToken, now.Add(time.Second * thiz.sessionManager.GetSessionLifetime()))
+	lifetime := thiz.sessionManager.GetSessionLifetime().Seconds()
+	session = thiz.sessionFactory.CreateSession(hashedToken, now.Add(time.Duration(lifetime)*time.Second))
 	thiz.sessionManager.AddSession(session)
 
 	// Generate a CSRF token for the session

@@ -52,8 +52,7 @@ func (o *ORM[T]) Find(id interface{}) (T, error) {
 	if entitySchema != nil {
 		tableName = entitySchema.Table
 	} else {
-		namer := schema.NamingStrategy{}
-		tableName = namer.TableName(indirectEntityType.Name())
+		tableName = GetTableName(entity)
 	}
 	meta.TableName = tableName
 
@@ -111,8 +110,7 @@ func (o *ORM[T]) All() ([]T, error) {
 	indirectSampleType := util.IndirectType(rSample.Type())
 
 	// Get table name
-	namer := schema.NamingStrategy{}
-	tableName := namer.TableName(indirectSampleType.Name())
+	tableName := GetTableName(sample)
 
 	builder := o.db.Query()
 	if tableName != "" {
@@ -216,10 +214,7 @@ func (o *ORM[T]) RawQuery(query string, args ...interface{}) (T, error) {
 
 		// If table name not set, try to get it
 		if meta.TableName == "" {
-			rEntity := reflect.ValueOf(entity)
-			indirectEntityType := util.IndirectType(rEntity.Type())
-			namer := schema.NamingStrategy{}
-			meta.TableName = namer.TableName(indirectEntityType.Name())
+			meta.TableName = GetTableName(entity)
 		}
 
 		entity.SetMeta(meta)
@@ -279,10 +274,7 @@ func (o *ORM[T]) RawQueryAll(query string, args ...interface{}) ([]T, error) {
 
 		// If table name not set, try to get it
 		if meta.TableName == "" {
-			rEntity := reflect.ValueOf(entities[i])
-			indirectEntityType := util.IndirectType(rEntity.Type())
-			namer := schema.NamingStrategy{}
-			meta.TableName = namer.TableName(indirectEntityType.Name())
+			meta.TableName = GetTableName(entities[i])
 		}
 	}
 
@@ -294,10 +286,7 @@ func (o *ORM[T]) Count() (int64, error) {
 	// Create a sample entity to get metadata
 	var sample T
 
-	rSample := reflect.ValueOf(sample)
-	indirectSampleType := util.IndirectType(rSample.Type())
-	namer := schema.NamingStrategy{}
-	tableName := namer.TableName(indirectSampleType.Name())
+	tableName := GetTableName(sample)
 
 	builder := v2.NewBuilder()
 	if tableName != "" {
@@ -346,10 +335,7 @@ func (o *ORM[T]) Refresh(entity T) error {
 		if entitySchema != nil {
 			tableName = entitySchema.Table
 		} else {
-			rEntity := reflect.ValueOf(entity)
-			indirectEntityType := util.IndirectType(rEntity.Type())
-			namer := schema.NamingStrategy{}
-			tableName = namer.TableName(indirectEntityType.Name())
+			tableName = GetTableName(entity)
 		}
 		meta.TableName = tableName
 	}
@@ -466,15 +452,11 @@ func (o *ORM[T]) FirstByQuery(qb dbCore.IQueryBuilder) (T, error) {
 		return entity, fmt.Errorf("failed to parse entity schema in ORM: %w", err)
 	}
 
-	rEntity := reflect.ValueOf(entity)
-	indirectEntityType := util.IndirectType(rEntity.Type())
-
 	tableName := ""
 	if entitySchema != nil {
 		tableName = entitySchema.Table
 	} else {
-		namer := schema.NamingStrategy{}
-		tableName = namer.TableName(indirectEntityType.Name())
+		tableName = GetTableName(entity)
 	}
 
 	qb = qb.Limit(1).From(tableName)
@@ -524,15 +506,11 @@ func (o *ORM[T]) CountByQuery(qb dbCore.IQueryBuilder) (int64, error) {
 		return 0, fmt.Errorf("failed to parse entity schema in ORM: %w", err)
 	}
 
-	rEntity := reflect.ValueOf(entity)
-	indirectEntityType := util.IndirectType(rEntity.Type())
-
 	tableName := ""
 	if entitySchema != nil {
 		tableName = entitySchema.Table
 	} else {
-		namer := schema.NamingStrategy{}
-		tableName = namer.TableName(indirectEntityType.Name())
+		tableName = GetTableName(entity)
 	}
 
 	qb = qb.Select("COUNT(*)").From(tableName)
