@@ -73,7 +73,7 @@ func (thiz *StandardAuthStrategy) NewSessionWithoutUser(ctx context.Context) (co
 		MaxAge:   int(thiz.sessionManager.GetSessionLifetime().Seconds()), // Set explicit MaxAge to match session lifetime
 		Secure:   true,
 		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode, // Use StrictMode for better CSRF protection
+		SameSite: http.SameSiteLaxMode, // Use StrictMode for better CSRF protection
 		Domain:   viper.GetString("auth.session.cookie.domain"),
 	})
 
