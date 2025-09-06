@@ -15,11 +15,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-const (
-	sessionRotationInterval = 24 * time.Hour
-	sessionActivityTimeout  = 30 * time.Minute
-)
-
 type StandardAuthStrategy struct {
 	sessionManager core.ISessionStorage `container:"inject"`
 	userService    core.IUserService    `container:"inject"`
@@ -93,12 +88,12 @@ func (thiz *StandardAuthStrategy) ShouldRotateSession(session core.ISession) boo
 	}
 
 	// Rotate if session has been inactive for too long
-	if now.Sub(session.GetLastActivity()) > sessionActivityTimeout {
+	if now.Sub(session.GetLastActivity()) > thiz.sessionManager.GetSessionActivityTimeout() {
 		return true
 	}
 
 	// Force rotation every 24 hours
-	if now.Sub(session.GetCreatedAt()) > sessionRotationInterval {
+	if now.Sub(session.GetCreatedAt()) > thiz.sessionManager.GetSessionRotationInterval() {
 		return true
 	}
 

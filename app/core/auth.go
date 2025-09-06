@@ -57,6 +57,10 @@ type ISessionStorage interface {
 	SetSessionLifetime(lifetime time.Duration)
 	// GetSessionLifetime returns the current session lifetime duration
 	GetSessionLifetime() time.Duration
+	// GetSessionRotationInterval returns the duration after which session rotation should occur.
+	GetSessionRotationInterval() time.Duration
+	// GetSessionActivityTimeout returns the duration of inactivity after which a session is considered expired.
+	GetSessionActivityTimeout() time.Duration
 }
 
 // ISession defines the interface for session management

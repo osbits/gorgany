@@ -157,6 +157,7 @@ type GormAssociation interface {
 }
 
 // IOrm defines the interface for ORM operations with a specific type
+// Deprecated, need to use dbCore.IOrm
 type IOrm[T any] interface {
 	// Select specifies the fields to select
 	Select(fields ...string) IOrm[T]

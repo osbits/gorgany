@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"github.com/spf13/viper"
 	"sync"
 	"time"
 
@@ -103,12 +104,27 @@ type MemorySession struct {
 	sessionLifetime time.Duration
 	sessions        map[string]core.ISession
 	mu              sync.Mutex
+
+	sessionRotationInterval time.Duration
+	sessionActivityTimeout  time.Duration
 }
 
 func NewMemorySession(sessionLifetime time.Duration) *MemorySession {
+	rotationInterval := viper.GetDuration("auth.session.rotationInterval")
+	if rotationInterval.Minutes() == 0 {
+		rotationInterval = 24 * time.Hour
+	}
+
+	activityTimeout := viper.GetDuration("auth.session.activityTimeout")
+	if activityTimeout.Minutes() == 0 {
+		activityTimeout = 30 * time.Minute
+	}
+
 	return &MemorySession{
-		sessions:        make(map[string]core.ISession),
-		sessionLifetime: sessionLifetime,
+		sessions:                make(map[string]core.ISession),
+		sessionLifetime:         sessionLifetime,
+		sessionRotationInterval: rotationInterval,
+		sessionActivityTimeout:  activityTimeout,
 	}
 }
 
@@ -154,4 +170,12 @@ func (thiz *MemorySession) GetSessionById(id string) core.ISession {
 
 func (thiz *MemorySession) GetSessionLifetime() time.Duration {
 	return thiz.sessionLifetime
+}
+
+func (thiz *MemorySession) GetSessionRotationInterval() time.Duration {
+	return thiz.sessionRotationInterval
+}
+
+func (thiz *MemorySession) GetSessionActivityTimeout() time.Duration {
+	return thiz.sessionActivityTimeout
 }

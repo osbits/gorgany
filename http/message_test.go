@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -175,6 +176,16 @@ func (m *MockSessionStorage) ClearExpiredSessions() {
 	m.Called()
 }
 
+func (m *MockSessionStorage) GetSessionRotationInterval() time.Duration {
+	args := m.Called()
+	return args.Get(0).(time.Duration)
+}
+
+func (m *MockSessionStorage) GetSessionActivityTimeout() time.Duration {
+	args := m.Called()
+	return args.Get(0).(time.Duration)
+}
+
 type MockSession struct {
 	mock.Mock
 }
@@ -246,11 +257,11 @@ func (m *MockDBContext) Init() {
 	m.Called()
 }
 
-func (m *MockDBContext) RegisterDataSource(name string, dbConnection core.IDataSource) {
+func (m *MockDBContext) RegisterDataSource(name string, dbConnection dbCore.IDataSource) {
 	m.Called(name, dbConnection)
 }
 
-func (m *MockDBContext) GetDataSource(name string) core.IDataSource {
+func (m *MockDBContext) GetDataSource(name string) dbCore.IDataSource {
 	return new(MockDBConnection)
 }
 
@@ -258,16 +269,16 @@ type MockDBConnection struct {
 	mock.Mock
 }
 
-func (thiz *MockDBConnection) Driver() any {
-	return nil
+func (thiz *MockDBConnection) NewSession() (dbCore.ISession, error) {
+	return nil, nil
 }
 
-func (thiz *MockDBConnection) Builder() core.IQueryBuilder {
-	return nil
+func (thiz *MockDBConnection) GetDriver() (any, error) {
+	return nil, nil
 }
 
-func (thiz *MockDBConnection) WithContext(ctx context.Context) core.IDataSource {
-	return &MockDBConnection{}
+func (thiz *MockDBConnection) Close() error {
+	return nil
 }
 
 func TestHTTPRequestScope_IP(t *testing.T) {
@@ -386,7 +397,10 @@ func TestMessage_RedirectWithFlash(t *testing.T) {
 
 	// Setup session storage
 	mockSessionStorage.On("GetSessionLifetime").Return(time.Duration(3600) * time.Second)
+	mockSessionStorage.On("Get").Return(time.Duration(3600) * time.Second)
 	mockSessionStorage.On("AddSession", mockSession).Return()
+	mockSessionStorage.On("GetSessionRotationInterval").Return(time.Duration(24) * time.Hour)
+	mockSessionStorage.On("GetSessionActivityTimeout").Return(time.Duration(30) * time.Second)
 
 	msg := &Message{
 		writer:         w,
@@ -411,7 +425,7 @@ func TestMessage_RedirectWithFlash(t *testing.T) {
 
 	// Verify flash data was set
 	var oneTimeParams model.OneTimeParams
-	flashJSON := mockSession.Calls[4].Arguments[1].(string)
+	flashJSON := mockSession.Calls[0].Arguments[1].(string)
 	err := json.Unmarshal([]byte(flashJSON), &oneTimeParams)
 	assert.NoError(t, err)
 	assert.True(t, oneTimeParams.Start)

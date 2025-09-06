@@ -12,6 +12,10 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
+const (
+	sessionActivityTimeout = 30 * time.Minute
+)
+
 // Mock implementations
 type MockSessionStorage struct {
 	mock.Mock
@@ -66,6 +70,16 @@ func (m *MockSessionStorage) SetSessionLifetime(lifetime time.Duration) {
 }
 
 func (m *MockSessionStorage) GetSessionLifetime() time.Duration {
+	args := m.Called()
+	return args.Get(0).(time.Duration)
+}
+
+func (m *MockSessionStorage) GetSessionRotationInterval() time.Duration {
+	args := m.Called()
+	return args.Get(0).(time.Duration)
+}
+
+func (m *MockSessionStorage) GetSessionActivityTimeout() time.Duration {
 	args := m.Called()
 	return args.Get(0).(time.Duration)
 }
@@ -192,7 +206,7 @@ func TestStandardAuthStrategy_NewSessionWithoutUser(t *testing.T) {
 	mockStorage.On("GetSessionLifetime").Return(time.Duration(3600))
 	mockStorage.On("GetSessionById", mock.Anything).Return(nil)
 	mockStorage.On("AddSession", mock.Anything).Return()
-	
+
 	// Create a test session
 	testSession := &Session{
 		id:           "test-session-id",
@@ -202,7 +216,7 @@ func TestStandardAuthStrategy_NewSessionWithoutUser(t *testing.T) {
 		attributes:   make(map[string]string),
 	}
 	mockSessionFactory.On("CreateSession", mock.Anything, mock.Anything).Return(testSession)
-	
+
 	mockMsgCtx.On("GetCookieManager").Return(mockCookieManager)
 	mockCookieManager.On("SetCookie", mock.Anything).Return()
 
@@ -293,7 +307,7 @@ func TestStandardAuthStrategy_Login(t *testing.T) {
 	mockStorage.On("GetSessionLifetime").Return(time.Duration(3600))
 	mockStorage.On("GetSessionById", mock.Anything).Return(nil)
 	mockStorage.On("AddSession", mock.Anything).Return()
-	
+
 	// Create a test session
 	testSession := &Session{
 		id:           "test-session-id",
@@ -303,8 +317,9 @@ func TestStandardAuthStrategy_Login(t *testing.T) {
 		attributes:   make(map[string]string),
 	}
 	mockSessionFactory.On("CreateSession", mock.Anything, mock.Anything).Return(testSession)
-	
+
 	mockMsgCtx.On("GetCookieManager").Return(mockCookieManager)
+	mockMsgCtx.On("GetSession").Return(nil)
 	mockCookieManager.On("SetCookie", mock.Anything).Return()
 	mockCookieManager.On("GetCookie", core.SessionCookieName).Return(nil)
 	mockMsgCtx.On("GetSession").Return(nil)
@@ -459,7 +474,7 @@ func TestStandardAuthStrategy_RotateSession(t *testing.T) {
 	mockStorage.On("GetSessionById", mock.Anything).Return(nil)
 	mockStorage.On("AddSession", mock.Anything).Return()
 	mockStorage.On("DeleteSession", oldSession).Return()
-	
+
 	// Create a test session for the factory
 	testSession := &Session{
 		id:           "new-session-id",
@@ -469,7 +484,7 @@ func TestStandardAuthStrategy_RotateSession(t *testing.T) {
 		attributes:   make(map[string]string),
 	}
 	mockSessionFactory.On("CreateSession", mock.Anything, mock.Anything).Return(testSession)
-	
+
 	mockMsgCtx.On("GetCookieManager").Return(mockCookieManager)
 	mockCookieManager.On("SetCookie", mock.Anything).Return()
 

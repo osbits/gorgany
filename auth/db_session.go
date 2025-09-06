@@ -3,6 +3,7 @@ package auth
 import (
 	"database/sql/driver"
 	"encoding/json"
+	"github.com/spf13/viper"
 	"sync"
 	"time"
 
@@ -165,13 +166,27 @@ func (e *DbSessionEntity) SetMeta(meta *orm.EntityMeta) {
 }
 
 type DbSessionStorage struct {
-	sessionLifetime time.Duration
-	mediator        *DbSessionMediator `container:"inject"`
+	sessionLifetime         time.Duration
+	mediator                *DbSessionMediator `container:"inject"`
+	sessionRotationInterval time.Duration
+	sessionActivityTimeout  time.Duration
 }
 
 func NewDbSessionStorage(sessionLifetime time.Duration) *DbSessionStorage {
+	rotationInterval := viper.GetDuration("auth.session.rotationInterval")
+	if rotationInterval.Minutes() == 0 {
+		rotationInterval = 24 * time.Hour
+	}
+
+	activityTimeout := viper.GetDuration("auth.session.activityTimeout")
+	if activityTimeout.Minutes() == 0 {
+		activityTimeout = 30 * time.Minute
+	}
+
 	storage := &DbSessionStorage{
-		sessionLifetime: sessionLifetime,
+		sessionLifetime:         sessionLifetime,
+		sessionRotationInterval: rotationInterval,
+		sessionActivityTimeout:  activityTimeout,
 	}
 	return storage
 }
@@ -182,6 +197,14 @@ func (d *DbSessionStorage) SetSessionLifetime(lifetime time.Duration) {
 
 func (d *DbSessionStorage) GetSessionLifetime() time.Duration {
 	return d.sessionLifetime
+}
+
+func (thiz *DbSessionStorage) GetSessionRotationInterval() time.Duration {
+	return thiz.sessionRotationInterval
+}
+
+func (thiz *DbSessionStorage) GetSessionActivityTimeout() time.Duration {
+	return thiz.sessionActivityTimeout
 }
 
 func (d *DbSessionStorage) ClearExpiredSessions() {
