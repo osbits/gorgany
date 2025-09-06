@@ -1,14 +1,17 @@
 package model
 
 import (
+	"context"
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	err2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/service/cache"
-	"gorm.io/gorm/schema"
 	"strconv"
 	"strings"
 	"time"
+
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
+	err2 "git.qix.sx/gorgany/gorgany.git/err"
+	"git.qix.sx/gorgany/gorgany.git/service/cache"
+	"gorm.io/gorm/schema"
 )
 
 // DomainFilters is used to domain`s filter, it`s validated according fields in domain
@@ -39,6 +42,59 @@ func (thiz *DomainFilter[T]) ValueOfMap(params map[string]string) error {
 
 func (thiz *DomainFilter[T]) GetValue() any {
 	return thiz.Filter.GetValue()
+}
+
+// FilterAccessConfig defines access control for filters
+type FilterAccessConfig struct {
+	AllowedFields    []string `json:"allowed_fields,omitempty"`
+	AllowedOperators []string `json:"allowed_operators,omitempty"`
+	MaxFilters       int      `json:"max_filters,omitempty"`
+	Roles            []string `json:"roles,omitempty"`
+	ForGuest         bool     `json:"for_guest,omitempty"`
+}
+
+// NewFilterAccessConfig creates a new filter access configuration
+func NewFilterAccessConfig() *FilterAccessConfig {
+	return &FilterAccessConfig{
+		AllowedFields:    []string{},
+		AllowedOperators: []string{"=", "!=", "like", "not like", "in", "not in", ">", ">=", "<", "<="},
+		MaxFilters:       10,
+		Roles:            []string{},
+		ForGuest:         false,
+	}
+}
+
+// IsFieldAllowed checks if a field is allowed for filtering
+func (fac *FilterAccessConfig) IsFieldAllowed(field string) bool {
+	if len(fac.AllowedFields) == 0 {
+		return true // If no fields specified, all fields are allowed
+	}
+
+	for _, allowedField := range fac.AllowedFields {
+		if allowedField == field {
+			return true
+		}
+	}
+	return false
+}
+
+// IsOperatorAllowed checks if an operator is allowed for filtering
+func (fac *FilterAccessConfig) IsOperatorAllowed(operator string) bool {
+	if len(fac.AllowedOperators) == 0 {
+		return true // If no operators specified, all operators are allowed
+	}
+
+	for _, allowedOperator := range fac.AllowedOperators {
+		if allowedOperator == operator {
+			return true
+		}
+	}
+	return false
+}
+
+// IsFilterCountAllowed checks if the number of filters is within limits
+func (fac *FilterAccessConfig) IsFilterCountAllowed(count int) bool {
+	return count <= fac.MaxFilters
 }
 
 type Filter struct {
@@ -119,6 +175,18 @@ func NewFilter(field string, operator string, value string, domain any) (*Filter
 	}, nil
 }
 
+// NewFilterWithAccess creates a new filter with access control validation
+func NewFilterWithAccess(field string, operator string, value string, domain any, accessControl AccessControl, ctx context.Context) (*Filter, error) {
+	// Validate access control
+	if accessControl != nil {
+		if err := accessControl.ValidateFilterAccess(ctx, field, operator); err != nil {
+			return nil, fmt.Errorf("Filter: %w", err)
+		}
+	}
+
+	return NewFilter(field, operator, value, domain)
+}
+
 func (thiz Filter) GetValue() any {
 	if thiz.Operator == "in" || thiz.Operator == "not in" {
 		if values, ok := thiz.Value.(string); ok {
@@ -129,6 +197,48 @@ func (thiz Filter) GetValue() any {
 		}
 	}
 	return thiz.Value
+}
+
+// ApplyToQueryBuilder applies the filter to a query builder
+func (thiz Filter) ApplyToQueryBuilder(builder dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+	switch thiz.Operator {
+	case "=":
+		return builder.Eq(thiz.Field, thiz.Value)
+	case "!=":
+		return builder.Neq(thiz.Field, thiz.Value)
+	case ">":
+		return builder.Gt(thiz.Field, thiz.Value)
+	case ">=":
+		return builder.Gte(thiz.Field, thiz.Value)
+	case "<":
+		return builder.Lt(thiz.Field, thiz.Value)
+	case "<=":
+		return builder.Lte(thiz.Field, thiz.Value)
+	case "like":
+		return builder.Like(thiz.Field, thiz.Value)
+	case "not like":
+		return builder.NotLike(thiz.Field, thiz.Value)
+	case "in":
+		if values, ok := thiz.GetValue().([]string); ok {
+			interfaceValues := make([]interface{}, len(values))
+			for i, v := range values {
+				interfaceValues[i] = v
+			}
+			return builder.In(thiz.Field, interfaceValues...)
+		}
+		return builder
+	case "not in":
+		if values, ok := thiz.GetValue().([]string); ok {
+			interfaceValues := make([]interface{}, len(values))
+			for i, v := range values {
+				interfaceValues[i] = v
+			}
+			return builder.NotIn(thiz.Field, interfaceValues...)
+		}
+		return builder
+	default:
+		return builder
+	}
 }
 
 type SortParam struct {
@@ -145,29 +255,24 @@ func (thiz SortParam) GetOrder() string {
 }
 
 // Query should look like this sort[0][field]=Email&sort[0][order]=desc&sort[1][field]=Id&sort[1][order]=asc
-func NewSortParam(field string, order string) (*SortParam, error) {
+func NewSortParam(field string, order string) (SortParam, error) {
 	if field == "" {
-		return nil, fmt.Errorf("SortParam: Field is required")
+		return SortParam{}, fmt.Errorf("SortParam: Field is required")
 	}
 
 	if order == "" || (order != "desc" && order != "asc") {
 		order = "asc"
 	}
 
-	return &SortParam{
+	return SortParam{
 		Field: field,
 		Order: order,
 	}, nil
 }
 
-func NewPaginationParams(page int, pageSize int, sort []core.ISortParam, filters []Filter) *PaginationParams {
+func NewPaginationParams(page int, pageSize int, sortParams []SortParam, filters []Filter) *PaginationParams {
 	if pageSize == 0 {
 		pageSize = 50 //todo
-	}
-
-	sortParams := make([]SortParam, 0)
-	for i := range sort {
-		sortParams = append(sortParams, sort[i].(SortParam))
 	}
 
 	return &PaginationParams{
@@ -176,6 +281,27 @@ func NewPaginationParams(page int, pageSize int, sort []core.ISortParam, filters
 		Sort:     sortParams,
 		Filters:  filters,
 	}
+}
+
+// NewPaginationParamsWithAccess creates pagination parameters with access control
+func NewPaginationParamsWithAccess(page int, pageSize int, sort []SortParam, filters []Filter, accessControl AccessControl, ctx context.Context) (*PaginationParams, error) {
+	// Validate access control for all filters
+	if accessControl != nil {
+		for _, filter := range filters {
+			if err := accessControl.ValidateFilterAccess(ctx, filter.Field, filter.Operator); err != nil {
+				return nil, fmt.Errorf("PaginationParams: %w", err)
+			}
+		}
+
+		// Validate access control for all sort parameters
+		for _, sortParam := range sort {
+			if err := accessControl.ValidateSortAccess(ctx, sortParam.Field); err != nil {
+				return nil, fmt.Errorf("PaginationParams: %w", err)
+			}
+		}
+	}
+
+	return NewPaginationParams(page, pageSize, sort, filters), nil
 }
 
 type PaginationParams struct {
@@ -190,6 +316,41 @@ func (thiz PaginationParams) Offset() int {
 		thiz.Page = 1
 	}
 	return (thiz.Page - 1) * thiz.PageSize
+}
+
+// ApplyFiltersToQueryBuilder applies all filters to a query builder
+func (thiz PaginationParams) ApplyFiltersToQueryBuilder(builder dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+	for _, filter := range thiz.Filters {
+		builder = filter.ApplyToQueryBuilder(builder)
+	}
+	return builder
+}
+
+// ApplySortToQueryBuilder applies all sort parameters to a query builder
+func (thiz PaginationParams) ApplySortToQueryBuilder(builder dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+	for _, sort := range thiz.Sort {
+		builder = builder.OrderBy(sort.Field, sort.Order)
+	}
+	return builder
+}
+
+// ApplyPaginationToQueryBuilder applies pagination to a query builder
+func (thiz PaginationParams) ApplyPaginationToQueryBuilder(builder dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+	if thiz.PageSize > 0 {
+		builder = builder.Limit(thiz.PageSize)
+	}
+	if thiz.Page > 0 {
+		builder = builder.Offset(thiz.Offset())
+	}
+	return builder
+}
+
+// ApplyAllToQueryBuilder applies all pagination parameters to a query builder
+func (thiz PaginationParams) ApplyAllToQueryBuilder(builder dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+	builder = thiz.ApplyFiltersToQueryBuilder(builder)
+	builder = thiz.ApplySortToQueryBuilder(builder)
+	builder = thiz.ApplyPaginationToQueryBuilder(builder)
+	return builder
 }
 
 func NewPaginatedCollection[T any](collection []T, total int, offset int, perPage int) *PaginatedCollection[T] {

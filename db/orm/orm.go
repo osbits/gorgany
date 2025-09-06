@@ -417,6 +417,26 @@ func (o *ORM[T]) Refresh(entity T) error {
 func (o *ORM[T]) AllByQuery(qb dbCore.IQueryBuilder) ([]T, error) {
 	var entities []T
 
+	var entity T
+
+	schemaCache := &sync.Map{}
+	entitySchema, err := schema.Parse(entity, schemaCache, schema.NamingStrategy{})
+	if err != nil {
+		return entities, fmt.Errorf("failed to parse entity schema in ORM: %w", err)
+	}
+
+	rEntity := reflect.ValueOf(entity)
+	indirectEntityType := util.IndirectType(rEntity.Type())
+
+	tableName := ""
+	if entitySchema != nil {
+		tableName = entitySchema.Table
+	} else {
+		namer := schema.NamingStrategy{}
+		tableName = namer.TableName(indirectEntityType.Name())
+	}
+
+	qb = qb.From(tableName)
 	sql, args := qb.ToSQL()
 
 	queryResult := o.db.Executor().FindRaw(context.Background(), &entities, sql, args...)

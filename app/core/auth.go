@@ -94,6 +94,18 @@ type Authenticable interface {
 	GetRole() UserRole
 }
 
+// RoleProvider defines the interface for entities that can provide roles
+type RoleProvider interface {
+	// GetRoles returns the roles for this entity
+	GetRoles() []string
+}
+
+// OwnerProvider defines the interface for entities that can provide ownership information
+type OwnerProvider interface {
+	// GetOwnerId returns the ID of the entity's owner
+	GetOwnerId() string
+}
+
 // UserRole represents a user's role in the system
 type UserRole string
 
