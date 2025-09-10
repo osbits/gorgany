@@ -15,7 +15,7 @@ import (
 	"gorm.io/gorm/schema"
 )
 
-// SaveRelations saves all relations of the entity
+// SaveRelations saves all relations of the domain
 func (o *ORM[T]) SaveRelations(entity T) error {
 	if isNilValue(entity) {
 		return nil
@@ -43,7 +43,7 @@ func (o *ORM[T]) SaveRelations(entity T) error {
 			if relField.Kind() == reflect.Ptr && !relField.IsNil() {
 				relEntity, ok := relField.Interface().(EntityWithMeta)
 				if ok {
-					// Set foreign key on related entity
+					// Set foreign key on related domain
 					if len(rel.References) > 0 {
 						fkField := rel.References[0].ForeignKey.Name
 						pkField := rel.References[0].PrimaryKey.Name
@@ -59,7 +59,7 @@ func (o *ORM[T]) SaveRelations(entity T) error {
 							}
 						}
 					}
-					// Save related entity
+					// Save related domain
 					orm := New[EntityWithMeta](o.db)
 					if err := orm.Save(relEntity); err != nil {
 						return err
@@ -73,7 +73,7 @@ func (o *ORM[T]) SaveRelations(entity T) error {
 					if item.Kind() == reflect.Ptr && !item.IsNil() {
 						relEntity, ok := item.Interface().(EntityWithMeta)
 						if ok {
-							// Set foreign key on related entity
+							// Set foreign key on related domain
 							if len(rel.References) > 0 {
 								fkField := rel.References[0].ForeignKey.Name
 								pkField := rel.References[0].PrimaryKey.Name
@@ -101,12 +101,12 @@ func (o *ORM[T]) SaveRelations(entity T) error {
 			if relField.Kind() == reflect.Ptr && !relField.IsNil() {
 				relEntity, ok := relField.Interface().(EntityWithMeta)
 				if ok {
-					// Save related entity first
+					// Save related domain first
 					orm := New[EntityWithMeta](o.db)
 					if err := orm.Save(relEntity); err != nil {
 						return err
 					}
-					// Set foreign key on main entity
+					// Set foreign key on main domain
 					if len(rel.References) > 0 {
 						fkField := rel.References[0].ForeignKey.Name
 						pkField := rel.References[0].PrimaryKey.Name
@@ -146,11 +146,11 @@ func (o *ORM[T]) SaveRelations(entity T) error {
 	return nil
 }
 
-// LoadRelation loads a specific relation for an entity
+// LoadRelation loads a specific relation for an domain
 // It supports both direct relations and nested relations using dot notation (e.g., "User.Roles")
 func (o *ORM[T]) LoadRelation(entity T, relationPath string) error {
 	if isNilValue(entity) {
-		return errors.New("entity cannot be nil")
+		return errors.New("domain cannot be nil")
 	}
 
 	// Check if the relation path contains nested relations
@@ -190,7 +190,7 @@ func (o *ORM[T]) loadNestedRelation(entity T, relationParts []string) error {
 			return fmt.Errorf("relation field '%s' not found after loading", firstRelation)
 		}
 
-		// Handle different types of relations (single entity or slice)
+		// Handle different types of relations (single domain or slice)
 		if relationField.Kind() == reflect.Slice {
 			// This is a slice relation (hasMany or many2many)
 			// We need to load the nested relation for each item in the slice
@@ -199,27 +199,27 @@ func (o *ORM[T]) loadNestedRelation(entity T, relationParts []string) error {
 
 				// If it's a pointer, get the element
 				if item.Kind() == reflect.Ptr && !item.IsNil() {
-					// Get the entity from the item
+					// Get the domain from the item
 					relatedEntity := item.Interface()
 
-					// Check if the related entity implements EntityWithMeta
+					// Check if the related domain implements EntityWithMeta
 					if entityWithMeta, ok := relatedEntity.(EntityWithMeta); ok {
-						// Create a new ORM for the related entity type
+						// Create a new ORM for the related domain type
 						relatedORM := New[EntityWithMeta](o.db)
 
-						// Load the nested relation on the related entity
+						// Load the nested relation on the related domain
 						err := relatedORM.LoadRelation(entityWithMeta, strings.Join(relationParts[1:], "."))
 						if err != nil {
 							return fmt.Errorf("failed to load nested relation '%s' on item %d: %w",
 								strings.Join(relationParts[1:], "."), i, err)
 						}
 					} else {
-						return fmt.Errorf("related entity for '%s' at index %d does not implement EntityWithMeta", firstRelation, i)
+						return fmt.Errorf("related domain for '%s' at index %d does not implement EntityWithMeta", firstRelation, i)
 					}
 				}
 			}
 		} else {
-			// This is a single entity relation (hasOne or belongsTo)
+			// This is a single domain relation (hasOne or belongsTo)
 			// If it's a pointer and not nil, load the nested relation
 			if (relationField.Kind() == reflect.Ptr && !relationField.IsNil()) ||
 				(relationField.Kind() == reflect.Struct) {
@@ -232,19 +232,19 @@ func (o *ORM[T]) loadNestedRelation(entity T, relationParts []string) error {
 					relatedEntity = relationField.Addr().Interface()
 				}
 
-				// Check if the related entity implements EntityWithMeta
+				// Check if the related domain implements EntityWithMeta
 				if entityWithMeta, ok := relatedEntity.(EntityWithMeta); ok {
-					// Create a new ORM for the related entity type
+					// Create a new ORM for the related domain type
 					relatedORM := New[EntityWithMeta](o.db)
 
-					// Load the nested relation on the related entity
+					// Load the nested relation on the related domain
 					err := relatedORM.LoadRelation(entityWithMeta, strings.Join(relationParts[1:], "."))
 					if err != nil {
 						return fmt.Errorf("failed to load nested relation '%s': %w",
 							strings.Join(relationParts[1:], "."), err)
 					}
 				} else {
-					return fmt.Errorf("related entity for '%s' does not implement EntityWithMeta", firstRelation)
+					return fmt.Errorf("related domain for '%s' does not implement EntityWithMeta", firstRelation)
 				}
 			}
 		}
@@ -253,11 +253,11 @@ func (o *ORM[T]) loadNestedRelation(entity T, relationParts []string) error {
 	return nil
 }
 
-// loadDirectRelation loads a direct (non-nested) relation for an entity
+// loadDirectRelation loads a direct (non-nested) relation for an domain
 func (o *ORM[T]) loadDirectRelation(entity T, relationName string) error {
 	meta := entity.GetMeta()
 	if meta == nil {
-		return errors.New("entity meta cannot be nil")
+		return errors.New("domain meta cannot be nil")
 	}
 
 	// Check if relation is already loaded
@@ -265,7 +265,7 @@ func (o *ORM[T]) loadDirectRelation(entity T, relationName string) error {
 		return nil // Already loaded
 	}
 
-	// Get entity value for reflection
+	// Get domain value for reflection
 	entityValue := reflect.ValueOf(entity)
 	if entityValue.Kind() == reflect.Ptr {
 		entityValue = entityValue.Elem()
@@ -281,13 +281,13 @@ func (o *ORM[T]) loadDirectRelation(entity T, relationName string) error {
 	schemaCache := &sync.Map{}
 	entitySchema, err := schema.Parse(entity, schemaCache, schema.NamingStrategy{})
 	if err != nil {
-		return fmt.Errorf("failed to parse entity schema: %w", err)
+		return fmt.Errorf("failed to parse domain schema: %w", err)
 	}
 
 	// Check if the relationship exists in the schema
 	relationship, exists := entitySchema.Relationships.Relations[relationName]
 	if !exists {
-		return fmt.Errorf("relation '%s' not found in entity schema", relationName)
+		return fmt.Errorf("relation '%s' not found in domain schema", relationName)
 	}
 
 	// Get primary key value
@@ -296,7 +296,7 @@ func (o *ORM[T]) loadDirectRelation(entity T, relationName string) error {
 
 	// Get primary key field and value
 	if len(entitySchema.PrimaryFieldDBNames) == 0 {
-		return fmt.Errorf("entity has no primary key fields defined")
+		return fmt.Errorf("domain has no primary key fields defined")
 	}
 
 	pkField := entityValue.FieldByName(entitySchema.PrimaryFields[0].Name)
@@ -405,10 +405,10 @@ func (o *ORM[T]) loadHasRelation(
 	pkValue interface{},
 	relationship *schema.Relationship,
 ) error {
-	// Determine if it's a slice (hasMany) or single entity (hasOne)
+	// Determine if it's a slice (hasMany) or single domain (hasOne)
 	isSlice := relationField.Kind() == reflect.Slice
 
-	// Get the related entity type
+	// Get the related domain type
 	var relatedEntityType reflect.Type
 	if isSlice {
 		relatedEntityType = relationField.Type().Elem()
@@ -472,21 +472,21 @@ func (o *ORM[T]) loadHasRelation(
 		// Get the slice value
 		destSliceVal := destSlice.Elem()
 
-		// Copy elements to the result slice and add metadata to each entity
+		// Copy elements to the result slice and add metadata to each domain
 		for i := 0; i < destSliceVal.Len(); i++ {
 			item := destSliceVal.Index(i)
 
-			// Add metadata to the entity
+			// Add metadata to the domain
 			if item.Kind() == reflect.Ptr && !item.IsNil() {
 				if entityWithMeta, ok := item.Interface().(EntityWithMeta); ok {
-					// Create relation metadata for this entity
+					// Create relation metadata for this domain
 					relationMeta := &RelationMeta{
 						Type:       relationType,
 						ForeignKey: foreignKey,
 						LoadedAt:   time.Now(),
 					}
 
-					// Set metadata on the entity
+					// Set metadata on the domain
 					meta := entityWithMeta.GetMeta()
 					if meta == nil {
 						meta = &EntityMeta{
@@ -522,26 +522,26 @@ func (o *ORM[T]) loadHasRelation(
 		}
 		elem := reflect.New(elemType)
 
-		// Execute query to get the related entity
+		// Execute query to get the related domain
 		queryRes := o.db.Executor().Find(context.Background(), builder, elem.Interface())
 		if queryRes.Error != nil {
 			if queryRes.Error == sql.ErrNoRows {
-				// No related entity found, leave the field as is
+				// No related domain found, leave the field as is
 				return nil
 			}
 			return queryRes.Error
 		}
 
-		// Add metadata to the entity
+		// Add metadata to the domain
 		if entityWithMeta, ok := elem.Interface().(EntityWithMeta); ok {
-			// Create relation metadata for this entity
+			// Create relation metadata for this domain
 			relationMeta := &RelationMeta{
 				Type:       relationType,
 				ForeignKey: foreignKey,
 				LoadedAt:   time.Now(),
 			}
 
-			// Set metadata on the entity
+			// Set metadata on the domain
 			meta := entityWithMeta.GetMeta()
 			if meta == nil {
 				meta = &EntityMeta{
@@ -577,7 +577,7 @@ func (o *ORM[T]) loadBelongsToRelation(
 	pkValue interface{},
 	relationship *schema.Relationship,
 ) error {
-	// Get the related entity type
+	// Get the related domain type
 	relatedEntityType := relationField.Type()
 	if relatedEntityType.Kind() == reflect.Ptr {
 		relatedEntityType = relatedEntityType.Elem()
@@ -596,7 +596,7 @@ func (o *ORM[T]) loadBelongsToRelation(
 	primaryKey := relationship.References[0].PrimaryKey.DBName
 	foreignKey := relationship.References[0].ForeignKey.DBName
 
-	// Build query to load related entity
+	// Build query to load related domain
 	var builder dbCore.IQueryBuilder
 	builder = v2.NewBuilder()
 	builder = builder.
@@ -615,26 +615,26 @@ func (o *ORM[T]) loadBelongsToRelation(
 	}
 	elem := reflect.New(elemType)
 
-	// Execute query to get the related entity
+	// Execute query to get the related domain
 	queryRes := o.db.Executor().Find(context.Background(), builder, elem.Interface())
 	if queryRes.Error != nil {
 		if queryRes.Error == sql.ErrNoRows {
-			// No related entity found, leave the field as is
+			// No related domain found, leave the field as is
 			return nil
 		}
 		return queryRes.Error
 	}
 
-	// Add metadata to the entity
+	// Add metadata to the domain
 	if entityWithMeta, ok := elem.Interface().(EntityWithMeta); ok {
-		// Create relation metadata for this entity
+		// Create relation metadata for this domain
 		relationMeta := &RelationMeta{
 			Type:       "BelongsTo",
 			ForeignKey: foreignKey,
 			LoadedAt:   time.Now(),
 		}
 
-		// Set metadata on the entity
+		// Set metadata on the domain
 		meta := entityWithMeta.GetMeta()
 		if meta == nil {
 			meta = &EntityMeta{
@@ -696,7 +696,7 @@ func (o *ORM[T]) loadManyToManyRelation(
 		return fmt.Errorf("cannot load many-to-many relation '%s': reference foreign key information is missing", relationName)
 	}
 
-	// Get entity value for reflection
+	// Get domain value for reflection
 	entityValue := reflect.ValueOf(entity)
 	if entityValue.Kind() == reflect.Ptr {
 		entityValue = entityValue.Elem()
@@ -715,7 +715,7 @@ func (o *ORM[T]) loadManyToManyRelation(
 
 	pkValue := pkField.Interface()
 
-	// Get the related entity type (should be a slice)
+	// Get the related domain type (should be a slice)
 	if relationField.Kind() != reflect.Slice {
 		return fmt.Errorf("many-to-many relation %s must be a slice", relationName)
 	}
@@ -726,7 +726,7 @@ func (o *ORM[T]) loadManyToManyRelation(
 		elemType = elemType.Elem()
 	}
 
-	// Get table name for related entity from relationship
+	// Get table name for related domain from relationship
 	if relationship == nil || relationship.FieldSchema == nil {
 		return fmt.Errorf("cannot load many-to-many relation '%s': relationship field schema information is missing", relationName)
 	}
@@ -763,14 +763,14 @@ func (o *ORM[T]) loadManyToManyRelation(
 	// Get the slice value
 	destSliceVal := destSlice.Elem()
 
-	// Copy elements to the result slice and add metadata to each entity
+	// Copy elements to the result slice and add metadata to each domain
 	for i := 0; i < destSliceVal.Len(); i++ {
 		item := destSliceVal.Index(i)
 
-		// Add metadata to the entity
+		// Add metadata to the domain
 		if item.Kind() == reflect.Ptr && !item.IsNil() {
 			if entityWithMeta, ok := item.Interface().(EntityWithMeta); ok {
-				// Create relation metadata for this entity
+				// Create relation metadata for this domain
 				relationMeta := &RelationMeta{
 					Type:       "Many2Many",
 					JoinTable:  joinTable,
@@ -778,7 +778,7 @@ func (o *ORM[T]) loadManyToManyRelation(
 					LoadedAt:   time.Now(),
 				}
 
-				// Set metadata on the entity
+				// Set metadata on the domain
 				meta := entityWithMeta.GetMeta()
 				if meta == nil {
 					meta = &EntityMeta{

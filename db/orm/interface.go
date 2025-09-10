@@ -7,19 +7,19 @@ import (
 
 // Saver defines methods for saving, creating, updating, and deleting entities in the ORM.
 type Saver[T EntityWithMeta] interface {
-	// Save persists the given entity to the database, creating or updating as needed.
+	// Save persists the given domain to the database, creating or updating as needed.
 	Save(entity T) error
-	// Create inserts a new entity into the database.
+	// Create inserts a new domain into the database.
 	Create(entity T) error
-	// Update modifies an existing entity in the database.
+	// Update modifies an existing domain in the database.
 	Update(entity T) error
-	// Delete removes the given entity from the database.
+	// Delete removes the given domain from the database.
 	Delete(entity T) error
 }
 
 // Finder defines methods for retrieving entities from the database.
 type Finder[T EntityWithMeta] interface {
-	// Find retrieves an entity by its primary key.
+	// Find retrieves an domain by its primary key.
 	Find(id interface{}) (T, error)
 	// All retrieves all entities of the given type.
 	All() ([]T, error)
@@ -37,11 +37,11 @@ type Finder[T EntityWithMeta] interface {
 	CountByQuery(qb dbCore.IQueryBuilder) (int64, error)
 }
 
-// RelationLoader defines methods for loading and saving entity relations.
+// RelationLoader defines methods for loading and saving domain relations.
 type RelationLoader[T EntityWithMeta] interface {
-	// LoadRelation loads a specific relation (or nested relation) for the given entity.
+	// LoadRelation loads a specific relation (or nested relation) for the given domain.
 	LoadRelation(entity T, relationPath string) error
-	// SaveRelations saves all relations of the given entity.
+	// SaveRelations saves all relations of the given domain.
 	SaveRelations(entity T) error
 }
 

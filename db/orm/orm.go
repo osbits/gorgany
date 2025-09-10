@@ -14,21 +14,21 @@ import (
 	"gorm.io/gorm/schema"
 )
 
-// ORM provides generic ORM operations for any entity type
+// ORM provides generic ORM operations for any domain type
 type ORM[T EntityWithMeta] struct {
 	db dbCore.ISession `container:"inject"`
 }
 
-// New creates a new ORM instance for the given entity type
+// New creates a new ORM instance for the given domain type
 func New[T EntityWithMeta](db dbCore.ISession) *ORM[T] {
 	return &ORM[T]{
 		db: db,
 	}
 }
 
-// Find finds an entity by its ID and returns it
+// Find finds an domain by its ID and returns it
 func (o *ORM[T]) Find(id interface{}) (T, error) {
-	// Create a new entity
+	// Create a new domain
 	var entity T
 
 	meta := &EntityMeta{
@@ -81,7 +81,7 @@ func (o *ORM[T]) Find(id interface{}) (T, error) {
 		return entity, fmt.Errorf("failed to execute Find in ORM for %s: %w", indirectEntityType.Name(), err)
 	}
 
-	// Only set metadata if the entity is not nil
+	// Only set metadata if the domain is not nil
 	if !isNilValue(entity) {
 		// Store the DB connection for later use
 		meta.DataSource = o.db.DataSource()
@@ -104,7 +104,7 @@ func (o *ORM[T]) All() ([]T, error) {
 	// Create a slice to hold the results
 	var entities []T
 
-	// Create a sample entity to get metadata
+	// Create a sample domain to get metadata
 	var sample T
 
 	rSample := reflect.ValueOf(sample)
@@ -143,7 +143,7 @@ func (o *ORM[T]) All() ([]T, error) {
 		primaryKey = entitySchema.PrimaryFieldDBNames[0]
 	}
 
-	// Update metadata for each entity
+	// Update metadata for each domain
 	for i := range entities {
 		// Skip nil entities
 		if isNilValue(entities[i]) {
@@ -182,7 +182,7 @@ func (o *ORM[T]) All() ([]T, error) {
 // WARNING: To prevent SQL injection, never construct the query string with user input.
 // Always use parameterized queries with the args parameter for user input.
 func (o *ORM[T]) RawQuery(query string, args ...interface{}) (T, error) {
-	// Create a new entity
+	// Create a new domain
 	var entity T
 
 	// Initialize metadata
@@ -202,7 +202,7 @@ func (o *ORM[T]) RawQuery(query string, args ...interface{}) (T, error) {
 		return entity, fmt.Errorf("failed to execute RawQuery in ORM: %w", queryResult.Error)
 	}
 
-	// Only set metadata if the entity is not nil
+	// Only set metadata if the domain is not nil
 	if !isNilValue(entity) {
 		// Store the DB connection for later use
 		meta.DataSource = o.db.DataSource()
@@ -247,7 +247,7 @@ func (o *ORM[T]) RawQueryAll(query string, args ...interface{}) ([]T, error) {
 		return entities, nil
 	}
 
-	// Update metadata for each entity
+	// Update metadata for each domain
 	for i := range entities {
 		// Skip nil entities
 		if isNilValue(entities[i]) {
@@ -291,7 +291,7 @@ func (o *ORM[T]) RawQueryAll(query string, args ...interface{}) ([]T, error) {
 
 // Count returns the count of entities that match the query builder conditions
 func (o *ORM[T]) Count() (int64, error) {
-	// Create a sample entity to get metadata
+	// Create a sample domain to get metadata
 	var sample T
 
 	rSample := reflect.ValueOf(sample)
@@ -316,10 +316,10 @@ func (o *ORM[T]) Count() (int64, error) {
 	return count, nil
 }
 
-// Refresh reloads the entity from the database
+// Refresh reloads the domain from the database
 func (o *ORM[T]) Refresh(entity T) error {
 	if isNilValue(entity) {
-		return errors.New("entity cannot be nil")
+		return errors.New("domain cannot be nil")
 	}
 
 	meta := entity.GetMeta()
@@ -380,13 +380,13 @@ func (o *ORM[T]) Refresh(entity T) error {
 	// Get the primary key value
 	pkValue := field.Interface()
 
-	// Find the entity by ID
+	// Find the domain by ID
 	refreshedEntity, err := o.Find(pkValue)
 	if err != nil {
 		return err
 	}
 
-	// Copy the refreshed entity's data to the original entity
+	// Copy the refreshed domain's data to the original domain
 	refreshedVal := reflect.ValueOf(refreshedEntity)
 	entityVal := reflect.ValueOf(entity)
 
@@ -422,7 +422,7 @@ func (o *ORM[T]) AllByQuery(qb dbCore.IQueryBuilder) ([]T, error) {
 	schemaCache := &sync.Map{}
 	entitySchema, err := schema.Parse(entity, schemaCache, schema.NamingStrategy{})
 	if err != nil {
-		return entities, fmt.Errorf("failed to parse entity schema in ORM: %w", err)
+		return entities, fmt.Errorf("failed to parse domain schema in ORM: %w", err)
 	}
 
 	rEntity := reflect.ValueOf(entity)
@@ -444,7 +444,7 @@ func (o *ORM[T]) AllByQuery(qb dbCore.IQueryBuilder) ([]T, error) {
 		return entities, fmt.Errorf("failed to execute AllByQuery in ORM: %w", queryResult.Error)
 	}
 
-	// Update metadata for each entity
+	// Update metadata for each domain
 	for i := range entities {
 		if isNilValue(entities[i]) {
 			continue
@@ -483,7 +483,7 @@ func (o *ORM[T]) FirstByQuery(qb dbCore.IQueryBuilder) (T, error) {
 	schemaCache := &sync.Map{}
 	entitySchema, err := schema.Parse(entity, schemaCache, schema.NamingStrategy{})
 	if err != nil {
-		return entity, fmt.Errorf("failed to parse entity schema in ORM: %w", err)
+		return entity, fmt.Errorf("failed to parse domain schema in ORM: %w", err)
 	}
 
 	rEntity := reflect.ValueOf(entity)
@@ -541,7 +541,7 @@ func (o *ORM[T]) CountByQuery(qb dbCore.IQueryBuilder) (int64, error) {
 	schemaCache := &sync.Map{}
 	entitySchema, err := schema.Parse(entity, schemaCache, schema.NamingStrategy{})
 	if err != nil {
-		return 0, fmt.Errorf("failed to parse entity schema in ORM: %w", err)
+		return 0, fmt.Errorf("failed to parse domain schema in ORM: %w", err)
 	}
 
 	rEntity := reflect.ValueOf(entity)

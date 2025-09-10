@@ -6,34 +6,34 @@ import "io"
 type IDomain[T any] interface {
 	// Query returns a new ORM query builder for this domain type
 	Query() IOrm[T]
-	// Clone creates a deep copy of the domain entity
+	// Clone creates a deep copy of the domain domain
 	Clone() *T
-	// GetDomainMeta returns the metadata for this domain entity
+	// GetDomainMeta returns the metadata for this domain domain
 	GetDomainMeta() IDomainMeta
 }
 
-// IDomainMeta defines the interface for domain entity metadata
+// IDomainMeta defines the interface for domain domain metadata
 type IDomainMeta interface {
-	// SetLoaded sets whether the entity has been loaded from storage
+	// SetLoaded sets whether the domain has been loaded from storage
 	SetLoaded(loaded bool)
-	// SetTable sets the database table name for this entity
+	// SetTable sets the database table name for this domain
 	SetTable(table string)
-	// SetDriver sets the database driver type for this entity
+	// SetDriver sets the database driver type for this domain
 	SetDriver(driver DbType)
-	// SetOriginal sets the original data for this entity
+	// SetOriginal sets the original data for this domain
 	SetOriginal(original any)
-	// SetDomain sets the domain entity instance
+	// SetDomain sets the domain domain instance
 	SetDomain(domain any)
 
-	// GetLoaded returns whether the entity has been loaded from storage
+	// GetLoaded returns whether the domain has been loaded from storage
 	GetLoaded() bool
-	// GetTable returns the database table name for this entity
+	// GetTable returns the database table name for this domain
 	GetTable() string
-	// GetDriver returns the database driver type for this entity
+	// GetDriver returns the database driver type for this domain
 	GetDriver() DbType
-	// GetOriginal returns the original data for this entity
+	// GetOriginal returns the original data for this domain
 	GetOriginal() any
-	// GetDomain returns the domain entity instance
+	// GetDomain returns the domain domain instance
 	GetDomain() any
 }
 

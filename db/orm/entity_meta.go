@@ -16,7 +16,7 @@ type RelationMeta struct {
 	Extra      map[string]interface{}
 }
 
-// EntityMeta stores metadata about an entity
+// EntityMeta stores metadata about an domain
 type EntityMeta struct {
 	TableName     string
 	PrimaryKey    string
