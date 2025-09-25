@@ -9,6 +9,7 @@ import (
 
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
+	v2 "git.qix.sx/gorgany/gorgany.git/db/sql/gorm/postgres/v2"
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/service/cache"
 	"gorm.io/gorm/schema"
@@ -351,6 +352,174 @@ func (thiz PaginationParams) ApplyAllToQueryBuilder(builder dbCore.IQueryBuilder
 	builder = thiz.ApplySortToQueryBuilder(builder)
 	builder = thiz.ApplyPaginationToQueryBuilder(builder)
 	return builder
+}
+
+// ApplyDBFiltersToQueryBuilder applies database-level RBAC filters to a query builder
+func ApplyDBFiltersToQueryBuilder(builder dbCore.IQueryBuilder, dbFilters []DBFilter) dbCore.IQueryBuilder {
+	if len(dbFilters) == 0 {
+		return builder
+	}
+
+	// Group filters by logic (AND/OR)
+	var andFilters []DBFilter
+	var orFilters []DBFilter
+
+	for _, filter := range dbFilters {
+		if filter.Logic == "OR" {
+			orFilters = append(orFilters, filter)
+		} else {
+			andFilters = append(andFilters, filter)
+		}
+	}
+
+	// Apply AND filters first
+	for _, filter := range andFilters {
+		builder = applyDBFilterToQueryBuilder(builder, filter)
+	}
+
+	// Apply OR filters as a group
+	if len(orFilters) > 0 {
+		var orConditions []dbCore.Condition
+		for _, filter := range orFilters {
+			// Create a temporary builder to build the condition
+			tempBuilder := v2.NewBuilder()
+			tempBuilder = applyDBFilterToQueryBuilder(tempBuilder, filter).(*v2.Builder)
+			// Extract the condition from the builder
+			query := tempBuilder.Build()
+			if query.Where != nil {
+				orConditions = append(orConditions, query.Where)
+			}
+		}
+		if len(orConditions) > 0 {
+			builder = builder.Where(&v2.CompositeCondition{
+				Operator:   "OR",
+				Conditions: orConditions,
+			})
+		}
+	}
+
+	return builder
+}
+
+// applyDBFilterToQueryBuilder applies a single DB filter to a query builder
+func applyDBFilterToQueryBuilder(builder dbCore.IQueryBuilder, filter DBFilter) dbCore.IQueryBuilder {
+	// Handle subqueries
+	if filter.Subquery != nil {
+		return applySubqueryToQueryBuilder(builder, filter)
+	}
+
+	// Handle joins
+	if filter.Join != nil {
+		builder = applyJoinToQueryBuilder(builder, *filter.Join)
+	}
+
+	// Apply the filter condition
+	switch filter.Operator {
+	case "=":
+		return builder.Eq(filter.Field, filter.Value)
+	case "!=":
+		return builder.Neq(filter.Field, filter.Value)
+	case ">":
+		return builder.Gt(filter.Field, filter.Value)
+	case ">=":
+		return builder.Gte(filter.Field, filter.Value)
+	case "<":
+		return builder.Lt(filter.Field, filter.Value)
+	case "<=":
+		return builder.Lte(filter.Field, filter.Value)
+	case "like":
+		return builder.Like(filter.Field, filter.Value)
+	case "not like":
+		return builder.NotLike(filter.Field, filter.Value)
+	case "in":
+		if values, ok := filter.Value.([]interface{}); ok {
+			return builder.In(filter.Field, values...)
+		}
+		return builder
+	case "not in":
+		if values, ok := filter.Value.([]interface{}); ok {
+			return builder.NotIn(filter.Field, values...)
+		}
+		return builder
+	default:
+		return builder
+	}
+}
+
+// applySubqueryToQueryBuilder applies a subquery filter to a query builder
+func applySubqueryToQueryBuilder(builder dbCore.IQueryBuilder, filter DBFilter) dbCore.IQueryBuilder {
+	subquery := filter.Subquery
+
+	// Build subquery
+	subqueryBuilder := v2.NewBuilder()
+	subqueryBuilder = subqueryBuilder.Select(subquery.Select).From(subquery.Table).(*v2.Builder)
+
+	// Apply joins to subquery
+	for _, join := range subquery.Join {
+		subqueryBuilder = applyJoinToQueryBuilder(subqueryBuilder, join).(*v2.Builder)
+	}
+
+	// Apply where conditions to subquery
+	for _, whereFilter := range subquery.Where {
+		subqueryBuilder = applyDBFilterToQueryBuilder(subqueryBuilder, whereFilter).(*v2.Builder)
+	}
+
+	// Build the subquery to get the Query object
+	subqueryQuery := subqueryBuilder.Build()
+
+	// Apply subquery to main query
+	switch subquery.Operator {
+	case "IN":
+		return builder.InSubquery(filter.Field, subqueryQuery)
+	case "NOT IN":
+		return builder.NotInSubquery(filter.Field, subqueryQuery)
+	case "EXISTS":
+		sql, args := subqueryBuilder.ToSQL()
+		return builder.Where(&dbCore.RawCondition{
+			SQL:  fmt.Sprintf("EXISTS (%s)", sql),
+			Args: args,
+		})
+	case "NOT EXISTS":
+		sql, args := subqueryBuilder.ToSQL()
+		return builder.Where(&dbCore.RawCondition{
+			SQL:  fmt.Sprintf("NOT EXISTS (%s)", sql),
+			Args: args,
+		})
+	default:
+		return builder
+	}
+}
+
+// applyJoinToQueryBuilder applies a join to a query builder
+func applyJoinToQueryBuilder(builder dbCore.IQueryBuilder, join DBJoin) dbCore.IQueryBuilder {
+	switch join.Type {
+	case "INNER":
+		return builder.InnerJoin(join.Table, &dbCore.BinaryCondition{
+			Left:     join.LeftKey,
+			Operator: "=",
+			Right:    join.RightKey,
+		})
+	case "LEFT":
+		return builder.LeftJoin(join.Table, &dbCore.BinaryCondition{
+			Left:     join.LeftKey,
+			Operator: "=",
+			Right:    join.RightKey,
+		})
+	case "RIGHT":
+		return builder.RightJoin(join.Table, &dbCore.BinaryCondition{
+			Left:     join.LeftKey,
+			Operator: "=",
+			Right:    join.RightKey,
+		})
+	case "FULL":
+		return builder.FullJoin(join.Table, &dbCore.BinaryCondition{
+			Left:     join.LeftKey,
+			Operator: "=",
+			Right:    join.RightKey,
+		})
+	default:
+		return builder
+	}
 }
 
 func NewPaginatedCollection[T any](collection []T, total int, offset int, perPage int) *PaginatedCollection[T] {

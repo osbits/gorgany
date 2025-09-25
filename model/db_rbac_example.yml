@@ -1,0 +1,186 @@
+# Example configuration for DB-level RBAC
+# This shows how to configure database-level access control filtering
+
+api:
+  access:
+    domains:
+      # Document entity with DB-level RBAC
+      document:
+        roles: [ADMIN, USER, MANAGER]
+        forGuest: false
+        
+        # DB-level RBAC configuration
+        db_rbac:
+          enable: true
+          ownership_field: "owner_id"
+          user_context_fields:
+            department: "{{.DepartmentID}}"
+            tenant_id: "{{.TenantID}}"
+          
+          # Custom filters for different roles
+          custom_filters:
+            # ADMIN role - can see all documents
+            ADMIN:
+              - field: "is_public"
+                operator: "="
+                value: true
+                logic: "OR"
+              - field: "status"
+                operator: "!="
+                value: "deleted"
+                logic: "AND"
+            
+            # USER role - can see own documents + public documents
+            USER:
+              - field: "owner_id"
+                operator: "="
+                value: "{{user_id}}"
+                logic: "AND"
+              - field: "is_public"
+                operator: "="
+                value: true
+                logic: "OR"
+            
+            # MANAGER role - can see department documents + own documents
+            MANAGER:
+              - field: "owner_id"
+                operator: "="
+                value: "{{user_id}}"
+                logic: "AND"
+              - field: "department"
+                operator: "="
+                value: "{{user_department}}"
+                logic: "OR"
+              - field: "is_public"
+                operator: "="
+                value: true
+                logic: "OR"
+        
+        # Field-level access control (still applied at application level)
+        fields:
+          title:
+            read: [ADMIN, USER, MANAGER]
+            write: [ADMIN, USER]
+          content:
+            read: [ADMIN, USER, MANAGER]
+            write: [ADMIN, USER]
+          owner_id:
+            read: [ADMIN, MANAGER]
+            write: [ADMIN]
+          is_public:
+            read: [ADMIN, USER, MANAGER]
+            write: [ADMIN]
+          department:
+            read: [ADMIN, MANAGER]
+            write: [ADMIN, MANAGER]
+      
+      # User entity with multi-tenant DB-level RBAC
+      user:
+        roles: [SUPER_ADMIN, TENANT_ADMIN, USER]
+        forGuest: false
+        
+        db_rbac:
+          enable: true
+          user_context_fields:
+            tenant_id: "{{.TenantID}}"
+          
+          custom_filters:
+            # SUPER_ADMIN - can see all users
+            SUPER_ADMIN:
+              - field: "id"
+                operator: ">"
+                value: 0
+                logic: "AND"
+            
+            # TENANT_ADMIN - can see users from their tenant
+            TENANT_ADMIN:
+              - field: "tenant_id"
+                operator: "="
+                value: "{{user_tenant_id}}"
+                logic: "AND"
+            
+            # USER - can see only themselves
+            USER:
+              - field: "id"
+                operator: "="
+                value: "{{user_id}}"
+                logic: "AND"
+        
+        fields:
+          email:
+            read: [SUPER_ADMIN, TENANT_ADMIN, USER]
+            write: [SUPER_ADMIN, TENANT_ADMIN]
+          password:
+            read: [SUPER_ADMIN]
+            write: [SUPER_ADMIN, TENANT_ADMIN]
+          tenant_id:
+            read: [SUPER_ADMIN, TENANT_ADMIN]
+            write: [SUPER_ADMIN]
+      
+      # Appointment entity with complex DB-level RBAC
+      appointment:
+        roles: [ADMIN, DOCTOR, PATIENT, RECEPTIONIST]
+        forGuest: false
+        
+        db_rbac:
+          enable: true
+          ownership_field: "patient_id"
+          user_context_fields: ["department", "clinic_id"]
+          
+          custom_filters:
+            # ADMIN - can see all appointments
+            ADMIN:
+              - field: "status"
+                operator: "!="
+                value: "cancelled"
+                logic: "AND"
+            
+            # DOCTOR - can see appointments in their department
+            DOCTOR:
+              - field: "doctor_id"
+                operator: "="
+                value: "{{user_id}}"
+                logic: "AND"
+              - field: "department"
+                operator: "="
+                value: "{{user_department}}"
+                logic: "OR"
+              - field: "status"
+                operator: "!="
+                value: "cancelled"
+                logic: "AND"
+            
+            # PATIENT - can see only their own appointments
+            PATIENT:
+              - field: "patient_id"
+                operator: "="
+                value: "{{user_id}}"
+                logic: "AND"
+            
+            # RECEPTIONIST - can see appointments in their clinic
+            RECEPTIONIST:
+              - field: "clinic_id"
+                operator: "="
+                value: "{{user_clinic_id}}"
+                logic: "AND"
+              - field: "status"
+                operator: "!="
+                value: "cancelled"
+                logic: "AND"
+        
+        fields:
+          patient_id:
+            read: [ADMIN, DOCTOR, PATIENT, RECEPTIONIST]
+            write: [ADMIN, RECEPTIONIST]
+          doctor_id:
+            read: [ADMIN, DOCTOR, PATIENT, RECEPTIONIST]
+            write: [ADMIN, RECEPTIONIST]
+          appointment_date:
+            read: [ADMIN, DOCTOR, PATIENT, RECEPTIONIST]
+            write: [ADMIN, DOCTOR, RECEPTIONIST]
+          notes:
+            read: [ADMIN, DOCTOR]
+            write: [ADMIN, DOCTOR]
+          status:
+            read: [ADMIN, DOCTOR, PATIENT, RECEPTIONIST]
+            write: [ADMIN, DOCTOR, RECEPTIONIST]

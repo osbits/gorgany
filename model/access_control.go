@@ -51,6 +51,12 @@ type AccessControl interface {
 
 	// GetInheritedFieldPermissions returns field permissions that inherit from entity roles
 	GetInheritedFieldPermissions(ctx context.Context, operation string) []string
+
+	// GenerateDBFilters generates database-level filters for RBAC
+	GenerateDBFilters(ctx context.Context, operation string) ([]DBFilter, error)
+
+	// CanUseDBLevelRBAC checks if RBAC can be handled at DB level
+	CanUseDBLevelRBAC(ctx context.Context, operation string) bool
 }
 
 // UserContextCache holds cached user information to avoid repeated lookups
@@ -60,6 +66,60 @@ type UserContextCache struct {
 	isGuest bool
 	isValid bool
 }
+
+// DBFilter represents a database-level filter for RBAC
+type DBFilter struct {
+	Field    string      `json:"field"`
+	Operator string      `json:"operator"`
+	Value    interface{} `json:"value"`
+	Logic    string      `json:"logic"` // "AND" or "OR"
+
+	// For complex queries
+	Subquery *DBSubquery `json:"subquery,omitempty"`
+	Join     *DBJoin     `json:"join,omitempty"`
+}
+
+// DBSubquery represents a subquery for complex filtering
+type DBSubquery struct {
+	Table    string     `json:"table"`
+	Select   string     `json:"select"`
+	Where    []DBFilter `json:"where,omitempty"`
+	Join     []DBJoin   `json:"join,omitempty"`
+	Operator string     `json:"operator"` // "IN", "NOT IN", "EXISTS", "NOT EXISTS"
+}
+
+// DBJoin represents a join for complex queries
+type DBJoin struct {
+	Type      string `json:"type"` // "INNER", "LEFT", "RIGHT", "FULL"
+	Table     string `json:"table"`
+	LeftKey   string `json:"left_key"`
+	RightKey  string `json:"right_key"`
+	Condition string `json:"condition,omitempty"`
+}
+
+// DBRBACConfig defines configuration for DB-level RBAC
+type DBRBACConfig struct {
+	// EnableDBLevelRBAC enables database-level RBAC filtering
+	EnableDBLevelRBAC bool `json:"enable_db_level_rbac,omitempty"`
+
+	// OwnershipField specifies the field used for ownership-based filtering
+	OwnershipField string `json:"ownership_field,omitempty"`
+
+	// CustomFilters defines custom database filters for specific roles
+	// Each role can have multiple filters that will be combined with OR logic
+	CustomFilters map[string][]DBFilter `json:"custom_filters,omitempty"`
+
+	// UserContextFields defines fields to extract from user context for filtering
+	// Key is the field name, value is the placeholder template
+	// These fields will be available as {{user_field}} in filter values
+	UserContextFields map[string]string `json:"user_context_fields,omitempty"`
+
+	// CustomFilterProcessors defines custom processors for complex filtering logic
+	CustomFilterProcessors map[string]CustomFilterProcessor `json:"custom_filter_processors,omitempty"`
+}
+
+// CustomFilterProcessor defines a function that can process complex filters
+type CustomFilterProcessor func(ctx context.Context, user core.Authenticable, filter DBFilter) ([]DBFilter, error)
 
 // RoleBasedAccessControl implements AccessControl with role-based validation
 type RoleBasedAccessControl struct {
@@ -297,6 +357,9 @@ type AccessControlConfig struct {
 	// Ownership configuration
 	OwnershipField string   `json:"ownership_field,omitempty"`
 	DefaultFields  []string `json:"default_fields,omitempty"`
+
+	// DB-level RBAC configuration
+	DBRBAC *DBRBACConfig `json:"db_rbac,omitempty"`
 }
 
 // FieldAccessConfig defines access control for a specific field
@@ -385,6 +448,12 @@ func (b *AccessControlBuilder) SetFilterConfig(operators []string, roles []strin
 func (b *AccessControlBuilder) SetSortConfig(roles []string, maxSorts int) *AccessControlBuilder {
 	b.config.SortRoles = roles
 	b.config.MaxSorts = maxSorts
+	return b
+}
+
+// SetDBRBACConfig sets DB-level RBAC configuration
+func (b *AccessControlBuilder) SetDBRBACConfig(dbRbacConfig *DBRBACConfig) *AccessControlBuilder {
+	b.config.DBRBAC = dbRbacConfig
 	return b
 }
 
@@ -583,6 +652,10 @@ func (rbac *RoleBasedAccessControl) CanAccessEntity(ctx context.Context, entity 
 
 	// Check role requirements
 	if len(domainConfig.RequiredRoles) > 0 {
+		// If guest access is allowed, guests can access even without required roles
+		if userCache.isGuest && rbac.config.AllowGuestAccess {
+			return true
+		}
 		return rbac.hasAnyRole(userCache.roles, domainConfig.RequiredRoles)
 	}
 
@@ -693,6 +766,10 @@ func (rbac *RoleBasedAccessControl) CanAccessEntityType(ctx context.Context, ope
 
 	// Check role requirements
 	if len(domainConfig.RequiredRoles) > 0 {
+		// If guest access is allowed, guests can access even without required roles
+		if userCache.isGuest && rbac.config.AllowGuestAccess {
+			return true
+		}
 		return rbac.hasAnyRole(userCache.roles, domainConfig.RequiredRoles)
 	}
 
@@ -786,4 +863,156 @@ func (rbac *RoleBasedAccessControl) intersectRoles(entityRoles []string, fieldRo
 	}
 
 	return intersection
+}
+
+// CanUseDBLevelRBAC checks if RBAC can be handled at DB level
+func (rbac *RoleBasedAccessControl) CanUseDBLevelRBAC(ctx context.Context, operation string) bool {
+	// Check if DB-level RBAC is enabled
+	if rbac.config.DBRBAC == nil || !rbac.config.DBRBAC.EnableDBLevelRBAC {
+		return false
+	}
+
+	// Check if user context allows DB-level filtering
+	userCache := rbac.getUserContextCache(ctx)
+
+	// Can't use DB-level RBAC for guests (no user ID for ownership filtering)
+	if userCache.isGuest {
+		return false
+	}
+
+	// Can't use DB-level RBAC if user is nil
+	if userCache.user == nil {
+		return false
+	}
+
+	// Check if we have the necessary configuration for DB-level filtering
+	if rbac.config.DBRBAC.OwnershipField == "" && len(rbac.config.DBRBAC.CustomFilters) == 0 {
+		return false
+	}
+
+	return true
+}
+
+// GenerateDBFilters generates database-level filters for RBAC
+func (rbac *RoleBasedAccessControl) GenerateDBFilters(ctx context.Context, operation string) ([]DBFilter, error) {
+	if !rbac.CanUseDBLevelRBAC(ctx, operation) {
+		return nil, fmt.Errorf("DB-level RBAC not available for this context")
+	}
+
+	userCache := rbac.getUserContextCache(ctx)
+	var filters []DBFilter
+
+	// Generate ownership-based filters
+	if rbac.config.DBRBAC.OwnershipField != "" {
+		ownershipFilter := DBFilter{
+			Field:    rbac.config.DBRBAC.OwnershipField,
+			Operator: "=",
+			Value:    userCache.user.GetId(),
+			Logic:    "OR",
+		}
+		filters = append(filters, ownershipFilter)
+	}
+
+	// Generate role-based custom filters
+	if len(rbac.config.DBRBAC.CustomFilters) > 0 {
+		for _, userRole := range userCache.roles {
+			if roleFilters, exists := rbac.config.DBRBAC.CustomFilters[userRole]; exists {
+				for _, filter := range roleFilters {
+					// Check if this filter has a custom processor
+					if processor, hasProcessor := rbac.config.DBRBAC.CustomFilterProcessors[filter.Field]; hasProcessor {
+						// Use custom processor for complex logic
+						processedFilters, err := processor(ctx, userCache.user, filter)
+						if err == nil {
+							filters = append(filters, processedFilters...)
+						}
+					} else {
+						// Process filter values to replace user context placeholders
+						processedFilter := rbac.processFilterWithUserContext(filter, userCache.user)
+						processedFilter.Logic = "OR" // Ensure OR logic for role-based filters
+						filters = append(filters, processedFilter)
+					}
+				}
+			}
+		}
+	}
+
+	// If no filters generated, create a filter that returns no results
+	if len(filters) == 0 {
+		noAccessFilter := DBFilter{
+			Field:    "id",
+			Operator: "=",
+			Value:    -1, // Non-existent ID
+			Logic:    "AND",
+		}
+		filters = append(filters, noAccessFilter)
+	}
+
+	return filters, nil
+}
+
+// processFilterWithUserContext processes filter values to replace user context placeholders
+func (rbac *RoleBasedAccessControl) processFilterWithUserContext(filter DBFilter, user core.Authenticable) DBFilter {
+	processedFilter := filter
+
+	// Process the Field (which may contain raw SQL conditions)
+	if strField, ok := filter.Field.(string); ok {
+		processedField := strField
+
+		// Replace {{user_id}} with actual user ID
+		processedField = strings.ReplaceAll(processedField, "{{user_id}}", fmt.Sprintf("%v", user.GetId()))
+		processedField = strings.ReplaceAll(processedField, "{{.UserID}}", fmt.Sprintf("%v", user.GetId()))
+
+		// Replace {{user_role}} with user's primary role (if available)
+		if roleProvider, ok := user.(core.RoleProvider); ok {
+			roles := roleProvider.GetRoles()
+			if len(roles) > 0 {
+				processedField = strings.ReplaceAll(processedField, "{{user_role}}", roles[0])
+				processedField = strings.ReplaceAll(processedField, "{{.UserRole}}", roles[0])
+			}
+		}
+
+		// Replace other user context fields
+		for fieldName, placeholder := range rbac.config.DBRBAC.UserContextFields {
+			// Replace new format {{.FieldName}}
+			processedField = strings.ReplaceAll(processedField, placeholder, fmt.Sprintf("%v", user.GetId())) // Default to user ID for now
+
+			// Replace old format {{user_fieldName}}
+			oldPlaceholder := fmt.Sprintf("{{user_%s}}", fieldName)
+			processedField = strings.ReplaceAll(processedField, oldPlaceholder, fmt.Sprintf("%v", user.GetId()))
+		}
+
+		processedFilter.Field = processedField
+	}
+
+	// Process string values for placeholders (legacy support)
+	if strValue, ok := filter.Value.(string); ok {
+		// Replace {{user_id}} with actual user ID
+		if strValue == "{{user_id}}" {
+			processedFilter.Value = user.GetId()
+		}
+		// Replace {{user_role}} with user's primary role (if available)
+		if strValue == "{{user_role}}" {
+			if roleProvider, ok := user.(core.RoleProvider); ok {
+				roles := roleProvider.GetRoles()
+				if len(roles) > 0 {
+					processedFilter.Value = roles[0] // Use first role as primary
+				}
+			}
+		}
+		// Replace other user context fields
+		for fieldName, placeholder := range rbac.config.DBRBAC.UserContextFields {
+			if strValue == placeholder {
+				// This would need to be extended based on what user context fields are available
+				// For now, we'll leave it as-is and let the application handle it
+				processedFilter.Value = strValue
+			}
+			// Also check for the old format {{user_fieldName}}
+			oldPlaceholder := fmt.Sprintf("{{user_%s}}", fieldName)
+			if strValue == oldPlaceholder {
+				processedFilter.Value = strValue
+			}
+		}
+	}
+
+	return processedFilter
 }
