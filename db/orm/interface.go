@@ -45,10 +45,17 @@ type RelationLoader[T EntityWithMeta] interface {
 	SaveRelations(entity T) error
 }
 
-// IORM is the main ORM interface, embedding Saver, Finder, and RelationLoader.
+// Preloader defines methods for preloading relations before executing queries.
+type Preloader[T EntityWithMeta] interface {
+	// Preload creates a new PreloadBuilder for building preload queries.
+	Preload() *PreloadBuilder[T]
+}
+
+// IORM is the main ORM interface, embedding Saver, Finder, RelationLoader, and Preloader.
 // It provides a unified API for all ORM operations.
 type IORM[T EntityWithMeta] interface {
 	Saver[T]
 	Finder[T]
 	RelationLoader[T]
+	Preloader[T]
 }
