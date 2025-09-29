@@ -88,14 +88,53 @@ type ISession interface {
 
 // Authenticable defines the interface for authenticatable entities
 type Authenticable interface {
-	// GetId returns the entity's unique identifier
+	// GetId returns the domain's unique identifier
 	GetId() string
-	// GetUsername returns the entity's username
+	// GetUsername returns the domain's username
 	GetUsername() string
-	// GetPassword returns the entity's password
+	// GetPassword returns the domain's password
 	GetPassword() string
-	// GetRole returns the entity's user role
+	// GetRole returns the domain's user role
 	GetRole() UserRole
+}
+
+// RoleProvider defines the interface for entities that can provide roles
+type RoleProvider interface {
+	// GetRoles returns the roles for this domain
+	GetRoles() []string
+}
+
+// OwnerProvider defines the interface for entities that can provide ownership information
+type OwnerProvider interface {
+	// GetOwnerId returns the ID of the domain's owner
+	GetOwnerId() string
+}
+
+// AccessibleEntity defines the interface for entities that can provide access control information
+type AccessibleEntity interface {
+	// GetAccessibleFields returns the fields that the given user can access for this domain
+	GetAccessibleFields(ctx context.Context, user Authenticable, operation string) []string
+
+	// CanAccessField checks if the given user can access a specific field for this domain
+	CanAccessField(ctx context.Context, user Authenticable, field string, operation string) bool
+
+	// GetOwnershipInfo returns ownership information for access control decisions
+	GetOwnershipInfo(ctx context.Context, user Authenticable) OwnershipInfo
+}
+
+// OwnershipInfo provides flexible ownership information for access control
+type OwnershipInfo struct {
+	// IsOwner indicates if the user owns this domain
+	IsOwner bool
+
+	// OwnerId is the ID of the domain owner (if applicable)
+	OwnerId string
+
+	// AccessLevel indicates the level of access (e.g., "owner", "admin", "viewer")
+	AccessLevel string
+
+	// CustomAccessData provides additional context for access decisions
+	CustomAccessData map[string]any
 }
 
 // UserRole represents a user's role in the system
@@ -107,7 +146,7 @@ type IUserService interface {
 	Get(id any) (Authenticable, error)
 	// GetByUsername retrieves a user by username
 	GetByUsername(username string) (Authenticable, error)
-	// Save persists a user entity
+	// Save persists a user domain
 	Save(authEntity Authenticable) error
 }
 

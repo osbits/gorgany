@@ -166,6 +166,14 @@ func (p *QueryParser) setMap(field reflect.Value, key string, value interface{})
 }
 
 func (p *QueryParser) setStruct(field reflect.Value, key string, value interface{}) error {
+	// Handle time-like structs from string query params
+	if ok, err := setTimeLikeFromValue(field, value); ok {
+		if err != nil {
+			return newValidationError(key, "Cannot parse time value: %v", err)
+		}
+		return nil
+	}
+
 	found, err := p.initDomain(field, key, value)
 	if err != nil {
 		return err

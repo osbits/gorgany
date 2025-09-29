@@ -284,6 +284,14 @@ func (p *MultipartParser) setMap(field reflect.Value, key string, value interfac
 }
 
 func (p *MultipartParser) setStruct(field reflect.Value, key string, value interface{}) error {
+	// Handle time-like structs from string form values
+	if ok, err := setTimeLikeFromValue(field, value); ok {
+		if err != nil {
+			return newValidationError(key, "Cannot parse time value: %v", err)
+		}
+		return nil
+	}
+
 	found, err := p.initDomain(field, key, value)
 	if err != nil {
 		return err

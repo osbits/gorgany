@@ -14,10 +14,10 @@ import (
 	"gorm.io/gorm/schema"
 )
 
-// Save saves an entity (creates if new, updates if existing)
+// Save saves an domain (creates if new, updates if existing)
 func (o *ORM[T]) Save(entity T) error {
 	if isNilValue(entity) {
-		return errors.New("entity cannot be nil")
+		return errors.New("domain cannot be nil")
 	}
 	meta := entity.GetMeta()
 	if meta == nil {
@@ -34,26 +34,26 @@ func (o *ORM[T]) Save(entity T) error {
 	return o.updateEntity(entity)
 }
 
-// Create inserts a new entity into the database.
+// Create inserts a new domain into the database.
 func (o *ORM[T]) Create(entity T) error {
 	if isNilValue(entity) {
-		return errors.New("entity cannot be nil")
+		return errors.New("domain cannot be nil")
 	}
 	return o.createEntity(entity)
 }
 
-// Update modifies an existing entity in the database.
+// Update modifies an existing domain in the database.
 func (o *ORM[T]) Update(entity T) error {
 	if isNilValue(entity) {
-		return errors.New("entity cannot be nil")
+		return errors.New("domain cannot be nil")
 	}
 	return o.updateEntity(entity)
 }
 
-// Delete deletes an entity
+// Delete deletes an domain
 func (o *ORM[T]) Delete(entity T) error {
 	if isNilValue(entity) {
-		return errors.New("entity cannot be nil")
+		return errors.New("domain cannot be nil")
 	}
 
 	meta := entity.GetMeta()
@@ -76,14 +76,14 @@ func (o *ORM[T]) Delete(entity T) error {
 		pkValueFieldName = entitySchema.PrimaryFields[0].Name
 	}
 
-	// Execute hooks if entity implements them
+	// Execute hooks if domain implements them
 	if hook, ok := any(entity).(interface{ BeforeDelete(*gorm.DB) error }); ok {
 		if err := hook.BeforeDelete(nil); err != nil {
 			return err
 		}
 	}
 
-	// Extract entity information using reflection
+	// Extract domain information using reflection
 	val := reflect.ValueOf(entity)
 	if val.Kind() == reflect.Ptr {
 		val = val.Elem()
@@ -109,7 +109,7 @@ func (o *ORM[T]) Delete(entity T) error {
 	}
 
 	if pkValue == nil || isZeroValue(pkValue) {
-		return fmt.Errorf("cannot delete entity with zero primary key value")
+		return fmt.Errorf("cannot delete domain with zero primary key value")
 	}
 
 	// Create a builder for the DELETE query
@@ -125,7 +125,7 @@ func (o *ORM[T]) Delete(entity T) error {
 	// Execute the query
 	queryRes := o.db.Executor().Exec(context.Background(), builder)
 	if queryRes.Error != nil {
-		return fmt.Errorf("failed to delete entity: %w", queryRes.Error)
+		return fmt.Errorf("failed to delete domain: %w", queryRes.Error)
 	}
 
 	// Execute after hooks
@@ -138,7 +138,7 @@ func (o *ORM[T]) Delete(entity T) error {
 	return nil
 }
 
-// createEntity handles the actual creation logic for an entity
+// createEntity handles the actual creation logic for an domain
 func (o *ORM[T]) createEntity(entity T) error {
 	meta := entity.GetMeta()
 	if meta == nil {
@@ -159,7 +159,7 @@ func (o *ORM[T]) createEntity(entity T) error {
 		meta.PrimaryKey = entitySchema.PrimaryFieldDBNames[0]
 	}
 
-	// Execute hooks if entity implements them
+	// Execute hooks if domain implements them
 	if hook, ok := any(entity).(interface{ BeforeSave(*gorm.DB) error }); ok {
 		if err := hook.BeforeSave(nil); err != nil {
 			return err
@@ -172,7 +172,7 @@ func (o *ORM[T]) createEntity(entity T) error {
 		}
 	}
 
-	// Extract entity information using reflection
+	// Extract domain information using reflection
 	val := reflect.ValueOf(entity)
 	if val.Kind() == reflect.Ptr {
 		val = val.Elem()
@@ -220,7 +220,7 @@ func (o *ORM[T]) createEntity(entity T) error {
 	result := map[string]interface{}{}
 	queryRes := o.db.Executor().Find(context.Background(), builder, &result)
 	if queryRes.Error != nil {
-		return fmt.Errorf("failed to create entity: %w", queryRes.Error)
+		return fmt.Errorf("failed to create domain: %w", queryRes.Error)
 	}
 
 	destVal := reflect.Indirect(reflect.ValueOf(entity))
@@ -251,7 +251,7 @@ func (o *ORM[T]) createEntity(entity T) error {
 		}
 	}
 
-	// Auto-save relations after creating the main entity
+	// Auto-save relations after creating the main domain
 	if err := o.SaveRelations(entity); err != nil {
 		return fmt.Errorf("failed to auto-save relations: %w", err)
 	}
@@ -259,7 +259,7 @@ func (o *ORM[T]) createEntity(entity T) error {
 	return nil
 }
 
-// updateEntity handles the actual update logic for an entity
+// updateEntity handles the actual update logic for an domain
 func (o *ORM[T]) updateEntity(entity T) error {
 	meta := entity.GetMeta()
 	if meta == nil {
@@ -279,7 +279,7 @@ func (o *ORM[T]) updateEntity(entity T) error {
 		meta.PrimaryKey = entitySchema.PrimaryFieldDBNames[0]
 	}
 
-	// Execute hooks if entity implements them
+	// Execute hooks if domain implements them
 	if hook, ok := any(entity).(interface{ BeforeSave(*gorm.DB) error }); ok {
 		if err := hook.BeforeSave(nil); err != nil {
 			return err
@@ -292,7 +292,7 @@ func (o *ORM[T]) updateEntity(entity T) error {
 		}
 	}
 
-	// Extract entity information using reflection
+	// Extract domain information using reflection
 	val := reflect.ValueOf(entity)
 	if val.Kind() == reflect.Ptr {
 		val = val.Elem()
@@ -321,7 +321,7 @@ func (o *ORM[T]) updateEntity(entity T) error {
 
 	// Check primary key
 	if pkValue == nil || isZeroValue(pkValue) {
-		return fmt.Errorf("cannot update entity with zero primary key value")
+		return fmt.Errorf("cannot update domain with zero primary key value")
 	}
 
 	// Add WHERE clause for primary key
@@ -334,7 +334,7 @@ func (o *ORM[T]) updateEntity(entity T) error {
 	// Execute the query
 	queryRes := o.db.Executor().Exec(context.Background(), builder)
 	if queryRes.Error != nil {
-		return fmt.Errorf("failed to update entity: %w", queryRes.Error)
+		return fmt.Errorf("failed to update domain: %w", queryRes.Error)
 	}
 
 	// Update metadata
@@ -354,7 +354,7 @@ func (o *ORM[T]) updateEntity(entity T) error {
 		}
 	}
 
-	// Auto-save relations after updating the main entity
+	// Auto-save relations after updating the main domain
 	if err := o.SaveRelations(entity); err != nil {
 		return fmt.Errorf("failed to auto-save relations: %w", err)
 	}

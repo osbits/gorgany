@@ -3,6 +3,7 @@ package v2
 import (
 	"context"
 	"fmt"
+
 	"git.qix.sx/gorgany/gorgany.git/db/sql/core"
 
 	"gorm.io/gorm"
@@ -69,7 +70,6 @@ func (e *Executor) ExecRaw(ctx context.Context, sql string, args ...interface{})
 
 // FindRaw executes a raw SQL query and stores the results in the provided destination
 func (e *Executor) FindRaw(ctx context.Context, result interface{}, sql string, args ...interface{}) core.QueryResult {
-	// Check if result is nil
 	if result == nil {
 		return core.QueryResult{Error: fmt.Errorf("destination cannot be nil")}
 	}
@@ -77,7 +77,6 @@ func (e *Executor) FindRaw(ctx context.Context, result interface{}, sql string, 
 	db := e.db.Raw(sql, args...)
 	err := db.Scan(result).Error
 
-	// Create query result metadata
 	queryResult := core.QueryResult{
 		Error:        err,
 		RowsAffected: db.RowsAffected,

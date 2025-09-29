@@ -2,11 +2,13 @@ package model
 
 import (
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/util"
-	"github.com/iancoleman/strcase"
 	"reflect"
 	"strings"
+
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/util"
+
+	"github.com/iancoleman/strcase"
 )
 
 type FieldBinder struct {
@@ -28,18 +30,36 @@ func (thiz FieldBinder) BindField(model any, field string, value any) error {
 	}
 
 	rvField := rvModel.FieldByNameFunc(func(name string) bool {
-		return strings.ToLower(strcase.ToLowerCamel(strings.ToLower(name))) == strings.ToLower(strcase.ToLowerCamel(field))
+		return thiz.matchFieldName(name, field)
 	})
+
+	// If field is not found or not settable, do nothing to avoid panic
+	if !rvField.IsValid() || !rvField.CanSet() {
+		return nil
+	}
 
 	if dbField, ok := value.(core.NullableValueGetter); ok {
 		value = dbField.GetValue()
 	}
 
-	if dbField, ok := rvField.Addr().Interface().(core.NullableValueSetter); ok {
+	// Try NullableValueSetter on addressable value first
+	if rvField.CanAddr() {
+		if dbField, ok := rvField.Addr().Interface().(core.NullableValueSetter); ok {
+			dbField.SetValue(value)
+			return nil
+		}
+	}
+	// Fallback to direct interface check
+	if dbField, ok := rvField.Interface().(core.NullableValueSetter); ok {
 		dbField.SetValue(value)
-	} else {
-		if value != nil {
-			rvField.Set(reflect.ValueOf(value))
+		return nil
+	}
+
+	if value != nil {
+		v := reflect.ValueOf(value)
+		// Only set if assignable to field type to avoid panic
+		if v.IsValid() && v.Type().AssignableTo(rvField.Type()) {
+			rvField.Set(v)
 		}
 	}
 
@@ -57,7 +77,7 @@ func (thiz FieldBinder) BindProtectedField(model any, field string, value any) e
 	}
 
 	rvField := rvModel.FieldByNameFunc(func(name string) bool {
-		return strings.ToLower(strcase.ToLowerCamel(strings.ToLower(name))) == strings.ToLower(strcase.ToLowerCamel(field))
+		return thiz.matchFieldName(name, field)
 	})
 
 	if protectedFieldsModel, ok := model.(core.LimitedFieldsMarshaller); ok {
@@ -66,10 +86,17 @@ func (thiz FieldBinder) BindProtectedField(model any, field string, value any) e
 		})
 
 		if !isProtectedAllowed {
-			rvField.Set(reflect.Zero(rvField.Type()))
+			if rvField.IsValid() && rvField.CanSet() {
+				rvField.Set(reflect.Zero(rvField.Type()))
+			}
 			return nil
 		}
 	} else {
+		return nil
+	}
+
+	// If field is not found or not settable, no-op
+	if !rvField.IsValid() || !rvField.CanSet() {
 		return nil
 	}
 
@@ -77,10 +104,21 @@ func (thiz FieldBinder) BindProtectedField(model any, field string, value any) e
 		value = dbField.GetValue()
 	}
 
+	// Prefer addressable receiver for NullableValueSetter
+	if rvField.CanAddr() {
+		if dbField, ok := rvField.Addr().Interface().(core.NullableValueSetter); ok {
+			dbField.SetValue(value)
+			return nil
+		}
+	}
 	if dbField, ok := rvField.Interface().(core.NullableValueSetter); ok {
 		dbField.SetValue(value)
-	} else {
-		rvField.Set(reflect.ValueOf(value))
+		return nil
+	}
+
+	v := reflect.ValueOf(value)
+	if v.IsValid() && v.Type().AssignableTo(rvField.Type()) {
+		rvField.Set(v)
 	}
 
 	return nil
@@ -112,8 +150,13 @@ func (thiz FieldBinder) BindFieldClosure(model any, field string, closure any) e
 	}
 
 	rvField := rvModel.FieldByNameFunc(func(name string) bool {
-		return strings.ToLower(strcase.ToLowerCamel(strings.ToLower(name))) == strings.ToLower(strcase.ToLowerCamel(field))
+		return thiz.matchFieldName(name, field)
 	})
+
+	// If field is not found or not settable, no-op
+	if !rvField.IsValid() || !rvField.CanSet() {
+		return nil
+	}
 
 	value := returnedValues[0]
 
@@ -121,10 +164,21 @@ func (thiz FieldBinder) BindFieldClosure(model any, field string, closure any) e
 		value = reflect.ValueOf(dbField.GetValue())
 	}
 
+	// Prefer addressable receiver for NullableValueSetter
+	if rvField.CanAddr() {
+		if dbField, ok := rvField.Addr().Interface().(core.NullableValueSetter); ok {
+			dbField.SetValue(value.Interface())
+			return nil
+		}
+	}
+
 	if dbField, ok := rvField.Interface().(core.NullableValueSetter); ok {
 		dbField.SetValue(value.Interface())
 	} else {
-		rvField.Set(value)
+		// Only set if assignable to field type to avoid panic
+		if value.IsValid() && value.Type().AssignableTo(rvField.Type()) {
+			rvField.Set(value)
+		}
 	}
 
 	return nil
@@ -145,10 +199,14 @@ func (thiz FieldBinder) BindFields(model any, donor any, fields []string) error 
 
 	for _, field := range fields {
 		donorField := rvDonor.FieldByNameFunc(func(name string) bool {
-			return strings.ToLower(strcase.ToLowerCamel(strings.ToLower(name))) == strings.ToLower(strcase.ToLowerCamel(field))
+			return thiz.matchFieldName(name, field)
 		})
 
-		err := thiz.BindField(model, field, donorField.Interface())
+		var donorVal any
+		if donorField.IsValid() {
+			donorVal = donorField.Interface()
+		}
+		err := thiz.BindField(model, field, donorVal)
 		if err != nil {
 			return err
 		}
@@ -168,6 +226,42 @@ func (thiz FieldBinder) isPublicFieldAllowed(field string, model any) bool {
 		return true
 	}
 	return util.InArrayFunc(allowedFields, func(el string) bool {
-		return strings.ToLower(strcase.ToLowerCamel(strings.ToLower(el))) == strings.ToLower(strcase.ToLowerCamel(field))
+		return thiz.matchFieldName(el, field)
 	})
+}
+
+// matchFieldName provides robust case-insensitive field matching
+func (thiz FieldBinder) matchFieldName(structFieldName, requestedField string) bool {
+	// Try multiple matching strategies for better compatibility
+
+	// 1. Direct case-insensitive match
+	if strings.EqualFold(structFieldName, requestedField) {
+		return true
+	}
+
+	// 2. Case-insensitive match with underscores removed
+	normalizedStruct := strings.ToLower(strings.ReplaceAll(structFieldName, "_", ""))
+	normalizedRequested := strings.ToLower(strings.ReplaceAll(requestedField, "_", ""))
+	if normalizedStruct == normalizedRequested {
+		return true
+	}
+
+	// 3. Original camelCase conversion logic (for backward compatibility)
+	structCamel := strings.ToLower(strcase.ToLowerCamel(strings.ToLower(structFieldName)))
+	requestedCamel := strings.ToLower(strcase.ToLowerCamel(requestedField))
+	if structCamel == requestedCamel {
+		return true
+	}
+
+	// 4. Handle common field name variations
+	// Convert PascalCase to lowercase for comparison
+	structLower := strings.ToLower(structFieldName)
+	requestedLower := strings.ToLower(requestedField)
+
+	// Remove common prefixes/suffixes and compare
+	if strings.HasSuffix(structLower, requestedLower) || strings.HasSuffix(requestedLower, structLower) {
+		return true
+	}
+
+	return false
 }

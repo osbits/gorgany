@@ -1,0 +1,204 @@
+# Complex Hierarchical RBAC Example
+# Scenario: User → Team → Manager Role → Access to Team Members
+
+api:
+  access:
+    domains:
+      # Person entity with complex team-based access
+      person:
+        roles: [ADMIN, TEAM_MANAGER, USER]
+        forGuest: false
+        
+        db_rbac:
+          enable: true
+          ownership_field: "id"  # Users can see themselves
+          user_context_fields: ["team_id", "department_id"]
+          
+          # Custom filters for different roles
+          custom_filters:
+            # ADMIN - can see all people
+            ADMIN:
+              - field: "id"
+                operator: ">"
+                value: 0
+                logic: "AND"
+            
+            # TEAM_MANAGER - can see team members (complex subquery)
+            TEAM_MANAGER:
+              - field: "team_members"
+                operator: "subquery"
+                value: "team_members"
+                logic: "OR"
+                subquery:
+                  table: "team_members"
+                  select: "person_id"
+                  operator: "IN"
+                  where:
+                    - field: "team_id"
+                      operator: "="
+                      value: "{{user_team_id}}"
+                      logic: "AND"
+                    - field: "role"
+                      operator: "="
+                      value: "member"
+                      logic: "AND"
+                  join:
+                    - type: "INNER"
+                      table: "teams"
+                      left_key: "team_members.team_id"
+                      right_key: "teams.id"
+            
+            # USER - can see only themselves
+            USER:
+              - field: "id"
+                operator: "="
+                value: "{{user_id}}"
+                logic: "AND"
+        
+        # Field-level access control
+        fields:
+          id:
+            read: [ADMIN, TEAM_MANAGER, USER]
+            write: [ADMIN]
+          name:
+            read: [ADMIN, TEAM_MANAGER, USER]
+            write: [ADMIN, TEAM_MANAGER]
+          email:
+            read: [ADMIN, TEAM_MANAGER, USER]
+            write: [ADMIN, TEAM_MANAGER]
+          phone:
+            read: [ADMIN, TEAM_MANAGER]
+            write: [ADMIN, TEAM_MANAGER]
+          salary:
+            read: [ADMIN]
+            write: [ADMIN]
+          team_id:
+            read: [ADMIN, TEAM_MANAGER]
+            write: [ADMIN]
+      
+      # Team entity with manager access
+      team:
+        roles: [ADMIN, TEAM_MANAGER, USER]
+        forGuest: false
+        
+        db_rbac:
+          enable: true
+          user_context_fields: ["team_id"]
+          
+          custom_filters:
+            # ADMIN - can see all teams
+            ADMIN:
+              - field: "id"
+                operator: ">"
+                value: 0
+                logic: "AND"
+            
+            # TEAM_MANAGER - can see their own team
+            TEAM_MANAGER:
+              - field: "id"
+                operator: "="
+                value: "{{user_team_id}}"
+                logic: "AND"
+            
+            # USER - can see teams they belong to
+            USER:
+              - field: "user_teams"
+                operator: "subquery"
+                value: "user_teams"
+                logic: "OR"
+                subquery:
+                  table: "team_members"
+                  select: "team_id"
+                  operator: "IN"
+                  where:
+                    - field: "person_id"
+                      operator: "="
+                      value: "{{user_id}}"
+                      logic: "AND"
+        
+        fields:
+          id:
+            read: [ADMIN, TEAM_MANAGER, USER]
+            write: [ADMIN]
+          name:
+            read: [ADMIN, TEAM_MANAGER, USER]
+            write: [ADMIN, TEAM_MANAGER]
+          description:
+            read: [ADMIN, TEAM_MANAGER, USER]
+            write: [ADMIN, TEAM_MANAGER]
+          budget:
+            read: [ADMIN, TEAM_MANAGER]
+            write: [ADMIN]
+      
+      # Project entity with complex access (team + department)
+      project:
+        roles: [ADMIN, DEPARTMENT_MANAGER, TEAM_MANAGER, USER]
+        forGuest: false
+        
+        db_rbac:
+          enable: true
+          user_context_fields: ["team_id", "department_id"]
+          
+          custom_filters:
+            # ADMIN - can see all projects
+            ADMIN:
+              - field: "id"
+                operator: ">"
+                value: 0
+                logic: "AND"
+            
+            # DEPARTMENT_MANAGER - can see department projects
+            DEPARTMENT_MANAGER:
+              - field: "department_id"
+                operator: "="
+                value: "{{user_department_id}}"
+                logic: "AND"
+            
+            # TEAM_MANAGER - can see team projects
+            TEAM_MANAGER:
+              - field: "team_projects"
+                operator: "subquery"
+                value: "team_projects"
+                logic: "OR"
+                subquery:
+                  table: "project_teams"
+                  select: "project_id"
+                  operator: "IN"
+                  where:
+                    - field: "team_id"
+                      operator: "="
+                      value: "{{user_team_id}}"
+                      logic: "AND"
+            
+            # USER - can see projects they're assigned to
+            USER:
+              - field: "user_projects"
+                operator: "subquery"
+                value: "user_projects"
+                logic: "OR"
+                subquery:
+                  table: "project_members"
+                  select: "project_id"
+                  operator: "IN"
+                  where:
+                    - field: "person_id"
+                      operator: "="
+                      value: "{{user_id}}"
+                      logic: "AND"
+        
+        fields:
+          id:
+            read: [ADMIN, DEPARTMENT_MANAGER, TEAM_MANAGER, USER]
+            write: [ADMIN, DEPARTMENT_MANAGER]
+          name:
+            read: [ADMIN, DEPARTMENT_MANAGER, TEAM_MANAGER, USER]
+            write: [ADMIN, DEPARTMENT_MANAGER]
+          description:
+            read: [ADMIN, DEPARTMENT_MANAGER, TEAM_MANAGER, USER]
+            write: [ADMIN, DEPARTMENT_MANAGER]
+          budget:
+            read: [ADMIN, DEPARTMENT_MANAGER]
+            write: [ADMIN, DEPARTMENT_MANAGER]
+          status:
+            read: [ADMIN, DEPARTMENT_MANAGER, TEAM_MANAGER, USER]
+            write: [ADMIN, DEPARTMENT_MANAGER, TEAM_MANAGER]

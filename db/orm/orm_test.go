@@ -11,7 +11,7 @@ import (
 	v2 "git.qix.sx/gorgany/gorgany.git/db/sql/gorm/postgres/v2"
 )
 
-// TestEntity is a test entity that implements EntityWithMeta
+// TestEntity is a test domain that implements EntityWithMeta
 type TestEntity struct {
 	BaseEntity
 	ID        int    `gorm:"primaryKey"`
@@ -21,7 +21,7 @@ type TestEntity struct {
 	CreatedAt string `gorm:"column:created_at"`
 }
 
-// TestRelatedEntity is a test entity for testing relations
+// TestRelatedEntity is a test domain for testing relations
 type TestRelatedEntity struct {
 	BaseEntity
 	ID       int    `gorm:"primaryKey"`
@@ -41,7 +41,7 @@ type TestNestedEmbeddedStruct struct {
 	Priority int    `gorm:"column:priority"`
 }
 
-// TestEntityWithEmbedded is a test entity with embedded structs
+// TestEntityWithEmbedded is a test domain with embedded structs
 type TestEntityWithEmbedded struct {
 	BaseEntity
 	ID   int    `gorm:"primaryKey"`
@@ -248,7 +248,7 @@ func NewMockDataSource() *MockDataSource {
 }
 
 // TestFind tests the Find method
-// TestFind verifies that Finder interface's Find method retrieves an entity by its primary key.
+// TestFind verifies that Finder interface's Find method retrieves an domain by its primary key.
 func TestFind(t *testing.T) {
 	// Create a mock data source
 	mockDS := NewMockDataSource()
@@ -266,7 +266,7 @@ func TestFind(t *testing.T) {
 			t.Errorf("Expected args: [1], got: %v", args)
 		}
 
-		// Set the destination entity
+		// Set the destination domain
 		entity, ok := dest.(**TestEntity)
 		if !ok {
 			return dbCore.QueryResult{
@@ -304,7 +304,7 @@ func TestFind(t *testing.T) {
 		t.Errorf("Expected no error, got: %v", err)
 	}
 
-	// Check that the entity was populated correctly
+	// Check that the domain was populated correctly
 	if entity.ID != 1 {
 		t.Errorf("Expected ID: 1, got: %d", entity.ID)
 	}
@@ -318,7 +318,7 @@ func TestFind(t *testing.T) {
 		t.Errorf("Expected Age: 30, got: %d", entity.Age)
 	}
 
-	// Check that the entity metadata was set correctly
+	// Check that the domain metadata was set correctly
 	meta := entity.GetMeta()
 	if meta.TableName != "test_entities" {
 		t.Errorf("Expected TableName: test_entities, got: %s", meta.TableName)
@@ -332,7 +332,7 @@ func TestFind(t *testing.T) {
 }
 
 // TestCreate tests the Create method
-// TestCreate verifies that Saver interface's Create method inserts a new entity.
+// TestCreate verifies that Saver interface's Create method inserts a new domain.
 func TestCreate(t *testing.T) {
 	// Create a mock data source
 	mockDS := NewMockDataSource()
@@ -363,7 +363,7 @@ func TestCreate(t *testing.T) {
 	// Use Saver interface for ORM
 	var orm Saver[*TestEntity] = New[*TestEntity](mockDS.session)
 
-	// Create a test entity
+	// Create a test domain
 	entity := &TestEntity{
 		Name:  "Test Entity",
 		Email: "test@example.com",
@@ -378,12 +378,12 @@ func TestCreate(t *testing.T) {
 		t.Errorf("Expected no error, got: %v", err)
 	}
 
-	// Check that the entity ID was set
+	// Check that the domain ID was set
 	if entity.ID != 1 {
 		t.Errorf("Expected ID: 1, got: %d", entity.ID)
 	}
 
-	// Check that the entity metadata was set correctly
+	// Check that the domain metadata was set correctly
 	meta := entity.GetMeta()
 	if !meta.IsLoaded {
 		t.Errorf("Expected IsLoaded: true, got: false")
@@ -391,7 +391,7 @@ func TestCreate(t *testing.T) {
 }
 
 // TestUpdate tests the Update method
-// TestUpdate verifies that Saver interface's Update method updates an entity.
+// TestUpdate verifies that Saver interface's Update method updates an domain.
 func TestUpdate(t *testing.T) {
 	// Create a mock data source
 	mockDS := NewMockDataSource()
@@ -406,7 +406,7 @@ func TestUpdate(t *testing.T) {
 	// Use Saver interface for ORM
 	var orm Saver[*TestEntity] = New[*TestEntity](mockDS.session)
 
-	// Create a test entity
+	// Create a test domain
 	entity := &TestEntity{
 		ID:    1,
 		Name:  "Updated Entity",
@@ -428,7 +428,7 @@ func TestUpdate(t *testing.T) {
 		t.Errorf("Expected no error, got: %v", err)
 	}
 
-	// Check that the entity metadata was updated correctly
+	// Check that the domain metadata was updated correctly
 	meta := entity.GetMeta()
 	if meta.IsDirty {
 		t.Errorf("Expected IsDirty: false, got: true")
@@ -436,7 +436,7 @@ func TestUpdate(t *testing.T) {
 }
 
 // TestDelete tests the Delete method
-// TestDelete verifies that Saver interface's Delete method deletes an entity.
+// TestDelete verifies that Saver interface's Delete method deletes an domain.
 func TestDelete(t *testing.T) {
 	// Create a mock data source
 	mockDS := NewMockDataSource()
@@ -451,7 +451,7 @@ func TestDelete(t *testing.T) {
 	// Use Saver interface for ORM
 	var orm Saver[*TestEntity] = New[*TestEntity](mockDS.session)
 
-	// Create a test entity
+	// Create a test domain
 	entity := &TestEntity{
 		ID: 1,
 	}
@@ -500,7 +500,7 @@ func TestLoadRelation(t *testing.T) {
 			entity.Elem().FieldByName("TestID").SetInt(1)
 			entity.Elem().FieldByName("Category").SetString(fmt.Sprintf("Category %d", i+1))
 
-			// Set the entity in the slice
+			// Set the domain in the slice
 			newSlice.Index(i).Set(entity)
 		}
 
@@ -515,7 +515,7 @@ func TestLoadRelation(t *testing.T) {
 	// Use RelationLoader interface for ORM
 	var orm RelationLoader[*TestEntity] = New[*TestEntity](mockDS.session)
 
-	// Create a test entity with a relation
+	// Create a test domain with a relation
 	entity := &TestEntity{
 		ID:    1,
 		Name:  "Test Entity",
@@ -575,7 +575,7 @@ func TestRawQuery(t *testing.T) {
 			t.Errorf("Expected args: [1], got: %v", args)
 		}
 
-		// Set the destination entity
+		// Set the destination domain
 		entity, ok := dest.(**TestEntity)
 		if !ok {
 			return dbCore.QueryResult{
@@ -613,7 +613,7 @@ func TestRawQuery(t *testing.T) {
 		t.Errorf("Expected no error, got: %v", err)
 	}
 
-	// Check that the entity was populated correctly
+	// Check that the domain was populated correctly
 	if entity.ID != 1 {
 		t.Errorf("Expected ID: 1, got: %d", entity.ID)
 	}
@@ -668,7 +668,7 @@ func TestAll(t *testing.T) {
 			},
 		}
 
-		// Set metadata for each entity
+		// Set metadata for each domain
 		for i := range *entities {
 			(*entities)[i].SetMeta(&EntityMeta{
 				TableName:     "test_entities",
@@ -701,7 +701,7 @@ func TestAll(t *testing.T) {
 		t.Errorf("Expected 2 entities, got: %d", len(entities))
 	}
 
-	// Check the first entity
+	// Check the first domain
 	if entities[0].ID != 1 {
 		t.Errorf("Expected ID: 1, got: %d", entities[0].ID)
 	}
@@ -709,7 +709,7 @@ func TestAll(t *testing.T) {
 		t.Errorf("Expected Name: Test Entity 1, got: %s", entities[0].Name)
 	}
 
-	// Check the second entity
+	// Check the second domain
 	if entities[1].ID != 2 {
 		t.Errorf("Expected ID: 2, got: %d", entities[1].ID)
 	}
@@ -758,7 +758,7 @@ func TestRawQueryAll(t *testing.T) {
 			},
 		}
 
-		// Set metadata for each entity
+		// Set metadata for each domain
 		for i := range *entities {
 			(*entities)[i].SetMeta(&EntityMeta{
 				TableName:     "test_entities",
@@ -791,7 +791,7 @@ func TestRawQueryAll(t *testing.T) {
 		t.Errorf("Expected 2 entities, got: %d", len(entities))
 	}
 
-	// Check the first entity
+	// Check the first domain
 	if entities[0].ID != 1 {
 		t.Errorf("Expected ID: 1, got: %d", entities[0].ID)
 	}
@@ -799,7 +799,7 @@ func TestRawQueryAll(t *testing.T) {
 		t.Errorf("Expected Name: Test Entity 1, got: %s", entities[0].Name)
 	}
 
-	// Check the second entity
+	// Check the second domain
 	if entities[1].ID != 2 {
 		t.Errorf("Expected ID: 2, got: %d", entities[1].ID)
 	}

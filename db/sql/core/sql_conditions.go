@@ -288,8 +288,99 @@ type RawCondition struct {
 }
 
 // ToSQL returns the SQL representation of the raw condition
+// It supports identifier placeholders used across the project to prevent
+// identifiers (table/column) from being bound as string values:
+//   - "?.id"  -> consumes 1 arg (table/alias), renders as <arg>.id
+//   - "?.?"   -> consumes 2 args (table/alias, column), renders as <arg0>.<arg1>
+//
+// Remaining "?" placeholders are treated as value parameters and returned in args.
 func (c *RawCondition) ToSQL() (string, []interface{}) {
-	return c.SQL, c.Args
+	if c == nil {
+		return "", nil
+	}
+
+	sql := c.SQL
+	args := make([]interface{}, 0, len(c.Args))
+
+	// Fast path: if there is no "?." pattern, keep legacy behavior
+	if !strings.Contains(sql, "?.") {
+		return sql, c.Args
+	}
+
+	// We'll build the final SQL by replacing identifier placeholders and
+	// collecting remaining args for value placeholders.
+	var sb strings.Builder
+	runes := []rune(sql)
+	for i := 0; i < len(runes); {
+		// Detect "?" placeholder
+		if runes[i] == '?' {
+			// Check if it's an identifier placeholder followed by "."
+			if i+1 < len(runes) && runes[i+1] == '.' {
+				// Two forms are supported:
+				// 1) "?.?" -> table/alias and column both dynamic (consume 2 args)
+				// 2) "?.<word>" -> table/alias dynamic, column literal (consume 1 arg)
+				if i+2 < len(runes) && runes[i+2] == '?' { // pattern "?.?"
+					// Consume two args for identifiers
+					if len(c.Args) < 2 {
+						// Not enough args; fall back to legacy behavior
+						return c.SQL, c.Args
+					}
+					tbl := fmt.Sprint(c.Args[0])
+					col := fmt.Sprint(c.Args[1])
+					c.Args = c.Args[2:]
+					sb.WriteString(tbl)
+					sb.WriteRune('.')
+					sb.WriteString(col)
+					// Skip "?.?"
+					i += 3
+					continue
+				}
+
+				// pattern "?.<word>"
+				// Extract the literal column name following the dot
+				j := i + 2 // start after "?."
+				for j < len(runes) {
+					r := runes[j]
+					if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '"' {
+						j++
+						continue
+					}
+					break
+				}
+				if len(c.Args) < 1 {
+					return c.SQL, c.Args
+				}
+				tbl := fmt.Sprint(c.Args[0])
+				c.Args = c.Args[1:]
+				sb.WriteString(tbl)
+				sb.WriteRune('.')
+				sb.WriteString(string(runes[i+2 : j]))
+				i = j
+				continue
+			}
+
+			// Value placeholder "?" -> keep as placeholder and collect next arg
+			sb.WriteRune('?')
+			if len(c.Args) > 0 {
+				args = append(args, c.Args[0])
+				c.Args = c.Args[1:]
+			}
+			i++
+			continue
+		}
+
+		// Regular character
+		sb.WriteRune(runes[i])
+		i++
+	}
+
+	// Append any leftover args (shouldn't normally happen unless there were more
+	// args than placeholders). Keep them to avoid silent loss.
+	if len(c.Args) > 0 {
+		args = append(args, c.Args...)
+	}
+
+	return sb.String(), args
 }
 
 // buildSubquerySQL builds SQL for a subquery and returns its SQL and arguments
