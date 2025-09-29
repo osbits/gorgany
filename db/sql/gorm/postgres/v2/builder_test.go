@@ -647,3 +647,44 @@ func TestBuilder_ColumnComparison(t *testing.T) {
 	assert.Equal(t, "SELECT id, name FROM users WHERE age > min_age AND (max_age IS NULL OR age < max_age)", sql)
 	assert.Nil(t, args)
 }
+
+func TestBuilder_RawCondition_IdentifierPlaceholders_InJoin(t *testing.T) {
+	// Emulate many2many JOIN ON condition using core.RawCondition with identifier placeholders
+	relatedTable := "treatment_categories"
+	joinTable := "treatment_treatment_category"
+
+	builder := NewBuilder().
+		Select(relatedTable+".*").
+		From(relatedTable).
+		InnerJoin(joinTable, &dbCore.RawCondition{
+			SQL:  "?.id = ?.?",
+			Args: []interface{}{relatedTable, joinTable, "treatment_category_id"},
+		}).
+		Where(&dbCore.BinaryCondition{
+			Left:     joinTable + "." + "treatment_id",
+			Operator: "=",
+			Right:    1,
+		})
+
+	sql, args := builder.ToSQL()
+	expectedSQL := "SELECT " + relatedTable + ".* FROM " + relatedTable + " INNER JOIN " + joinTable + " ON " + relatedTable + ".id = " + joinTable + ".treatment_category_id WHERE " + joinTable + ".treatment_id = ?"
+	assert.Equal(t, expectedSQL, sql)
+	assert.Equal(t, []interface{}{1}, args)
+}
+
+func TestBuilder_RawCondition_MixedIdentifierAndValuePlaceholders(t *testing.T) {
+	// Ensure that identifier placeholder and value placeholder coexist correctly
+	table := "users"
+	builder := NewBuilder().
+		Select("id", "name").
+		From(table).
+		Where(&dbCore.RawCondition{
+			SQL:  "?.name = ?",
+			Args: []interface{}{table, "John"},
+		})
+
+	sql, args := builder.ToSQL()
+	expectedSQL := "SELECT id, name FROM " + table + " WHERE " + table + ".name = ?"
+	assert.Equal(t, expectedSQL, sql)
+	assert.Equal(t, []interface{}{"John"}, args)
+}

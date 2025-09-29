@@ -9,7 +9,6 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/log"
 	"git.qix.sx/gorgany/gorgany.git/util"
-	"github.com/iancoleman/strcase"
 )
 
 type ApiReturnObject struct {
@@ -178,7 +177,7 @@ func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (any, error
 		}
 
 		if !util.InArrayFunc(allowedFields, func(el string) bool {
-			return strcase.ToLowerCamel(el) == strcase.ToLowerCamel(rtField.Name)
+			return strings.ToLower(el) == strings.ToLower(rtField.Name)
 		}) && (allowedFields[0] != "*") {
 			continue
 		}

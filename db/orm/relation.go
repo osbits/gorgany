@@ -734,18 +734,18 @@ func (o *ORM[T]) loadManyToManyRelation(
 	relatedTableName := relationship.FieldSchema.Table
 
 	// Build query to load related entities through join table
-	builder := v2.NewBuilder()
-	builder.Select(fmt.Sprintf("%s.*", relatedTableName))
-	builder.From(relatedTableName)
-	builder.InnerJoin(joinTable, &dbCore.RawCondition{
-		SQL:  "?.id = ?.?",
-		Args: []any{relatedTableName, joinTable, referenceFKName},
-	})
-	builder.Where(&dbCore.BinaryCondition{
-		Left:     fmt.Sprintf("%s.%s", joinTable, joinFKName),
-		Operator: "=",
-		Right:    pkValue,
-	})
+	builder := v2.NewBuilder().
+		Select(fmt.Sprintf("%s.*", relatedTableName)).
+		From(relatedTableName).
+		InnerJoin(joinTable, &dbCore.RawCondition{
+			SQL:  "?.id = ?.?",
+			Args: []any{relatedTableName, joinTable, referenceFKName},
+		}).
+		Where(&dbCore.BinaryCondition{
+			Left:     fmt.Sprintf("%s.%s", joinTable, joinFKName),
+			Operator: "=",
+			Right:    pkValue,
+		})
 
 	// Create a new slice to hold results
 	sliceType := reflect.SliceOf(relationField.Type().Elem())

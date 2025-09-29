@@ -23,6 +23,10 @@ func (m *MockAuthContext) Strategy(strategyName ...string) core.IAuthStrategy {
 }
 
 func (m *MockAuthContext) ResolveAuthStrategyByContext(ctx context.Context) core.IAuthStrategy {
+	// Check if user is in context first
+	if user, ok := ctx.Value("current_user").(core.Authenticable); ok {
+		return &MockAuthStrategy{currentUser: user}
+	}
 	return &MockAuthStrategy{currentUser: m.currentUser}
 }
 

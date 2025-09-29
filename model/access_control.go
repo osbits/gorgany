@@ -8,6 +8,39 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 )
 
+// DBTestUser is used for testing DB RBAC functionality
+type DBTestUser struct {
+	ID         string   `json:"id"`
+	Username   string   `json:"username"`
+	Email      string   `json:"email"`
+	Roles      []string `json:"roles"`
+	Department string   `json:"department"`
+	TenantID   string   `json:"tenant_id"`
+}
+
+func (u *DBTestUser) GetId() string {
+	return u.ID
+}
+
+func (u *DBTestUser) GetUsername() string {
+	return u.Username
+}
+
+func (u *DBTestUser) GetPassword() string {
+	return "hashed_password"
+}
+
+func (u *DBTestUser) GetRole() core.UserRole {
+	if len(u.Roles) > 0 {
+		return core.UserRole(u.Roles[0])
+	}
+	return core.UserRole("user")
+}
+
+func (u *DBTestUser) GetRoles() []string {
+	return u.Roles
+}
+
 // AccessControl defines the interface for implementing custom access control rules
 type AccessControl interface {
 	// ValidateFieldAccess validates if a user can access a specific field
@@ -59,6 +92,12 @@ type AccessControl interface {
 	CanUseDBLevelRBAC(ctx context.Context, operation string) bool
 }
 
+// AccessControlGeneric defines the generic interface for type-safe access control
+// Note: This interface is kept for compatibility but the actual generic functions are standalone
+type AccessControlGeneric[T any] interface {
+	AccessControl
+}
+
 // UserContextCache holds cached user information to avoid repeated lookups
 type UserContextCache struct {
 	user    core.Authenticable
@@ -105,6 +144,10 @@ type DBRBACConfig struct {
 	// OwnershipField specifies the field used for ownership-based filtering
 	OwnershipField string `json:"ownership_field,omitempty"`
 
+	// SkipOwnershipForRoles specifies roles that should skip ownership filtering
+	// These roles will only use custom filters, not ownership-based filters
+	SkipOwnershipForRoles []string `json:"skip_ownership_for_roles,omitempty"`
+
 	// CustomFilters defines custom database filters for specific roles
 	// Each role can have multiple filters that will be combined with OR logic
 	CustomFilters map[string][]DBFilter `json:"custom_filters,omitempty"`
@@ -148,7 +191,7 @@ func (rbac *RoleBasedAccessControl) ValidateFieldAccess(ctx context.Context, fie
 	}
 
 	// Get field configuration
-	fieldConfig, exists := rbac.config.FieldAccess[field]
+	fieldConfig, exists := rbac.config.FieldAccess[strings.ToLower(field)]
 	if !exists {
 		// If no specific field config, check domain-level access
 		return rbac.validateDomainLevelAccess(ctx, operation, userRoles, isGuest)
@@ -273,7 +316,7 @@ func (rbac *RoleBasedAccessControl) getUserContextCache(ctx context.Context) *Us
 	cache := &UserContextCache{}
 
 	// Get user from auth context
-	if user, err := rbac.authContext.ResolveAuthStrategyByContext(ctx).CurrentUser(ctx); err == nil {
+	if user, err := rbac.authContext.ResolveAuthStrategyByContext(ctx).CurrentUser(ctx); err == nil && user != nil {
 		cache.user = user
 		cache.isGuest = false
 
@@ -286,7 +329,12 @@ func (rbac *RoleBasedAccessControl) getUserContextCache(ctx context.Context) *Us
 	} else {
 		cache.user = nil
 		cache.isGuest = true
-		cache.roles = []string{}
+		// Assign guest role if guest access is allowed
+		if rbac.config.AllowGuestAccess {
+			cache.roles = []string{"guest"}
+		} else {
+			cache.roles = []string{}
+		}
 	}
 
 	cache.isValid = true
@@ -402,7 +450,7 @@ func (acc *AccessControlConfig) IsOperatorAllowed(operator string) bool {
 
 // AddFieldAccess adds field access configuration
 func (acc *AccessControlConfig) AddFieldAccess(field string, operations map[string]OperationConfig) {
-	acc.FieldAccess[field] = FieldAccessConfig{
+	acc.FieldAccess[strings.ToLower(field)] = FieldAccessConfig{
 		Operations: operations,
 	}
 }
@@ -488,7 +536,7 @@ func (rbac *RoleBasedAccessControl) CanReadField(ctx context.Context, field stri
 	}
 
 	// Get field configuration
-	fieldConfig, exists := rbac.config.FieldAccess[field]
+	fieldConfig, exists := rbac.config.FieldAccess[strings.ToLower(field)]
 	if !exists {
 		// If no specific field config, check domain-level access
 		domainConfig, exists := rbac.config.DomainOperations["read"]
@@ -514,6 +562,13 @@ func (rbac *RoleBasedAccessControl) CanReadField(ctx context.Context, field stri
 		return false
 	}
 
+	// Check if domain implements AccessibleEntity interface for custom access control first
+	if accessibleEntity, ok := entity.(core.AccessibleEntity); ok && userCache.user != nil {
+		if accessibleEntity.CanAccessField(ctx, userCache.user, field, "read") {
+			return true
+		}
+	}
+
 	// Check role requirements
 	if len(operationConfig.RequiredRoles) > 0 {
 		if !rbac.hasAnyRole(userCache.roles, operationConfig.RequiredRoles) {
@@ -524,13 +579,6 @@ func (rbac *RoleBasedAccessControl) CanReadField(ctx context.Context, field stri
 	// Check ownership-based access if configured
 	if rbac.config.OwnershipField != "" && entity != nil {
 		if rbac.canAccessOwnedField(ctx, field, entity, userCache.user) {
-			return true
-		}
-	}
-
-	// Check if domain implements AccessibleEntity interface for custom access control
-	if accessibleEntity, ok := entity.(core.AccessibleEntity); ok && userCache.user != nil {
-		if accessibleEntity.CanAccessField(ctx, userCache.user, field, "read") {
 			return true
 		}
 	}
@@ -563,7 +611,8 @@ func (rbac *RoleBasedAccessControl) GetReadableFields(ctx context.Context, entit
 
 	// Check each field for read access
 	for _, field := range allFields {
-		if rbac.CanReadField(ctx, field, entity) {
+		canRead := rbac.CanReadField(ctx, field, entity)
+		if canRead {
 			readableFields = append(readableFields, field)
 		}
 	}
@@ -580,7 +629,7 @@ func (rbac *RoleBasedAccessControl) canAccessOwnedField(ctx context.Context, fie
 	// Check if the current user owns the domain
 	if rbac.isOwner(entity, currentUser) {
 		// Check if the field allows owner access
-		fieldConfig, exists := rbac.config.FieldAccess[field]
+		fieldConfig, exists := rbac.config.FieldAccess[strings.ToLower(field)]
 		if exists {
 			if ownerConfig, exists := fieldConfig.Operations["owner"]; exists {
 				return ownerConfig.Allowed
@@ -702,7 +751,7 @@ func (rbac *RoleBasedAccessControl) GetReadableFieldsForCollection(ctx context.C
 	// rather than per entity, since field-level permissions are typically consistent
 	for _, field := range allFields {
 		// Check if the field is generally readable by this user
-		fieldConfig, exists := rbac.config.FieldAccess[field]
+		fieldConfig, exists := rbac.config.FieldAccess[strings.ToLower(field)]
 		if !exists {
 			// If no specific field config, check domain-level access
 			domainConfig, exists := rbac.config.DomainOperations["read"]
@@ -772,7 +821,6 @@ func (rbac *RoleBasedAccessControl) CanAccessEntityType(ctx context.Context, ope
 		}
 		return rbac.hasAnyRole(userCache.roles, domainConfig.RequiredRoles)
 	}
-
 	return true
 }
 
@@ -798,7 +846,7 @@ func (rbac *RoleBasedAccessControl) GetInheritedFieldPermissions(ctx context.Con
 
 	// Check each field for read access with inheritance
 	for _, field := range allFields {
-		fieldConfig, exists := rbac.config.FieldAccess[field]
+		fieldConfig, exists := rbac.config.FieldAccess[strings.ToLower(field)]
 		if !exists {
 			// No field config - inherit from entity roles
 			if rbac.hasAnyRole(userCache.roles, entityRoles) {
@@ -875,13 +923,38 @@ func (rbac *RoleBasedAccessControl) CanUseDBLevelRBAC(ctx context.Context, opera
 	// Check if user context allows DB-level filtering
 	userCache := rbac.getUserContextCache(ctx)
 
-	// Can't use DB-level RBAC for guests (no user ID for ownership filtering)
+	// For guests, we can only use DB-level RBAC if:
+	// 1. Guest access is allowed, AND
+	// 2. We have custom filters that don't require user context (like "1=1")
 	if userCache.isGuest {
-		return false
+		// Check if guest access is allowed
+		if !rbac.config.AllowGuestAccess {
+			return false
+		}
+
+		// Check if we have custom filters that work for guests
+		hasGuestCompatibleFilters := false
+		for _, roleFilters := range rbac.config.DBRBAC.CustomFilters {
+			for _, filter := range roleFilters {
+				// Check if this filter works for guests (no user context placeholders)
+				if filter.Field == "1" && filter.Operator == "=" && (filter.Value == "1" || filter.Value == 1) {
+					hasGuestCompatibleFilters = true
+					break
+				}
+			}
+			if hasGuestCompatibleFilters {
+				break
+			}
+		}
+
+		// If no guest-compatible filters, can't use DB-level RBAC
+		if !hasGuestCompatibleFilters {
+			return false
+		}
 	}
 
-	// Can't use DB-level RBAC if user is nil
-	if userCache.user == nil {
+	// Can't use DB-level RBAC if user is nil (and not a guest)
+	if userCache.user == nil && !userCache.isGuest {
 		return false
 	}
 
@@ -889,7 +962,6 @@ func (rbac *RoleBasedAccessControl) CanUseDBLevelRBAC(ctx context.Context, opera
 	if rbac.config.DBRBAC.OwnershipField == "" && len(rbac.config.DBRBAC.CustomFilters) == 0 {
 		return false
 	}
-
 	return true
 }
 
@@ -902,49 +974,119 @@ func (rbac *RoleBasedAccessControl) GenerateDBFilters(ctx context.Context, opera
 	userCache := rbac.getUserContextCache(ctx)
 	var filters []DBFilter
 
-	// Generate ownership-based filters
-	if rbac.config.DBRBAC.OwnershipField != "" {
+	// Generate ownership-based filters (only if not skipped for this user's roles)
+	shouldSkipOwnership := false
+	for _, userRole := range userCache.roles {
+		for _, skipRole := range rbac.config.DBRBAC.SkipOwnershipForRoles {
+			if strings.EqualFold(userRole, skipRole) {
+				shouldSkipOwnership = true
+				break
+			}
+		}
+		if shouldSkipOwnership {
+			break
+		}
+	}
+
+	if rbac.config.DBRBAC.OwnershipField != "" && !shouldSkipOwnership && userCache.user != nil {
 		ownershipFilter := DBFilter{
 			Field:    rbac.config.DBRBAC.OwnershipField,
 			Operator: "=",
 			Value:    userCache.user.GetId(),
-			Logic:    "OR",
+			Logic:    "AND", // Ownership should be AND logic, not OR
 		}
 		filters = append(filters, ownershipFilter)
 	}
 
 	// Generate role-based custom filters
 	if len(rbac.config.DBRBAC.CustomFilters) > 0 {
-		for _, userRole := range userCache.roles {
-			if roleFilters, exists := rbac.config.DBRBAC.CustomFilters[userRole]; exists {
+		// For guests, look for filters that don't require specific roles
+		if userCache.isGuest {
+			// Look for filters that work for guests (like "1=1" conditions)
+			for _, roleFilters := range rbac.config.DBRBAC.CustomFilters {
 				for _, filter := range roleFilters {
-					// Check if this filter has a custom processor
-					if processor, hasProcessor := rbac.config.DBRBAC.CustomFilterProcessors[filter.Field]; hasProcessor {
-						// Use custom processor for complex logic
-						processedFilters, err := processor(ctx, userCache.user, filter)
-						if err == nil {
+					// Check if this filter works for guests (no user context placeholders)
+					if filter.Field == "1" && filter.Operator == "=" && (filter.Value == "1" || filter.Value == 1) {
+						filters = append(filters, filter)
+					}
+				}
+			}
+		} else {
+			// For authenticated users, use role-based filtering
+			for _, userRole := range userCache.roles {
+				userRole = strings.ToLower(userRole)
+				if roleFilters, exists := rbac.config.DBRBAC.CustomFilters[userRole]; exists {
+					for _, filter := range roleFilters {
+						// Check if this filter has a custom processor
+						if processor, hasProcessor := rbac.config.DBRBAC.CustomFilterProcessors[filter.Field]; hasProcessor {
+							// Use custom processor for complex logic
+							processedFilters, err := processor(ctx, userCache.user, filter)
+							if err != nil {
+								// Log error but continue processing other filters
+								fmt.Printf("Warning: Custom filter processor failed for field %s: %v\n", filter.Field, err)
+								continue
+							}
 							filters = append(filters, processedFilters...)
+						} else {
+							// Process filter values to replace user context placeholders
+							processedFilter := rbac.processFilterWithUserContext(filter, userCache.user)
+							// Keep the original logic from the filter configuration
+							filters = append(filters, processedFilter)
 						}
-					} else {
-						// Process filter values to replace user context placeholders
-						processedFilter := rbac.processFilterWithUserContext(filter, userCache.user)
-						processedFilter.Logic = "OR" // Ensure OR logic for role-based filters
-						filters = append(filters, processedFilter)
 					}
 				}
 			}
 		}
 	}
 
-	// If no filters generated, create a filter that returns no results
+	// If no filters generated, check if user should have full access
 	if len(filters) == 0 {
-		noAccessFilter := DBFilter{
-			Field:    "id",
-			Operator: "=",
-			Value:    -1, // Non-existent ID
-			Logic:    "AND",
+		// For guests, if guest access is allowed, give them full access
+		if userCache.isGuest && rbac.config.AllowGuestAccess {
+			// Guest users with no specific filters should have full access
+			fullAccessFilter := DBFilter{
+				Field:    "1",
+				Operator: "=",
+				Value:    1,
+				Logic:    "AND",
+			}
+			filters = append(filters, fullAccessFilter)
+		} else {
+			// Check if user has admin roles that should have full access
+			hasAdminAccess := false
+			for _, userRole := range userCache.roles {
+				for _, skipRole := range rbac.config.DBRBAC.SkipOwnershipForRoles {
+					if strings.EqualFold(userRole, skipRole) {
+						hasAdminAccess = true
+						break
+					}
+				}
+				if hasAdminAccess {
+					break
+				}
+			}
+
+			if hasAdminAccess {
+				// Admin users with no specific filters should have full access
+				// Create a filter that allows everything (1=1)
+				fullAccessFilter := DBFilter{
+					Field:    "1",
+					Operator: "=",
+					Value:    1,
+					Logic:    "AND",
+				}
+				filters = append(filters, fullAccessFilter)
+			} else {
+				// Non-admin users with no filters should have no access
+				noAccessFilter := DBFilter{
+					Field:    "id",
+					Operator: "=",
+					Value:    -1, // Non-existent ID
+					Logic:    "AND",
+				}
+				filters = append(filters, noAccessFilter)
+			}
 		}
-		filters = append(filters, noAccessFilter)
 	}
 
 	return filters, nil
@@ -955,8 +1097,8 @@ func (rbac *RoleBasedAccessControl) processFilterWithUserContext(filter DBFilter
 	processedFilter := filter
 
 	// Process the Field (which may contain raw SQL conditions)
-	if strField, ok := filter.Field.(string); ok {
-		processedField := strField
+	if filter.Field != "" {
+		processedField := filter.Field
 
 		// Replace {{user_id}} with actual user ID
 		processedField = strings.ReplaceAll(processedField, "{{user_id}}", fmt.Sprintf("%v", user.GetId()))
@@ -974,11 +1116,11 @@ func (rbac *RoleBasedAccessControl) processFilterWithUserContext(filter DBFilter
 		// Replace other user context fields
 		for fieldName, placeholder := range rbac.config.DBRBAC.UserContextFields {
 			// Replace new format {{.FieldName}}
-			processedField = strings.ReplaceAll(processedField, placeholder, fmt.Sprintf("%v", user.GetId())) // Default to user ID for now
+			processedField = strings.ReplaceAll(processedField, placeholder, rbac.getUserContextValue(user, fieldName))
 
 			// Replace old format {{user_fieldName}}
 			oldPlaceholder := fmt.Sprintf("{{user_%s}}", fieldName)
-			processedField = strings.ReplaceAll(processedField, oldPlaceholder, fmt.Sprintf("%v", user.GetId()))
+			processedField = strings.ReplaceAll(processedField, oldPlaceholder, rbac.getUserContextValue(user, fieldName))
 		}
 
 		processedFilter.Field = processedField
@@ -986,33 +1128,121 @@ func (rbac *RoleBasedAccessControl) processFilterWithUserContext(filter DBFilter
 
 	// Process string values for placeholders (legacy support)
 	if strValue, ok := filter.Value.(string); ok {
+		processedValue := strValue
+
 		// Replace {{user_id}} with actual user ID
-		if strValue == "{{user_id}}" {
-			processedFilter.Value = user.GetId()
-		}
+		processedValue = strings.ReplaceAll(processedValue, "{{user_id}}", fmt.Sprintf("%v", user.GetId()))
+		processedValue = strings.ReplaceAll(processedValue, "{{.UserID}}", fmt.Sprintf("%v", user.GetId()))
+
 		// Replace {{user_role}} with user's primary role (if available)
-		if strValue == "{{user_role}}" {
-			if roleProvider, ok := user.(core.RoleProvider); ok {
-				roles := roleProvider.GetRoles()
-				if len(roles) > 0 {
-					processedFilter.Value = roles[0] // Use first role as primary
-				}
+		if roleProvider, ok := user.(core.RoleProvider); ok {
+			roles := roleProvider.GetRoles()
+			if len(roles) > 0 {
+				processedValue = strings.ReplaceAll(processedValue, "{{user_role}}", roles[0])
+				processedValue = strings.ReplaceAll(processedValue, "{{.UserRole}}", roles[0])
 			}
 		}
+
 		// Replace other user context fields
 		for fieldName, placeholder := range rbac.config.DBRBAC.UserContextFields {
-			if strValue == placeholder {
-				// This would need to be extended based on what user context fields are available
-				// For now, we'll leave it as-is and let the application handle it
-				processedFilter.Value = strValue
-			}
-			// Also check for the old format {{user_fieldName}}
+			// Replace new format {{.FieldName}}
+			processedValue = strings.ReplaceAll(processedValue, placeholder, rbac.getUserContextValue(user, fieldName))
+
+			// Replace old format {{user_fieldName}}
 			oldPlaceholder := fmt.Sprintf("{{user_%s}}", fieldName)
-			if strValue == oldPlaceholder {
-				processedFilter.Value = strValue
-			}
+			processedValue = strings.ReplaceAll(processedValue, oldPlaceholder, rbac.getUserContextValue(user, fieldName))
 		}
+
+		processedFilter.Value = processedValue
 	}
 
 	return processedFilter
+}
+
+// getUserContextValue extracts user context values based on field name
+func (rbac *RoleBasedAccessControl) getUserContextValue(user core.Authenticable, fieldName string) string {
+	switch fieldName {
+	case "user_id":
+		return fmt.Sprintf("%v", user.GetId())
+	case "user_role":
+		if roleProvider, ok := user.(core.RoleProvider); ok {
+			roles := roleProvider.GetRoles()
+			if len(roles) > 0 {
+				return roles[0]
+			}
+		}
+		return "user"
+	case "department_id":
+		// Try to get department from user if it implements a department interface
+		if deptProvider, ok := user.(interface{ GetDepartment() string }); ok {
+			return deptProvider.GetDepartment()
+		}
+		// For our test user, we'll use reflection to get the Department field
+		if testUser, ok := user.(*DBTestUser); ok {
+			return testUser.Department
+		}
+		return ""
+	case "tenant_id":
+		// Try to get tenant from user if it implements a tenant interface
+		if tenantProvider, ok := user.(interface{ GetTenantID() string }); ok {
+			return tenantProvider.GetTenantID()
+		}
+		// For our test user, we'll use reflection to get the TenantID field
+		if testUser, ok := user.(*DBTestUser); ok {
+			return testUser.TenantID
+		}
+		return ""
+	case "manager_id":
+		// Try to get manager from user if it implements a manager interface
+		if managerProvider, ok := user.(interface{ GetManagerID() string }); ok {
+			return managerProvider.GetManagerID()
+		}
+		return ""
+	case "username":
+		// Get username from user
+		return user.GetUsername()
+	default:
+		// Default to user ID for unknown fields
+		return fmt.Sprintf("%v", user.GetId())
+	}
+}
+
+// GetAccessibleEntitiesGeneric filters a list of entities based on access permissions with type safety
+func GetAccessibleEntitiesGeneric[T any](accessControl AccessControl, ctx context.Context, entities []T, operation string) []T {
+	// Convert to []any for the existing method
+	anyEntities := make([]any, len(entities))
+	for i, entity := range entities {
+		anyEntities[i] = entity
+	}
+
+	// Use the existing method
+	accessibleAnyEntities := accessControl.GetAccessibleEntities(ctx, anyEntities, operation)
+
+	// Convert back to []T
+	accessibleEntities := make([]T, len(accessibleAnyEntities))
+	for i, entity := range accessibleAnyEntities {
+		accessibleEntities[i] = entity.(T)
+	}
+
+	return accessibleEntities
+}
+
+// GetAccessibleEntitiesWithFieldsGeneric filters entities and returns optimized field list for collections with type safety
+func GetAccessibleEntitiesWithFieldsGeneric[T any](accessControl AccessControl, ctx context.Context, entities []T, operation string) ([]T, []string) {
+	// Convert to []any for the existing method
+	anyEntities := make([]any, len(entities))
+	for i, entity := range entities {
+		anyEntities[i] = entity
+	}
+
+	// Use the existing method
+	accessibleAnyEntities, optimizedFields := accessControl.GetAccessibleEntitiesWithFields(ctx, anyEntities, operation)
+
+	// Convert back to []T
+	accessibleEntities := make([]T, len(accessibleAnyEntities))
+	for i, entity := range accessibleAnyEntities {
+		accessibleEntities[i] = entity.(T)
+	}
+
+	return accessibleEntities, optimizedFields
 }

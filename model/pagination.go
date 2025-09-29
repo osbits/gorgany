@@ -386,8 +386,9 @@ func ApplyDBFiltersToQueryBuilder(builder dbCore.IQueryBuilder, dbFilters []DBFi
 			tempBuilder = applyDBFilterToQueryBuilder(tempBuilder, filter).(*v2.Builder)
 			// Extract the condition from the builder
 			query := tempBuilder.Build()
-			if query.Where != nil {
-				orConditions = append(orConditions, query.Where)
+			if query.Where != nil && len(query.Where.Conditions) > 0 {
+				// Add all conditions from the temporary builder
+				orConditions = append(orConditions, query.Where.Conditions...)
 			}
 		}
 		if len(orConditions) > 0 {

@@ -357,6 +357,14 @@ func (p *JsonParser) setMap(field reflect.Value, key string, value interface{}) 
 
 // setStruct handles struct fields, with special handling for domain objects
 func (p *JsonParser) setStruct(field reflect.Value, key string, value interface{}) error {
+	// Special handling for time-like structs (time.Time or wrappers embedding/containing time.Time)
+	if ok, err := setTimeLikeFromValue(field, value); ok {
+		if err != nil {
+			return newValidationError(key, "Cannot parse time value: %v", err)
+		}
+		return nil
+	}
+
 	// First try to initialize as a domain object if applicable
 	found, err := p.initDomain(field, key, value)
 	if err != nil {
