@@ -3,15 +3,15 @@ package provider
 import (
 	"fmt"
 
-	dbCmd "git.qix.sx/gorgany/gorgany.git/command/db"
-	"git.qix.sx/gorgany/gorgany.git/db/migration"
-	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
-	"git.qix.sx/gorgany/gorgany.git/db/sql/gorm/postgres/v2"
+	dbCmd "github.com/gorganyio/gorgany/command/db"
+	"github.com/gorganyio/gorgany/db/migration"
+	dbCore "github.com/gorganyio/gorgany/db/sql/core"
+	"github.com/gorganyio/gorgany/db/sql/gorm/postgres/v2"
 
 	"github.com/spf13/viper"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/db"
+	"github.com/gorganyio/gorgany/app/core"
+	"github.com/gorganyio/gorgany/db"
 )
 
 type DbProvider struct {

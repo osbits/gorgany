@@ -2,10 +2,10 @@ package auth
 
 import (
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	err2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/http/router"
-	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/gorganyio/gorgany/app/core"
+	err2 "github.com/gorganyio/gorgany/err"
+	"github.com/gorganyio/gorgany/http/router"
+	"github.com/gorganyio/gorgany/util"
 	"net/http"
 	"net/url"
 )

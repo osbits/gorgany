@@ -3,7 +3,7 @@ package auth
 import (
 	"time"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/gorganyio/gorgany/app/core"
 )
 
 // ISessionFactory defines the interface for creating sessions

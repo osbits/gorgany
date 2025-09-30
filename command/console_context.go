@@ -1,6 +1,6 @@
 package command
 
-import "git.qix.sx/gorgany/gorgany.git/app/core"
+import "github.com/gorganyio/gorgany/app/core"
 
 type ConsoleContext struct {
 	commands map[string]core.ICommand

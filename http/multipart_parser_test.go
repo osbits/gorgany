@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"testing"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/err"
+	"github.com/gorganyio/gorgany/app/core"
+	"github.com/gorganyio/gorgany/err"
 )
 
 // TestStruct represents a simple struct for testing basic parsing

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"reflect"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/gorganyio/gorgany/app/core"
 )
 
 // FieldFilteredDto wraps a DTO and provides field filtering based on access control

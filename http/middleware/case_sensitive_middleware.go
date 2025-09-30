@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/gorganyio/gorgany/app/core"
 )
 
 type CaseSensitiveMiddleware struct {

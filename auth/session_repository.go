@@ -2,8 +2,8 @@ package auth
 
 import (
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/db/orm"
+	"github.com/gorganyio/gorgany/app/core"
+	"github.com/gorganyio/gorgany/db/orm"
 )
 
 type ISessionRepository interface {
@@ -27,13 +27,13 @@ func (r *DbSessionRepository) withOrm(operation func(*orm.ORM[*DbSessionEntity])
 	if dataSource == nil {
 		return fmt.Errorf("no data source available")
 	}
-	
+
 	dbSession, err := dataSource.NewSession()
 	if err != nil {
 		return err
 	}
 	defer dbSession.Close()
-	
+
 	orm := orm.New[*DbSessionEntity](dbSession)
 	return operation(orm)
 }

@@ -3,8 +3,8 @@ package provider
 import (
 	"fmt"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/i18n"
+	"github.com/gorganyio/gorgany/app/core"
+	"github.com/gorganyio/gorgany/i18n"
 	"github.com/spf13/viper"
 )
 

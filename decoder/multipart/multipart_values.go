@@ -1,10 +1,10 @@
 package multipart
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/decoder"
-	"git.qix.sx/gorgany/gorgany.git/model"
-	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/gorganyio/gorgany/app/core"
+	"github.com/gorganyio/gorgany/decoder"
+	"github.com/gorganyio/gorgany/model"
+	"github.com/gorganyio/gorgany/util"
 	"github.com/gorilla/schema"
 	"reflect"
 	"strings"

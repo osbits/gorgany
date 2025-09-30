@@ -3,7 +3,7 @@ package v2
 import (
 	"testing"
 
-	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
+	dbCore "github.com/gorganyio/gorgany/db/sql/core"
 	"github.com/stretchr/testify/assert"
 )
 

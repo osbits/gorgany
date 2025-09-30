@@ -1,8 +1,8 @@
 package db
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
+	"github.com/gorganyio/gorgany/app/core"
+	dbCore "github.com/gorganyio/gorgany/db/sql/core"
 )
 
 var (

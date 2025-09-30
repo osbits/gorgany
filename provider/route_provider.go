@@ -3,10 +3,10 @@ package provider
 
 import (
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	err2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/http"
-	"git.qix.sx/gorgany/gorgany.git/http/router"
+	"github.com/gorganyio/gorgany/app/core"
+	err2 "github.com/gorganyio/gorgany/err"
+	"github.com/gorganyio/gorgany/http"
+	"github.com/gorganyio/gorgany/http/router"
 	gohttp "net/http"
 	"reflect"
 )

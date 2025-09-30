@@ -1,8 +1,8 @@
 package provider
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/http"
+	"github.com/gorganyio/gorgany/app/core"
+	"github.com/gorganyio/gorgany/http"
 )
 
 type ErrorProvider struct {

@@ -3,7 +3,7 @@ package err
 import (
 	"errors"
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/log"
+	"github.com/gorganyio/gorgany/log"
 	"runtime"
 	"strings"
 )

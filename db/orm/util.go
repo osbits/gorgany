@@ -1,8 +1,8 @@
 package orm
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/gorganyio/gorgany/app/core"
+	"github.com/gorganyio/gorgany/util"
 	"reflect"
 	"strings"
 

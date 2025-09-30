@@ -2,7 +2,7 @@ package http
 
 import (
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/gorganyio/gorgany/app/core"
 	"reflect"
 	"strings"
 	"time"

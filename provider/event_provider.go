@@ -3,8 +3,8 @@ package provider
 import (
 	"fmt"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/event"
+	"github.com/gorganyio/gorgany/app/core"
+	"github.com/gorganyio/gorgany/event"
 )
 
 type EventProvider struct {

@@ -7,9 +7,9 @@ import (
 	"reflect"
 	"sync"
 
-	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
-	v2 "git.qix.sx/gorgany/gorgany.git/db/sql/gorm/postgres/v2"
-	"git.qix.sx/gorgany/gorgany.git/util"
+	dbCore "github.com/gorganyio/gorgany/db/sql/core"
+	v2 "github.com/gorganyio/gorgany/db/sql/gorm/postgres/v2"
+	"github.com/gorganyio/gorgany/util"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 )

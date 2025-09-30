@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"testing"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	error2 "git.qix.sx/gorgany/gorgany.git/err"
+	"github.com/gorganyio/gorgany/app/core"
+	error2 "github.com/gorganyio/gorgany/err"
 )
 
 // JSONTestStruct represents a simple struct for testing basic JSON parsing

@@ -1,7 +1,7 @@
 package util
 
 import (
-	err2 "git.qix.sx/gorgany/gorgany.git/err"
+	err2 "github.com/gorganyio/gorgany/err"
 	"reflect"
 	"strconv"
 	"strings"

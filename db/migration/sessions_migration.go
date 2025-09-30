@@ -1,7 +1,7 @@
 package migration
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/gorganyio/gorgany/app/core"
 	"gorm.io/gorm"
 )
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"git.qix.sx/gorgany/gorgany.git/db/sql/core"
+	"github.com/gorganyio/gorgany/db/sql/core"
 
 	"gorm.io/gorm"
 )

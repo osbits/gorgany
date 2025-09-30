@@ -1,7 +1,7 @@
 package db
 
 import (
-	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
+	dbCore "github.com/gorganyio/gorgany/db/sql/core"
 )
 
 type DBContext struct {

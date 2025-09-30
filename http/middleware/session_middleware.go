@@ -2,13 +2,13 @@ package middleware
 
 import (
 	"encoding/json"
-	"git.qix.sx/gorgany/gorgany.git/auth"
+	"github.com/gorganyio/gorgany/auth"
 	"net/http"
 	"time"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	err2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/model"
+	"github.com/gorganyio/gorgany/app/core"
+	err2 "github.com/gorganyio/gorgany/err"
+	"github.com/gorganyio/gorgany/model"
 )
 
 // SessionKey is the context key for storing the session

@@ -3,9 +3,9 @@ package validator
 import (
 	"encoding/json"
 	"fmt"
-	err2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/model"
 	goValidator "github.com/go-playground/validator/v10"
+	err2 "github.com/gorganyio/gorgany/err"
+	"github.com/gorganyio/gorgany/model"
 	"mime"
 	"reflect"
 	"strconv"

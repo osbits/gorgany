@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"time"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	err2 "git.qix.sx/gorgany/gorgany.git/err"
 	"github.com/google/uuid"
+	"github.com/gorganyio/gorgany/app/core"
+	err2 "github.com/gorganyio/gorgany/err"
 	"github.com/spf13/viper"
 )
 

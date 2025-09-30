@@ -2,7 +2,7 @@
 package orm
 
 import (
-	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
+	dbCore "github.com/gorganyio/gorgany/db/sql/core"
 )
 
 // Saver defines methods for saving, creating, updating, and deleting entities in the ORM.

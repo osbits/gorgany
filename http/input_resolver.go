@@ -2,11 +2,11 @@ package http
 
 import (
 	"errors"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	error2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/log"
-	"git.qix.sx/gorgany/gorgany.git/util"
 	"github.com/go-chi/chi"
+	"github.com/gorganyio/gorgany/app/core"
+	error2 "github.com/gorganyio/gorgany/err"
+	"github.com/gorganyio/gorgany/log"
+	"github.com/gorganyio/gorgany/util"
 	"reflect"
 )
 

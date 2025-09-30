@@ -1,8 +1,8 @@
 package cp
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/model"
-	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/gorganyio/gorgany/model"
+	"github.com/gorganyio/gorgany/util"
 	"reflect"
 )
 

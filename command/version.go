@@ -3,7 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git"
+	"github.com/gorganyio/gorgany"
 )
 
 type VersionCommand struct {

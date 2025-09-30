@@ -2,7 +2,7 @@ package v2
 
 import (
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/db/sql/core"
+	"github.com/gorganyio/gorgany/db/sql/core"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"

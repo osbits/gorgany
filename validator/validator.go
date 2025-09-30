@@ -1,11 +1,11 @@
 package validator
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	error2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/model"
-	"git.qix.sx/gorgany/gorgany.git/util"
 	goValidator "github.com/go-playground/validator/v10"
+	"github.com/gorganyio/gorgany/app/core"
+	error2 "github.com/gorganyio/gorgany/err"
+	"github.com/gorganyio/gorgany/model"
+	"github.com/gorganyio/gorgany/util"
 	"reflect"
 )
 

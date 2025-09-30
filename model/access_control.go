@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/gorganyio/gorgany/app/core"
 )
 
 // DBTestUser is used for testing DB RBAC functionality

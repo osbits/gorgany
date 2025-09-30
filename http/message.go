@@ -6,9 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	err2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/util"
 	"github.com/google/uuid"
+	err2 "github.com/gorganyio/gorgany/err"
+	"github.com/gorganyio/gorgany/util"
 	"io"
 	"mime/multipart"
 	"net"
@@ -22,9 +22,9 @@ import (
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/decoder"
-	"git.qix.sx/gorgany/gorgany.git/model"
+	"github.com/gorganyio/gorgany/app/core"
+	"github.com/gorganyio/gorgany/decoder"
+	"github.com/gorganyio/gorgany/model"
 )
 
 type ResponseWriterWrapper struct {

@@ -2,7 +2,7 @@ package v2
 
 import (
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/db/sql/core"
+	"github.com/gorganyio/gorgany/db/sql/core"
 	"strings"
 )
 

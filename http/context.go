@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"net/url"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"github.com/go-chi/chi"
+	"github.com/gorganyio/gorgany/app/core"
 )
 
 type messageContext struct {

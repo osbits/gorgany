@@ -1,6 +1,6 @@
 package http
 
-import "git.qix.sx/gorgany/gorgany.git/app/core"
+import "github.com/gorganyio/gorgany/app/core"
 
 func NewMiddlewareConfigBuilder() core.IMiddlewareConfigBuilder {
 	return &MiddlewareConfigBuilder{

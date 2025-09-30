@@ -1,9 +1,9 @@
 package middleware
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/log"
-	"git.qix.sx/gorgany/gorgany.git/service/dto"
+	"github.com/gorganyio/gorgany/app/core"
+	"github.com/gorganyio/gorgany/log"
+	"github.com/gorganyio/gorgany/service/dto"
 )
 
 type AccessCheckerMiddleware struct {
