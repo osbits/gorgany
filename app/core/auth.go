@@ -149,21 +149,3 @@ type IUserService interface {
 	// Save persists a user domain
 	Save(authEntity Authenticable) error
 }
-
-// Policy defines the interface for access control policies
-type Policy[T any] interface {
-	// AddFilter adds a filter to the ORM query based on policy rules
-	AddFilter(ctx context.Context, builder IOrm[T]) (bool, IOrm[T])
-	// AddFilterForBuilder adds a filter to the query builder based on policy rules
-	AddFilterForBuilder(ctx context.Context, builder IQueryBuilder) (bool, IQueryBuilder)
-	// Create checks if the user can create new instances
-	Create(ctx context.Context) bool
-	// ShowAny checks if the user can view any instances
-	ShowAny(ctx context.Context) bool
-	// Show checks if the user can view a specific instance
-	Show(ctx context.Context, model any) bool
-	// Update checks if the user can update a specific instance
-	Update(ctx context.Context, model any) bool
-	// Delete checks if the user can delete a specific instance
-	Delete(ctx context.Context, model any) bool
-}
