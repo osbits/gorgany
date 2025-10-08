@@ -22,11 +22,10 @@ const GorganyORMTag = "grgorm"
 const GorganyORMPreload = "preload"
 const GorganyORMExtends = "extends"
 
-const ApplicationContextKey = "applicationContext"
+const FullMessageInstanceContextKey = "fullMessageInstance"
 const MessageContextKey = "messageContext"
-const DbSessionContextKey = "dbContext"
+const DbSessionContextKey = "dbSession"
 
-const OneTimeParamsCookieName = "oneTimeParams"
 const SessionCookieName = "GRG_SESSION_ID"
 const OneTimeSessionAttributeKey = "_GORGANY_ONE_TIME_PARAMS"
 
@@ -175,3 +174,5 @@ const (
 )
 
 const DefaultLoginUrl = "/login"
+
+const CSRFTokenHeader = "X-CSRF-Token"

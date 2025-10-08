@@ -8,8 +8,8 @@ import (
 	"git.qix.sx/gorgany/gorgany.git"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/db"
-	"git.qix.sx/gorgany/gorgany.git/db/gorm/plugin"
 	"git.qix.sx/gorgany/gorgany.git/db/orm"
+	"git.qix.sx/gorgany/gorgany.git/db/sql/gorm/plugin"
 	model2 "git.qix.sx/gorgany/gorgany.git/service/cache"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	"gorm.io/gorm"
@@ -31,6 +31,8 @@ var AllowedTypesToMigrate = []string{"gorm.io/gorm.DeletedAt", gorgany.Framework
 type DiffCommand struct {
 	modelStructAlreadyAdded map[string]bool
 	pivotTables             map[string]bool
+	domainContext           core.IDomainContext `container:"inject"`
+	dbContext               core.IDBContext     `container:"inject"`
 }
 
 func (thiz DiffCommand) GetName() string {
@@ -41,7 +43,16 @@ func (thiz DiffCommand) Execute(ctx context.Context) {
 	thiz.modelStructAlreadyAdded = make(map[string]bool)
 	thiz.pivotTables = make(map[string]bool)
 
-	gormDb := db.Builder().GetConnection().Driver().(*gorm.DB)
+	driver, err := thiz.dbContext.GetDataSource(core.DefaultKeyInRegistrar).GetDriver()
+	if err != nil {
+		panic(err)
+	}
+
+	gormDb, ok := driver.(*gorm.DB)
+	if !ok {
+		panic("Diff command can`t be executed, because driver is not gorm.DB")
+	}
+
 	tx := gormDb.Begin()
 	defer tx.Rollback()
 
@@ -51,7 +62,7 @@ func (thiz DiffCommand) Execute(ctx context.Context) {
 	})
 
 	moduleName := util.ModuleName()
-	modelsMap := ctx.Value(core.ApplicationContextKey).(core.IApplicationContext).GetDomains()
+	modelsMap := thiz.domainContext.GetDomains()
 
 	pkgInfos, err := util.ScanDir("./pkg/domain")
 	if err != nil {

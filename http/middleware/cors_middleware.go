@@ -198,35 +198,38 @@ func AllowAll() *Cors {
 
 // Handler apply the CORS specification on the request, and add relevant CORS headers
 // as necessary.
-func (c *Cors) Handle(message core.HttpMessage) bool {
-	if message.GetRequest().Method == http.MethodOptions && message.GetHeader().Get("Access-Control-Request-Method") != "" {
-		c.logf("Handler: Preflight request")
-		isPreflightHandled := c.handlePreflight(message.GetWriter(), message.GetRequest())
-		if !isPreflightHandled {
-			message.Response("", 400)
-			return false
-		}
+func (c *Cors) Handle(next func(core.HttpMessage)) func(core.HttpMessage) {
+	return func(message core.HttpMessage) {
+		if message.Request().RawRequest().Method == http.MethodOptions && message.Request().Header().Get("Access-Control-Request-Method") != "" {
+			c.logf("Handler: Preflight request")
+			isPreflightHandled := c.handlePreflight(message.Response().RawWriter(), message.Request().RawRequest())
+			if !isPreflightHandled {
+				message.Response().Text("", 400)
+				return
+			}
 
-		// Preflight requests are standalone and should stop the chain as some other
-		// middleware may not handle OPTIONS requests correctly. One typical example
-		// is authentication middleware ; OPTIONS requests won't carry authentication
-		// headers (see #1)
-		if c.optionPassthrough {
-			return true
+			// Preflight requests are standalone and should stop the chain as some other
+			// middleware may not handle OPTIONS requests correctly. One typical example
+			// is authentication middleware ; OPTIONS requests won't carry authentication
+			// headers (see #1)
+			if c.optionPassthrough {
+				next(message)
+				return
+			} else {
+				message.Response().Text("", http.StatusOK)
+				return
+			}
 		} else {
-			message.Response("", http.StatusOK)
-			return true
-		}
-	} else {
-		c.logf("Handler: Actual request")
+			c.logf("Handler: Actual request")
 
-		handled := c.handleActualRequest(message.GetWriter(), message.GetRequest())
-		if handled {
-			return true
-		}
+			handled := c.handleActualRequest(message.Response().RawWriter(), message.Request().RawRequest())
+			if handled {
+				next(message)
+				return
+			}
 
-		message.Response("", 400)
-		return false
+			message.Response().Text("", 403)
+		}
 	}
 }
 

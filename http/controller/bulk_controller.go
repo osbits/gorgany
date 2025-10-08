@@ -22,15 +22,16 @@ type RequestClosure struct {
 
 // BulkController - it used only for internal requests
 type BulkController struct {
+	Router core.Router `container:"inject"`
 }
 
 func (thiz BulkController) Parallel(message core.HttpMessage, cmd command.BulkCommand) {
 	requestClosures := make([]RequestClosure, 0)
 
 	for _, request := range cmd.Requests {
-		url := router.GetRouter().UrlByName(request.Name, request.Params)
+		url := thiz.Router.UrlByName(request.Name, request.Params)
 		if url == "" {
-			message.ResponseJSON(dto.ReturnObject(nil, core.BadRequestHttpStatus, fmt.Sprintf("Url [%s] not found", request.Name)), 200)
+			message.Response().JSON(dto.ReturnObject(nil, core.BadRequestHttpStatus, fmt.Sprintf("Url [%s] not found", request.Name)), 200)
 			return
 		}
 		requestClosures = append(requestClosures, RequestClosure{
@@ -42,7 +43,7 @@ func (thiz BulkController) Parallel(message core.HttpMessage, cmd command.BulkCo
 					return dto.ReturnObject(nil, core.InternalErrorHttpStatus, err)
 				}
 
-				req.Header = message.GetHeader()
+				req.Header = message.Request().Header()
 				resp, err := client.Do(req)
 				if err != nil {
 					return dto.ReturnObject(nil, core.InternalErrorHttpStatus, err)
@@ -64,7 +65,7 @@ func (thiz BulkController) Parallel(message core.HttpMessage, cmd command.BulkCo
 	chRequests := make(chan RequestClosure)
 
 	mu := sync.Mutex{}
-	results := make(map[string]*model.ApiReturnObject, 0)
+	results := make(map[string]*model.ApiReturnObject)
 	workers := 5
 
 	for i := 0; i < workers; i++ {
@@ -87,7 +88,7 @@ func (thiz BulkController) Parallel(message core.HttpMessage, cmd command.BulkCo
 	close(chRequests)
 	wg.Wait()
 
-	message.ResponseJSON(dto.ReturnObject(results, core.SuccessHttpStatus, nil), 200)
+	message.Response().JSON(dto.ReturnObject(results, core.SuccessHttpStatus, nil), 200)
 }
 
 func (thiz BulkController) GetRoutes() []core.IRouteConfig {

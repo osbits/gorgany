@@ -3,22 +3,22 @@ package validator
 import (
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	error2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/internal"
 	"git.qix.sx/gorgany/gorgany.git/model"
 	"git.qix.sx/gorgany/gorgany.git/util"
 	goValidator "github.com/go-playground/validator/v10"
 	"reflect"
 )
 
-func GetValidator() core.IValidator {
-	validator := internal.GetApplicationContext().GetValidator()
-	if validator == nil {
-		validator = New()
-		internal.GetApplicationContext().RegisterValidator(validator)
-	}
-
-	return validator
-}
+//
+//func GetValidator() core.IValidator {
+//	validator := internal.GetApplicationContext().GetValidator()
+//	if validator == nil {
+//		validator = New()
+//		internal.GetApplicationContext().RegisterValidator(validator)
+//	}
+//
+//	return validator
+//}
 
 func New() core.IValidator {
 	v := goValidator.New()

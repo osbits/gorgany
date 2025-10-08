@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/util"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/spf13/viper"
 	"time"
@@ -14,6 +15,7 @@ func NewJwtService() *JwtService {
 }
 
 type JwtService struct {
+	userService core.IUserService `container:"inject"`
 }
 
 func (thiz JwtService) GenerateJwt(user core.Authenticable, secret string) (string, error) {
@@ -59,7 +61,7 @@ func (thiz JwtService) GetUser(token string, secret string) (core.Authenticable,
 		return nil, err
 	}
 
-	return GetAuthEntityService().GetByUsername(claims["username"].(string))
+	return thiz.userService.GetByUsername(claims["username"].(string))
 }
 
 // CurrentUser
@@ -70,7 +72,7 @@ func (thiz JwtService) CurrentUser(ctx context.Context, secret string) (core.Aut
 		return nil, fmt.Errorf("Context is not IMessageContext instance")
 	}
 
-	token := messageContext.GetBearerToken()
+	token := util.ParseBearerToken(messageContext.GetHeader().Get("Authorization"))
 	if token == "" {
 		return nil, fmt.Errorf("User not found")
 	}

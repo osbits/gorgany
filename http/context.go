@@ -2,11 +2,11 @@ package http
 
 import (
 	"context"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/util"
-	"github.com/go-chi/chi"
 	"net/http"
 	"net/url"
+
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/go-chi/chi"
 )
 
 type messageContext struct {
@@ -16,6 +16,9 @@ type messageContext struct {
 	headers       http.Header
 	session       core.ISession
 	request       *http.Request
+
+	requestId string
+	ip        string
 
 	requestCtx context.Context
 }
@@ -36,11 +39,6 @@ func (thiz *messageContext) GetHeader() http.Header {
 	return thiz.headers
 }
 
-func (thiz *messageContext) GetBearerToken() string {
-	bearerToken := thiz.GetHeader().Get("Authorization")
-	return util.ParseBearerToken(bearerToken)
-}
-
 func (thiz *messageContext) GetPathParam(name string) string {
 	return chi.URLParamFromCtx(thiz.requestCtx, name)
 }
@@ -55,4 +53,12 @@ func (thiz *messageContext) GetRequest() *http.Request {
 
 func (thiz *messageContext) GetRequestContext() context.Context {
 	return thiz.requestCtx
+}
+
+func (thiz *messageContext) GetRequestId() string {
+	return thiz.requestId
+}
+
+func (thiz *messageContext) GetIp() string {
+	return thiz.ip
 }

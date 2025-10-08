@@ -6,26 +6,26 @@ import (
 	error2 "git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/log"
 	"git.qix.sx/gorgany/gorgany.git/util"
-	gorganyValidator "git.qix.sx/gorgany/gorgany.git/validator"
 	"github.com/go-chi/chi"
 	"reflect"
 )
 
-type inputResolver struct {
-	reflectedHandler reflect.Value
-	message          *Message
+type InputResolver struct {
+	ReflectedHandler reflect.Value
+	Message          core.HttpMessage
+	Validator        core.IValidator `container:"inject"`
 }
 
-func (thiz inputResolver) resolve() ([]reflect.Value, error) {
+func (thiz *InputResolver) Resolve() ([]reflect.Value, error) {
 	args := make([]reflect.Value, 0)
 	pathParams := thiz.collectPathParams()
 	indexOfPrimitiveArguemnt := 0
-	for i := 0; i < thiz.reflectedHandler.Type().NumIn(); i++ {
-		in := thiz.reflectedHandler.Type().In(i)
+	for i := 0; i < thiz.ReflectedHandler.Type().NumIn(); i++ {
+		in := thiz.ReflectedHandler.Type().In(i)
 		argTypeName := in.String()
 
 		if in.Implements(reflect.TypeOf((*core.HttpMessage)(nil)).Elem()) {
-			args = append(args, reflect.ValueOf(thiz.message))
+			args = append(args, reflect.ValueOf(thiz.Message))
 			continue
 		}
 
@@ -51,16 +51,16 @@ func (thiz inputResolver) resolve() ([]reflect.Value, error) {
 		default:
 			httpCommand, ok := arg.(core.HttpCommand)
 			if !ok {
-				log.Log().Warnf("Argument of %s handler is not core.HttpCommand instance", thiz.reflectedHandler.Type().String())
+				log.Log().Warnf("Argument of %s handler is not core.HttpCommand instance", thiz.ReflectedHandler.Type().String())
 				continue
 			}
-			parser := resolveBodyParser(httpCommand, thiz.message)
+			parser := resolveBodyParser(httpCommand, thiz.Message)
 
 			if parser == nil {
 				log.Log().Warnf("Body parser could not be resolved!")
 			}
 
-			err := parser.parse(arg)
+			err := parser.Parse(arg)
 			if err != nil {
 				return nil, err
 			}
@@ -70,7 +70,7 @@ func (thiz inputResolver) resolve() ([]reflect.Value, error) {
 			//	return nil, err
 			//}
 
-			if err := gorganyValidator.GetValidator().ValidateStruct(arg); err != nil {
+			if err := thiz.Validator.ValidateStruct(arg); err != nil {
 				return nil, err
 			}
 		}
@@ -78,13 +78,13 @@ func (thiz inputResolver) resolve() ([]reflect.Value, error) {
 		args = append(args, reflect.Indirect(reflect.ValueOf(arg)))
 	}
 
-	thiz.message.inputParameters = args
+	//thiz.Message.(*Message).inputParameters = args
 
 	return args, nil
 }
 
-func (thiz inputResolver) collectPathParams() []string {
-	routeParams := chi.RouteContext(thiz.message.request.Context()).URLParams
+func (thiz *InputResolver) collectPathParams() []string {
+	routeParams := chi.RouteContext(thiz.Message.Request().RawRequest().Context()).URLParams
 
 	pathParams := make([]string, 0)
 	for i := range routeParams.Values {
@@ -97,16 +97,16 @@ func (thiz inputResolver) collectPathParams() []string {
 }
 
 type bodyParser interface {
-	parse(arg interface{}) error
+	Parse(arg interface{}) error
 }
 
-func resolveBodyParser(command core.HttpCommand, message *Message) bodyParser {
+func resolveBodyParser(command core.HttpCommand, message core.HttpMessage) bodyParser {
 	if command.ContentType() == core.ApplicationJson {
-		return jsonParser{message: message}
+		return &JsonParser{message: message}
 	} else if command.ContentType() == core.MultipartFormData {
-		return multipartParser{message: message}
+		return &MultipartParser{message: message}
 	} else if command.ContentType() == core.Query {
-		return queryParser{message: message}
+		return &QueryParser{message: message}
 	}
 
 	return nil

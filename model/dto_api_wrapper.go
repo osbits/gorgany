@@ -2,13 +2,13 @@ package model
 
 import (
 	"encoding/json"
+	"reflect"
+	"strings"
+
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/err"
 	"git.qix.sx/gorgany/gorgany.git/log"
 	"git.qix.sx/gorgany/gorgany.git/util"
-	"github.com/iancoleman/strcase"
-	"reflect"
-	"strings"
 )
 
 type ApiReturnObject struct {
@@ -31,8 +31,10 @@ func (thiz *ApiReturnObject) MarshalJSON() ([]byte, error) {
 	var body any
 	var e error
 
-	rvBody := util.IndirectValue(reflect.ValueOf(thiz.Body))
-	body, e = thiz.callBuilderFunc(rvBody)
+	if thiz.Body != nil {
+		rvBody := util.IndirectValue(reflect.ValueOf(thiz.Body))
+		body, e = thiz.callBuilderFunc(rvBody)
+	}
 
 	if e != nil {
 		return nil, e
@@ -147,6 +149,10 @@ func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (any, error
 		allowedFields = limitedFields.AllowedFields()
 	}
 
+	if len(allowedFields) == 0 {
+		return body, nil
+	}
+
 	for i := 0; i < element.NumField(); i++ {
 		rvField := element.Field(i)
 		rtField := element.Type().Field(i)
@@ -156,12 +162,6 @@ func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (any, error
 		}
 
 		jsonFieldName := parseJSONTag(rtField)
-
-		if !util.InArrayFunc(allowedFields, func(el string) bool {
-			return strcase.ToLowerCamel(el) == strcase.ToLowerCamel(rtField.Name)
-		}) && (allowedFields[0] != "*") {
-			continue
-		}
 
 		if util.IndirectType(rvField.Type()).Kind() == reflect.Struct {
 			if _, ok := rvField.Interface().(core.LimitedFieldsMarshaller); ok {
@@ -174,6 +174,12 @@ func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (any, error
 				}
 				continue
 			}
+		}
+
+		if !util.InArrayFunc(allowedFields, func(el string) bool {
+			return strings.ToLower(el) == strings.ToLower(rtField.Name)
+		}) && (allowedFields[0] != "*") {
+			continue
 		}
 
 		if nestedValue, e := thiz.callBuilderFunc(rvField); e == nil {

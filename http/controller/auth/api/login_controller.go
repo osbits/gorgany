@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/auth"
 	"git.qix.sx/gorgany/gorgany.git/http/middleware"
 	"git.qix.sx/gorgany/gorgany.git/http/router"
 	"git.qix.sx/gorgany/gorgany.git/service/dto"
@@ -14,7 +13,10 @@ func NewLoginController() *LoginController {
 	return &LoginController{}
 }
 
-type LoginController struct{}
+type LoginController struct {
+	authContext core.IAuthContext `container:"inject"`
+	userService core.IUserService `container:"inject"`
+}
 
 type LoginPayload struct {
 	Username string
@@ -22,7 +24,7 @@ type LoginPayload struct {
 }
 
 func (thiz LoginController) Login(message core.HttpMessage) {
-	body := message.GetBody()
+	body, _ := message.Request().Body()
 
 	loginPayload := &LoginPayload{}
 	err := json.Unmarshal(body, loginPayload)
@@ -30,27 +32,27 @@ func (thiz LoginController) Login(message core.HttpMessage) {
 		panic(err)
 	}
 
-	user, err := auth.GetAuthEntityService().GetByUsername(loginPayload.Username)
+	user, err := thiz.userService.GetByUsername(loginPayload.Username)
 	if err != nil {
-		message.ResponseJSON(dto.ReturnObject("Unauthorized", core.NotAuthorizedHttpStatus, nil), 401)
+		message.Response().JSON(dto.ReturnObject("Unauthorized", core.NotAuthorizedHttpStatus, nil), 401)
 		return
 	}
 
 	if user == nil || !util.CompareSaltedHash(user.GetPassword(), loginPayload.Password) {
-		message.ResponseJSON(dto.ReturnObject("Unauthorized", core.NotAuthorizedHttpStatus, nil), 401)
+		message.Response().JSON(dto.ReturnObject("Unauthorized", core.NotAuthorizedHttpStatus, nil), 401)
 		return
 	}
 
-	session, err := auth.Strategy("jwt").Login(user, message.Context())
+	session, err := thiz.authContext.Strategy("jwt").Login(user, message.Context())
 	if session.GetId() == "" {
-		message.ResponseJSON(dto.ReturnObject(nil, core.ForbiddenHttpStatus, "Token has not been generated!"), 200)
+		message.Response().JSON(dto.ReturnObject(nil, core.ForbiddenHttpStatus, "Token has not been generated!"), 200)
 		return
 	}
 
 	responseBodyMap := make(map[string]string)
 
 	responseBodyMap["access_token"] = session.GetId()
-	message.ResponseJSON(dto.ReturnObject(responseBodyMap, core.SuccessHttpStatus, nil), 200)
+	message.Response().JSON(dto.ReturnObject(responseBodyMap, core.SuccessHttpStatus, nil), 200)
 }
 
 func (thiz LoginController) GetRoutes() []core.IRouteConfig {

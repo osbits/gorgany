@@ -1,18 +1,18 @@
 package job
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/auth"
-	"git.qix.sx/gorgany/gorgany.git/internal"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"github.com/jasonlvhit/gocron"
 )
 
 type ClearExpiredSessionsJob struct {
+	SessionStorage core.ISessionStorage `container:"inject"`
 }
 
 func (thiz ClearExpiredSessionsJob) InitSchedule() *gocron.Job {
-	return gocron.Every(uint64(internal.GetApplicationContext().GetSessionLifetime())).Seconds()
+	return gocron.Every(uint64(thiz.SessionStorage.GetSessionLifetime().Seconds())).Seconds()
 }
 
 func (thiz ClearExpiredSessionsJob) Handle() {
-	auth.GetSessionStorage().ClearExpiredSessions()
+	thiz.SessionStorage.ClearExpiredSessions()
 }
