@@ -2,14 +2,16 @@ package db
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
-	"gorgany/app/core"
-	"gorgany/db"
-	"gorgany/db/gorm/plugin"
-	"gorgany/db/orm"
-	"gorgany/internal"
-	"gorgany/util"
+	"git.qix.sx/gorgany/gorgany.git"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/db"
+	"git.qix.sx/gorgany/gorgany.git/db/orm"
+	"git.qix.sx/gorgany/gorgany.git/db/sql/gorm/plugin"
+	model2 "git.qix.sx/gorgany/gorgany.git/service/cache"
+	"git.qix.sx/gorgany/gorgany.git/util"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 	"os"
@@ -18,27 +20,39 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
-	"sync"
 	"text/template"
 	"time"
 )
 
 const MigrationDir = "db/migration"
 
+var AllowedTypesToMigrate = []string{"gorm.io/gorm.DeletedAt", gorgany.FrameworkGit + "/model.File", "time.Time"}
+
 type DiffCommand struct {
 	modelStructAlreadyAdded map[string]bool
 	pivotTables             map[string]bool
+	domainContext           core.IDomainContext `container:"inject"`
+	dbContext               core.IDBContext     `container:"inject"`
 }
 
 func (thiz DiffCommand) GetName() string {
 	return "db:diff"
 }
 
-func (thiz DiffCommand) Execute() {
+func (thiz DiffCommand) Execute(ctx context.Context) {
 	thiz.modelStructAlreadyAdded = make(map[string]bool)
 	thiz.pivotTables = make(map[string]bool)
 
-	gormDb := db.Builder().GetConnection().Driver().(*gorm.DB)
+	driver, err := thiz.dbContext.GetDataSource(core.DefaultKeyInRegistrar).GetDriver()
+	if err != nil {
+		panic(err)
+	}
+
+	gormDb, ok := driver.(*gorm.DB)
+	if !ok {
+		panic("Diff command can`t be executed, because driver is not gorm.DB")
+	}
+
 	tx := gormDb.Begin()
 	defer tx.Rollback()
 
@@ -48,7 +62,7 @@ func (thiz DiffCommand) Execute() {
 	})
 
 	moduleName := util.ModuleName()
-	modelsMap := internal.GetFrameworkRegistrar().GetDomains()
+	modelsMap := thiz.domainContext.GetDomains()
 
 	pkgInfos, err := util.ScanDir("./pkg/domain")
 	if err != nil {
@@ -117,8 +131,12 @@ func (thiz DiffCommand) migrateModel(model any, tx *gorm.DB) error {
 				continue
 			}
 
-			if field.Anonymous || util.IndirectType(field.Type).Kind() == reflect.Struct ||
-				util.IndirectType(field.Type).Kind() == reflect.Slice || migrator.HasColumn(model, field.Name) {
+			if (field.Anonymous || util.IndirectType(field.Type).Kind() == reflect.Struct ||
+				util.IndirectType(field.Type).Kind() == reflect.Slice) && !util.InArray(field.Type.PkgPath()+"."+field.Type.Name(), AllowedTypesToMigrate) {
+				continue
+			}
+
+			if migrator.HasColumn(model, field.Name) {
 				continue
 			}
 
@@ -138,8 +156,7 @@ func (thiz DiffCommand) migrateModel(model any, tx *gorm.DB) error {
 }
 
 func (thiz DiffCommand) migratePivatTable(model any, tx *gorm.DB) error {
-	namer := schema.NamingStrategy{}
-	parseScheme, _ := schema.Parse(model, &sync.Map{}, namer)
+	parseScheme := model2.GetDomainSchemeCache().ParseDomain(model)
 	many2manies := parseScheme.Relationships.Many2Many
 
 	for _, relation := range many2manies {
@@ -257,7 +274,7 @@ func (thiz DiffCommand) generateMigration(statements []string) {
 	structName := "Migration" + now.Format("20060102150405")
 	fileName := now.Format("20060102150405") + "_migration.go"
 
-	err = tpl.Execute(writer, map[string]any{"Name": name, "StructName": structName, "Statements": ddls})
+	err = tpl.Execute(writer, map[string]any{"Name": name, "StructName": structName, "Statements": ddls, "FrameworkModuleName": gorgany.FrameworkGit})
 	if err != nil {
 		panic(err)
 	}

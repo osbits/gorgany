@@ -1,8 +1,9 @@
 package err
 
 import (
+	"errors"
 	"fmt"
-	"gorgany/log"
+	"git.qix.sx/gorgany/gorgany.git/log"
 	"runtime"
 	"strings"
 )
@@ -16,8 +17,7 @@ func GetStacktrace() string {
 }
 
 func PrintError(err any) {
-	log.Log("").Error(err)
-	log.Log("").Error(GetStacktrace())
+	log.Log("").Errorf("%s\n%s", err, GetStacktrace())
 }
 
 func HandleError(err any) {
@@ -27,33 +27,33 @@ func HandleError(err any) {
 	_, file, line, _ := runtime.Caller(1)
 	//pc, file, line, _ := runtime.Caller(1)
 	//funcName := runtime.FuncForPC(pc).Name()
-	log.Log("").Errorf("\u001B[0;31mRuntime error in %s, line: %d: \u001B[0m", file, line)
-	log.Log("").Error(err)
+	log.Log("").Errorf("\u001B[0;31mError in \u001B[0m%s:%d: %v\n", file, line, err)
 }
 
 func HandleErrorWithStacktrace(err any) {
 	if err == nil {
 		return
 	}
-	log.Log("").Error("\u001B[0;31mRuntime error: \u001B[0m")
 	PrintError(err)
 }
 
 // Validation
-type ValidationErrors struct {
-	Errors []ValidationError
-}
+type ValidationErrors []ValidationError
 
-func (thiz *ValidationErrors) Error() string {
+func (thiz ValidationErrors) Error() string {
 	errs := make([]string, 0)
-	for _, err := range thiz.Errors {
+	for _, err := range thiz {
 		errs = append(errs, err.Error())
 	}
 	return strings.Join(errs, "\n")
 }
 
 func (thiz *ValidationErrors) AddValidationError(validationError ValidationError) {
-	thiz.Errors = append(thiz.Errors, validationError)
+	*thiz = append(*thiz, validationError)
+}
+
+func (thiz *ValidationErrors) Unwrap() error {
+	return errors.New("validation errors")
 }
 
 type ValidationError struct {
@@ -61,8 +61,16 @@ type ValidationError struct {
 	Err   string `json:"err"`
 }
 
-func (thiz ValidationError) Error() string {
+func (thiz ValidationError) String() string {
 	return fmt.Sprintf("Field: %s, Error: %v", thiz.Field, thiz.Err)
+}
+
+func (thiz ValidationError) Error() string {
+	return thiz.String()
+}
+
+func (thiz ValidationError) Unwrap() error {
+	return fmt.Errorf("%w: %s", &ValidationErrors{}, thiz.Err)
 }
 
 // InputParamParseError

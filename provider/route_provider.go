@@ -1,130 +1,94 @@
+// provider/route_provider.go
 package provider
 
 import (
 	"fmt"
-	"github.com/go-chi/chi"
-	"github.com/spf13/viper"
-	"gorgany/app/core"
-	"gorgany/http"
-	"gorgany/http/router"
-	"gorgany/internal"
-	http2 "net/http"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	err2 "git.qix.sx/gorgany/gorgany.git/err"
+	"git.qix.sx/gorgany/gorgany.git/http"
+	"git.qix.sx/gorgany/gorgany.git/http/router"
+	gohttp "net/http"
 	"reflect"
-	"strings"
 )
 
 type RouteProvider struct {
-	router core.Router
+	controllers []core.IController
+	middlewares []core.IMiddlewareConfig
+	notFound    core.HandlerFunc
 }
 
 func NewRouteProvider() *RouteProvider {
 	return &RouteProvider{}
 }
 
-func (thiz *RouteProvider) InitProvider() {
-	thiz.RegisterRouter(router.NewGorganyRouter())
-	thiz.caseSensitiveRoutes()
+func (p *RouteProvider) AddController(ctrl core.IController) {
+	p.controllers = append(p.controllers, ctrl)
 }
 
-func (thiz *RouteProvider) RegisterRouter(router core.Router) {
-	internal.GetFrameworkRegistrar().RegisterRouter(router)
-	thiz.router = router
+func (p *RouteProvider) AddMiddleware(mw core.IMiddlewareConfig) {
+	p.middlewares = append(p.middlewares, mw)
 }
 
-func (thiz *RouteProvider) RegisterController(controller core.IController) {
-	availableLangsRegex := thiz.buildLangRegex()
-	routerEngine := thiz.router.Engine().(chi.Router)
+func (p *RouteProvider) SetNotFoundHandler(h core.HandlerFunc) {
+	p.notFound = h
+}
 
-	caseSensitiveRoutes := viper.GetBool("app.server.caseSensitiveRoutes")
+func (p *RouteProvider) Register(c core.IContainer) {
+	c.SingletonLazy(func() core.IWebContext {
+		return &http.WebContext{}
+	})
 
-	for _, rc := range controller.GetRoutes() {
-		routeConfig := rc.(*router.RouteConfig)
-		handler := routeConfig.Handler
+	c.SingletonLazy(func() core.Router {
+		return &router.ChiRouterAdapter{}
+	})
 
-		reflectedHandler := reflect.TypeOf(handler)
-		if reflectedHandler.Kind() != reflect.Func {
-			reflectedController := reflect.TypeOf(controller)
-			panic(fmt.Sprintf("Handler must be function. Controller: %s, route: %s", reflectedController.String(), routeConfig.Path))
+	c.SingletonLazy(func(r core.Router) core.RouteLinker {
+		return r
+	})
+}
+
+func (p *RouteProvider) Boot(c core.IContainer) {
+	_ = c.Invoke(func(wc core.IWebContext, grgRouter core.Router) {
+		for _, mw := range p.middlewares {
+			m := mw.GetMiddleware()
+			if err := c.Make(m); err != nil {
+				err2.HandleError(err)
+			}
+			grgRouter.RegisterMiddleware(mw)
 		}
 
-		middlewares := routeConfig.Middlewares
+		wc.SetNotFound(p.notFound)
 
-		thiz.router.RegisterRoute(routeConfig)
-		route := routeConfig.Path
-		if routeConfig.Namespace != "" {
-			route = fmt.Sprintf("/{namespace:%s}%s", routeConfig.Namespace, route)
-		}
-
-		patterns := []string{route}
-
-		if viper.GetBool("i18n.enabled") {
-			patterns = append(patterns, fmt.Sprintf("/{lang:^(%s)?$}%s", availableLangsRegex, route))
-		}
-
-		for _, pattern := range patterns {
-			if !caseSensitiveRoutes {
-				pattern = strings.ToLower(pattern)
+		wc.SetNewMessage(func(w gohttp.ResponseWriter, r *gohttp.Request) (core.HttpMessage, error) {
+			msg := &http.Message{}
+			if err := c.Make(msg, map[string]interface{}{"writer": w, "request": r}); err != nil {
+				return nil, fmt.Errorf("cannot make Message: %w", err)
 			}
-
-			if pattern[len(pattern)-1] == '/' && len(pattern) > 1 {
-				pattern = pattern[:len(pattern)-1]
-			}
-
-			routerEngine.Options(pattern, func(w http2.ResponseWriter, r *http2.Request) {
-				http.Dispatch(w, r, nil, middlewares)
-			})
-
-			switch routeConfig.Method {
-			case core.GET:
-				routerEngine.Get(pattern, func(w http2.ResponseWriter, r *http2.Request) {
-					http.Dispatch(w, r, handler, middlewares)
-				})
-				break
-			case core.PUT:
-				routerEngine.Put(pattern, func(w http2.ResponseWriter, r *http2.Request) {
-					http.Dispatch(w, r, handler, middlewares)
-				})
-				break
-			case core.DELETE:
-				routerEngine.Delete(pattern, func(w http2.ResponseWriter, r *http2.Request) {
-					http.Dispatch(w, r, handler, middlewares)
-				})
-				break
-			case core.POST:
-				routerEngine.Post(pattern, func(w http2.ResponseWriter, r *http2.Request) {
-					http.Dispatch(w, r, handler, middlewares)
-				})
-				break
-			default:
-				panic("Method is unsupported yet")
-			}
-		}
-	}
-}
-
-func (thiz *RouteProvider) SetHomeUrl(url string) {
-	internal.GetFrameworkRegistrar().SetHomeUrl(url)
-}
-
-func (thiz *RouteProvider) RegisterMiddleware(middleware core.IMiddleware) {
-	internal.GetFrameworkRegistrar().RegisterMiddleware(middleware)
-}
-
-func (thiz *RouteProvider) buildLangRegex() string {
-	availableLangs := viper.GetStringSlice("i18n.lang.available")
-	availableLangs = append(availableLangs, viper.GetString("i18n.lang.default"))
-
-	return strings.Join(availableLangs, "|")
-}
-
-func (thiz *RouteProvider) caseSensitiveRoutes() {
-	if !viper.GetBool("app.server.caseSensitiveRoutes") {
-		thiz.router.Engine().(chi.Router).Use(func(next http2.Handler) http2.Handler {
-			fn := func(w http2.ResponseWriter, r *http2.Request) {
-				r.URL.Path = strings.ToLower(r.URL.Path)
-				next.ServeHTTP(w, r)
-			}
-			return http2.HandlerFunc(fn)
+			return msg, nil
 		})
-	}
+
+		wc.SetNewInputResolver(func(h core.HandlerFunc, m core.HttpMessage) (interface{}, error) {
+			res := &http.InputResolver{ReflectedHandler: reflect.ValueOf(h), Message: m}
+			_ = c.Make(res)
+			return res, nil
+		})
+
+		chiAdapter := grgRouter.(*router.ChiRouterAdapter)
+		for _, ctrl := range p.controllers {
+			if err := c.Make(ctrl); err != nil {
+				err2.HandleError(err)
+			}
+			wc.AddController(ctrl)
+			for _, rc := range ctrl.GetRoutes() {
+				for i := range rc.GetMiddlewares() {
+					m := rc.GetMiddlewares()[i]
+					if err := c.Make(m); err != nil {
+						err2.HandleError(err)
+					}
+				}
+
+				chiAdapter.RegisterRoute(rc)
+			}
+		}
+	})
 }

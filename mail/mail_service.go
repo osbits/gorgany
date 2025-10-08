@@ -2,18 +2,27 @@ package mail
 
 import (
 	"bytes"
-	"encoding/base64"
+	"context"
+	"crypto/md5"
+	"encoding/hex"
 	"fmt"
-	"gorgany/app/core"
-	"mime/multipart"
-	"net/http"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/util"
 	"net/smtp"
 	"os"
+	"strings"
+	"time"
 )
 
 type Attachment struct {
-	Name    string
-	Content []byte
+	Id                 string
+	Name               string
+	Content            []byte
+	ContentDisposition core.ContentDisposition
+}
+
+func (thiz *Attachment) GetId() string {
+	return thiz.Id
 }
 
 func (thiz *Attachment) GetName() string {
@@ -22,6 +31,14 @@ func (thiz *Attachment) GetName() string {
 
 func (thiz *Attachment) GetContent() []byte {
 	return thiz.Content
+}
+
+func (thiz *Attachment) GetContentDisposition() core.ContentDisposition {
+	if thiz.ContentDisposition == "" {
+		return core.Attachment
+	}
+
+	return thiz.ContentDisposition
 }
 
 func NewMailService(from ...string) *MailService {
@@ -48,58 +65,88 @@ type MailService struct {
 	port     string
 }
 
-func (thiz MailService) Send(mail core.IMail) error {
-	body, err := thiz.buildBody(mail)
+func (thiz MailService) Send(ctx context.Context, mail core.IMail) error {
+	body, err := thiz.buildBody(ctx, mail)
 	if err != nil {
 		return err
 	}
 
-	return smtp.SendMail(thiz.buildSmtpAddress(), thiz.buildAuth(), thiz.sender, mail.GetRecipients(), body)
+	recipients := util.MergeSlice(mail.GetRecipients(), mail.GetCc(), mail.GetBcc())
+
+	return smtp.SendMail(thiz.buildSmtpAddress(), thiz.buildAuth(), thiz.sender, recipients, body)
 }
 
-func (thiz MailService) buildBody(mail core.IMail) ([]byte, error) {
+func (thiz MailService) buildBody(ctx context.Context, mail core.IMail) ([]byte, error) {
 	buf := new(bytes.Buffer)
 
+	buf.WriteString(fmt.Sprintf("From: %s\n", thiz.sender))
+	buf.WriteString(fmt.Sprintf("To: %s\n", strings.Join(mail.GetRecipients(), ", ")))
+
 	buf.WriteString(fmt.Sprintf("Subject: %s\n", mail.GetSubject()))
-	buf.WriteString("MIME-version: 1.0;\n")
-	writer := multipart.NewWriter(buf)
-	boundary := writer.Boundary()
 
-	attachments, err := mail.GetAttachments()
+	if len(mail.GetCc()) > 0 {
+		buf.WriteString(fmt.Sprintf("Cc: %s\n", strings.Join(mail.GetCc(), ", ")))
+	}
+
+	buf.WriteString("MIME-version: 1.0\n")
+
+	bodyBuilder := bodyBuilder{}
+
+	allAttachments, err := mail.GetAttachments()
 	if err != nil {
 		return nil, err
 	}
 
-	if len(attachments) == 0 {
-		buf.WriteString("Content-Type: text/html; charset=\"UTF-8\";\n\n")
-	} else {
-		buf.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=%s\n", boundary))
-		buf.WriteString(fmt.Sprintf("--%s\n", boundary))
+	attachments := util.FindAll(allAttachments, func(el core.IAttachment) bool {
+		return el.GetContentDisposition() == core.Attachment
+	})
+	inlines := util.FindAll(allAttachments, func(el core.IAttachment) bool {
+		return el.GetContentDisposition() == core.Inline
+	})
+
+	if len(attachments) > 0 {
+		md5Sum := md5.Sum([]byte(fmt.Sprintf("attachment_boundary_%d", time.Now().Unix())))
+		key := hex.EncodeToString(md5Sum[:])
+		bodyBuilder.CreateBoundary("multipart/mixed", key)
+
+		for _, attachment := range attachments {
+			bodyBuilder.AddToBoundary(key, attachmentContent{
+				ContentID: attachment.GetId(),
+				FileName:  attachment.GetName(),
+				Content:   attachment.GetContent(),
+			})
+		}
+	}
+	if len(inlines) > 0 {
+		md5Sum := md5.Sum([]byte(fmt.Sprintf("inline_boundary_%d", time.Now().Unix())))
+		key := hex.EncodeToString(md5Sum[:])
+		bodyBuilder.CreateBoundary("multipart/related", key)
+
+		for _, attachment := range inlines {
+			bodyBuilder.AddToBoundary(key, inlineContent{
+				attachmentContent: attachmentContent{
+					ContentID: attachment.GetId(),
+					FileName:  attachment.GetName(),
+					Content:   attachment.GetContent(),
+				},
+			})
+		}
 	}
 
-	mailBody, err := mail.GetBody()
+	mailBody, err := mail.GetBody(ctx)
 	if err != nil {
 		return nil, err
 	}
+	if mailBody != nil {
+		md5Sum := md5.Sum([]byte(fmt.Sprintf("html_boundary_%d", time.Now().Unix())))
+		key := hex.EncodeToString(md5Sum[:])
+		bodyBuilder.CreateBoundary("multipart/alternative", key)
 
-	if mailBody != nil && len(attachments) > 0 {
-		buf.WriteString("Content-Type: text/html; charset=\"UTF-8\";\n\n")
-	}
-	buf.Write(mailBody)
+		bodyBuilder.AddToBoundary(key, htmlContent{Content: mailBody})
 
-	for _, attachment := range attachments {
-		buf.WriteString(fmt.Sprintf("\n\n--%s\n", boundary))
-		buf.WriteString(fmt.Sprintf("Content-Type: %s\n", http.DetectContentType(attachment.GetContent())))
-		buf.WriteString("Content-Transfer-Encoding: base64\n")
-		buf.WriteString(fmt.Sprintf("Content-Disposition: attachment; filename=%s\n", attachment.GetName()))
-
-		b := make([]byte, base64.StdEncoding.EncodedLen(len(attachment.GetContent())))
-		base64.StdEncoding.Encode(b, attachment.GetContent())
-		buf.Write(b)
-		buf.WriteString(fmt.Sprintf("\n--%s", boundary))
 	}
 
-	buf.WriteString("--")
+	buf.Write(bodyBuilder.String())
 
 	return buf.Bytes(), nil
 }

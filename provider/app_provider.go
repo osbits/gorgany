@@ -1,38 +1,85 @@
 package provider
 
 import (
-	"gorgany/app/core"
-	"gorgany/err"
-	"gorgany/internal"
-	"gorgany/log"
-	"gorgany/service"
-	"reflect"
+	"time"
+
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/auth"
+	"git.qix.sx/gorgany/gorgany.git/err"
+	"git.qix.sx/gorgany/gorgany.git/model"
+	"git.qix.sx/gorgany/gorgany.git/service"
+	"git.qix.sx/gorgany/gorgany.git/validator"
+	"github.com/spf13/viper"
 )
 
-type AppProvider struct {
-	AppRegistrar core.IRegistrar
-}
+type AppProvider struct{}
 
-func NewAppProvider() *AppProvider {
-	return &AppProvider{}
-}
+func (a AppProvider) Register(container core.IContainer) {
 
-func (thiz *AppProvider) InitProvider() {
-	thiz.AppRegistrar = internal.GetFrameworkRegistrar()
-	thiz.AppRegistrar.RegisterContainer(service.NewContainer())
+	// Register session storage based on configuration
+	sessionStorageType := viper.GetString("auth.session.storage")
+	if sessionStorageType == "database" {
+		// Register session repository for database storage
+		err.HandleErrorWithStacktrace(container.SingletonLazy(func() auth.ISessionRepository {
+			return auth.NewDbSessionRepository()
+		}))
 
-	err.HandleErrorWithStacktrace(thiz.AppRegistrar.GetContainer().Bind(func() core.IViewEngine {
-		return thiz.AppRegistrar.GetViewEngine()
+		// Register session mediator for automatic persistence
+		err.HandleErrorWithStacktrace(container.SingletonLazy(func(repo auth.ISessionRepository) *auth.DbSessionMediator {
+			return auth.NewDbSessionMediator(repo)
+		}))
+
+		err.HandleErrorWithStacktrace(container.SingletonLazy(func() core.ISessionStorage {
+			return auth.NewDbSessionStorage(time.Second * time.Duration(viper.GetInt("auth.session.lifeTime")))
+		}))
+
+		// Register session factory for database storage with mediator
+		err.HandleErrorWithStacktrace(container.SingletonLazy(func(mediator *auth.DbSessionMediator) auth.ISessionFactory {
+			factory := auth.NewDbSessionFactory()
+			factory.SetMediator(mediator)
+			return factory
+		}))
+	} else {
+		// Default to memory storage
+		err.HandleErrorWithStacktrace(container.SingletonLazy(func() core.ISessionStorage {
+			return auth.NewMemorySession(time.Second * time.Duration(viper.GetInt("auth.session.lifeTime")))
+		}))
+
+		// Register session factory for memory storage
+		err.HandleErrorWithStacktrace(container.SingletonLazy(func() auth.ISessionFactory {
+			return auth.NewMemorySessionFactory()
+		}))
+	}
+
+	err.HandleErrorWithStacktrace(container.SingletonLazy(func() core.IAuthContext {
+		return &auth.AuthContext{}
+	}))
+
+	err.HandleErrorWithStacktrace(container.SingletonLazy(func() core.IDomainContext {
+		return &model.DomainContext{}
+	}))
+
+	err.HandleErrorWithStacktrace(container.SingletonLazy(func() core.IValidator {
+		return validator.New()
+	}))
+
+	service.SetEmergencyContainerFactory(func() core.IEmergencyContainer {
+		return container
+	})
+
+	err.HandleErrorWithStacktrace(container.SingletonLazy(func() core.IEmergencyContainer {
+		return container
 	}))
 }
 
-func (thiz *AppProvider) RegisterProvider(provider core.IProvider) {
-	rtProvider := reflect.TypeOf(provider)
-	if rtProvider.Kind() == reflect.Ptr {
-		rtProvider = rtProvider.Elem()
-	}
+func (a AppProvider) Boot(container core.IContainer) {
+	container.Invoke(func(authContext core.IAuthContext) {
+		stast := &auth.StandardAuthStrategy{}
+		container.Make(stast)
+		authContext.RegisterAuthStrategy(core.DefaultKeyInRegistrar, stast)
 
-	log.Log("").Infof("Provider \u001B[0;32m`%s`\u001B[0m is registering", rtProvider.Name())
-	provider.InitProvider()
-	log.Log("").Infof("Provider \u001B[0;32m`%s`\u001B[0m registered\n\n", rtProvider.Name())
+		jwtast := &auth.JwtAuthStrategy{}
+		container.Make(jwtast)
+		authContext.RegisterAuthStrategy("api", jwtast)
+	})
 }

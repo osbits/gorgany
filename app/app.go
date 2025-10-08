@@ -6,14 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"git.qix.sx/gorgany/gorgany.git"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/command"
+	"git.qix.sx/gorgany/gorgany.git/config"
+	"git.qix.sx/gorgany/gorgany.git/log"
+	"git.qix.sx/gorgany/gorgany.git/service"
 	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
-	"gorgany"
-	"gorgany/app/core"
-	"gorgany/command"
-	"gorgany/config"
-	"gorgany/http/router"
-	"gorgany/log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -34,13 +34,13 @@ func GetRunMode() gorgany.RunMode {
 }
 
 type app struct {
-	timezone    *time.Location
-	appProvider core.IProvider
-	execType    gorgany.ExecType
+	timezone     *time.Location
+	bootstrapper core.Bootstrapper
+	container    core.IContainer
+	execType     gorgany.ExecType
 }
 
 func (s *app) Run() {
-	s.log("").Infof("Gorgany framework is starting...\n\n")
 	if err := godotenv.Load(); err != nil {
 		s.log("").Panicf("Failed load env file: %s", err.Error())
 	}
@@ -59,7 +59,10 @@ func (s *app) Run() {
 	timezone, _ := time.LoadLocation(viper.GetString("app.server.timezone"))
 	s.timezone = timezone
 
-	s.appProvider.InitProvider()
+	s.container = service.NewContainer()
+	s.bootstrapper.Bootstrap(s.container)
+
+	s.log("").Infof("Gorgany framework is starting...\n\n")
 }
 
 func (s *app) ServerTimezone() *time.Location {
@@ -67,7 +70,7 @@ func (s *app) ServerTimezone() *time.Location {
 }
 
 func (s *app) validate() error {
-	s.log("").Infof("ValidationHttpStatus of the generated files is performed")
+	s.log("").Infof("Validation of the generated files is performing")
 	lock, err := s.parseLock()
 	if err != nil {
 		return err
@@ -141,9 +144,9 @@ type LockFiles struct {
 
 // Server application
 
-func NewServerApp(appProvider core.IAppProvider) *ServerApp {
+func NewServerApp(bootstrapper core.Bootstrapper) *ServerApp {
 	app := &ServerApp{}
-	app.appProvider = appProvider
+	app.bootstrapper = bootstrapper
 	app.execType = gorgany.Server
 	Application = app
 	return app
@@ -157,23 +160,29 @@ type ServerApp struct {
 func (s *ServerApp) Run() {
 	s.app.Run()
 
-	port := os.Getenv("SERVER_PORT")
-	if port == "" {
+	port := viper.GetInt("app.server.port")
+	if port == 0 {
 		log.Log("").Panicf("Please specify SERVER_PORT in .env")
+	}
+
+	var router core.Router
+	err := s.container.Resolve(&router)
+	if err != nil {
+		log.Log().Panicf("Failed to make router on start: %s", err.Error())
 	}
 
 	go func() {
 		s.httpServer = &http.Server{
-			Addr:           ":" + port,
-			Handler:        router.GetRouter().Engine(),
+			Addr:           fmt.Sprintf(":%d", port),
+			Handler:        router,
 			MaxHeaderBytes: 1 << 20,
 			ReadTimeout:    10 * time.Second,
 			WriteTimeout:   10 * time.Second,
 		}
 
-		log.Log("").Info("Server is doing to be up right now")
+		log.Log().Infof("Server is running on port\u001B[0;32m :%d \u001B[0m", port)
 		if err := s.httpServer.ListenAndServe(); err != nil {
-			log.Log("").Panicf("Error when starting the http server: %s", err.Error())
+			log.Log().Panicf("Error while the http server is running: %s", err.Error())
 		}
 	}()
 
@@ -191,9 +200,9 @@ func (s *ServerApp) Shutdown(ctx context.Context) error {
 
 //Console application
 
-func NewConsoleApp(appProvider core.IAppProvider) *ConsoleApp {
+func NewConsoleApp(bootstrapper core.Bootstrapper) *ConsoleApp {
 	app := &ConsoleApp{}
-	app.appProvider = appProvider
+	app.bootstrapper = bootstrapper
 	app.execType = gorgany.Cli
 	Application = app
 	return app
@@ -206,14 +215,22 @@ type ConsoleApp struct {
 func (s *ConsoleApp) Run() {
 	s.app.Run()
 
-	resolver := command.NewCommandResolver()
+	err := s.container.Invoke(func(resolver *command.Resolver) {
+		if len(os.Args) < 2 {
+			fmt.Println("Command name must be presented")
+			return
+		}
+		cmd := resolver.ResolveCommand(os.Args[1])
 
-	if len(os.Args) < 2 {
-		fmt.Println("Command name must be presented")
+		ctx := context.Background()
+
+		cmd.Execute(ctx)
+	})
+
+	if err != nil {
+		log.Log().Panicf("Failed to make resolver: %s", err.Error())
 		return
 	}
-	cmd := resolver.ResolveCommand(os.Args[1])
-	cmd.Execute()
 }
 
 func (s *ConsoleApp) Shutdown(ctx context.Context) error {

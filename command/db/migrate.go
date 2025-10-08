@@ -1,15 +1,18 @@
 package db
 
 import (
-	"fmt"
-	"gorgany/db"
-	"gorgany/internal"
+	"context"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/db"
+	"git.qix.sx/gorgany/gorgany.git/log"
 	"gorm.io/gorm"
 	"os"
 	"time"
 )
 
 type MigrateCommand struct {
+	dataContext core.IDataContext `container:"inject"`
+	dbContext   core.IDBContext   `container:"inject"`
 }
 
 func (thiz MigrateCommand) GetName() string {
@@ -23,7 +26,7 @@ const (
 	Down               = "down"
 )
 
-func (thiz MigrateCommand) Execute() {
+func (thiz MigrateCommand) Execute(ctx context.Context) {
 	if len(os.Args) < 3 {
 		panic("Use 'cli db:migrate up' or 'cli db:migrate down'")
 	}
@@ -31,7 +34,7 @@ func (thiz MigrateCommand) Execute() {
 
 	switch migrationKind {
 	case Up:
-		thiz.up()
+		thiz.up(ctx)
 	case Down:
 		thiz.down()
 	default:
@@ -40,29 +43,37 @@ func (thiz MigrateCommand) Execute() {
 
 }
 
-func (thiz MigrateCommand) up() {
-	gormInstance := db.Builder().GetConnection().Driver().(*gorm.DB)
+func (thiz MigrateCommand) up(ctx context.Context) {
+	driver, err := thiz.dbContext.GetDataSource(core.DefaultKeyInRegistrar).GetDriver()
+	if err != nil {
+		panic(err)
+	}
 
-	err := gormInstance.AutoMigrate(&db.Migration{})
+	gormInstance, ok := driver.(*gorm.DB)
+	if !ok {
+		panic("Diff command can`t be executed, because driver is not gorm.DB")
+	}
+
+	err = gormInstance.AutoMigrate(&db.Migration{})
 	if err != nil {
 		panic("Unable to migrate table `migrations`")
 	}
 
 	isError := false
-	for _, migration := range internal.GetFrameworkRegistrar().GetMigrations() {
+	for _, migration := range thiz.dataContext.Migrations() {
 		var migrationDomain db.Migration
 		gormInstance.First(&migrationDomain, "name = ?", migration.Name())
 		if thiz.isMigrationExists(migrationDomain) {
 			continue
 		}
 
-		fmt.Printf("Migration %s is executing\n", migration.Name())
+		log.Log().Infof("Migration %s is executing\n", migration.Name())
 		tx := gormInstance.Begin()
 
 		closure := migration.Up()
 		err = closure(tx)
 		if err != nil {
-			fmt.Println(err)
+			log.Log().Errorf("Error while migration is executing: %v", err)
 			tx.Rollback()
 			isError = true
 			break
@@ -74,14 +85,14 @@ func (thiz MigrateCommand) up() {
 			Name: migration.Name(),
 			Date: time.Now(),
 		})
-		fmt.Printf("Migration %s finished\n", migration.Name())
+		log.Log().Infof("Migration %s finished\n", migration.Name())
 	}
 
 	if !isError {
-		fmt.Println("Success")
+		log.Log().Infof("Success")
 		return
 	}
-	fmt.Println("Error")
+	log.Log().Warn("Migration has finished with error")
 }
 
 func (thiz MigrateCommand) down() {

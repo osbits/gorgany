@@ -2,10 +2,9 @@ package command
 
 import (
 	"flag"
-	"github.com/go-playground/validator/v10"
-	"gorgany/app/core"
-	"gorgany/internal"
-	"gorgany/log"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/log"
+	goValidator "github.com/go-playground/validator/v10"
 	"os"
 	"reflect"
 	"regexp"
@@ -24,14 +23,12 @@ type FlagConfig struct { //`command:"flag,default=value,name=name"`
 type Flags map[string]*FlagConfig //[fieldName]FlagConfig
 
 type Resolver struct {
-}
-
-func NewCommandResolver() *Resolver {
-	return &Resolver{}
+	consoleContext core.IConsoleContext `container:"inject"`
+	validator      core.IValidator      `container:"inject"`
 }
 
 func (thiz Resolver) ResolveCommand(commandName string) core.ICommand {
-	command := internal.GetFrameworkRegistrar().GetCommand(commandName)
+	command := thiz.consoleContext.GetCommand(commandName)
 	if command == nil {
 		log.Log("").Panicf("Command %s does not exist", commandName)
 	}
@@ -51,16 +48,15 @@ func (thiz Resolver) ResolveCommand(commandName string) core.ICommand {
 		rvField.Set(reflect.ValueOf(flagConfig.Value).Elem())
 	}
 
-	validate := validator.New()
-	err := validate.Struct(command)
+	err := thiz.validator.ValidateStruct(command)
 	if err != nil {
 		commandFlags.PrintDefaults()
 
-		if _, ok := err.(*validator.InvalidValidationError); ok {
+		if _, ok := err.(*goValidator.InvalidValidationError); ok {
 			log.Log("").Panicf("Invalid validation error: %v", err)
 		}
 
-		for _, err := range err.(validator.ValidationErrors) {
+		for _, err := range err.(goValidator.ValidationErrors) {
 			log.Log("").Panicf("Invalid argument for %s flag, %v", flags[err.Field()].Name, err)
 		}
 	}

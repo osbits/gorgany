@@ -2,8 +2,10 @@ package validator
 
 import (
 	"encoding/json"
+	"fmt"
+	err2 "git.qix.sx/gorgany/gorgany.git/err"
+	"git.qix.sx/gorgany/gorgany.git/model"
 	goValidator "github.com/go-playground/validator/v10"
-	"gorgany/model"
 	"mime"
 	"reflect"
 	"strconv"
@@ -11,29 +13,46 @@ import (
 )
 
 func validateFile(field reflect.Value) interface{} {
+	if field.Interface() == nil {
+		return []byte("null")
+	}
+
 	if file, ok := field.Interface().(model.File); ok {
-		jsonFile, err := json.Marshal(file)
-		if err != nil {
+		if file.GetName() == "" && file.GetPath() == "" {
 			return nil
 		}
-		return jsonFile
+
+		content, err := json.Marshal(model.AbstractFile{
+			Name: file.GetName(),
+			Path: file.GetPath(),
+		})
+		if err != nil {
+			return []byte("null")
+		}
+		return content
 	}
-	return nil
+
+	return []byte("null")
 }
 
 func validateMimeType(fl goValidator.FieldLevel) bool {
-	fileJson, ok := fl.Field().Interface().([]byte)
+	if fl.Field().IsZero() {
+		return true
+	}
+
+	fileContent, ok := fl.Field().Interface().([]byte)
 	if !ok {
 		return false
 	}
 
-	if string(fileJson) == "{}" {
+	if string(fileContent) == "null" {
 		return true
 	}
 
-	file := &model.File{}
-	err := json.Unmarshal(fileJson, file)
+	file := &model.AbstractFile{}
+	err := json.Unmarshal(fileContent, file)
 	if err != nil {
+		err2.HandleError(fmt.Sprintf("Error when unmarshalling file content during validation: %v", err))
 		return false
 	}
 
@@ -49,18 +68,23 @@ func validateMimeType(fl goValidator.FieldLevel) bool {
 }
 
 func validateFileSize(fl goValidator.FieldLevel) bool {
-	fileJson, ok := fl.Field().Interface().([]byte)
+	if fl.Field().IsZero() {
+		return true
+	}
+
+	fileContent, ok := fl.Field().Interface().([]byte)
 	if !ok {
 		return false
 	}
 
-	if fileJson == nil {
+	if string(fileContent) == "null" {
 		return true
 	}
 
-	file := &model.File{}
-	err := json.Unmarshal(fileJson, file)
+	file := &model.AbstractFile{}
+	err := json.Unmarshal(fileContent, file)
 	if err != nil {
+		err2.HandleError(fmt.Sprintf("Error when unmarshalling file content during validation: %v", err))
 		return false
 	}
 
@@ -69,7 +93,11 @@ func validateFileSize(fl goValidator.FieldLevel) bool {
 		panic(err)
 	}
 
-	if file.Size > sizeInTag {
+	size, err := file.GetSize()
+	if err != nil {
+		return false
+	}
+	if size > sizeInTag {
 		return false
 	}
 	return true

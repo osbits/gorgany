@@ -1,7 +1,7 @@
 package model
 
 import (
-	"gorgany/app/core"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 )
 
 type Domain[T any] struct {

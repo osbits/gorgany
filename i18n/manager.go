@@ -1,12 +1,27 @@
 package i18n
 
 import (
-	"gorgany/app/core"
-	"gorgany/internal"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 )
 
+var (
+	mgr     core.Ii18nManager
+	setOnce = false
+)
+
+func SetManager(m core.Ii18nManager) {
+	if setOnce {
+		panic("i18n: manager already set")
+	}
+	mgr = m
+	setOnce = true
+}
+
 func GetManager() core.Ii18nManager {
-	return internal.GetFrameworkRegistrar().GetI18nManager()
+	if mgr == nil {
+		panic("i18n: manager not initialized")
+	}
+	return mgr
 }
 
 type Manager struct {

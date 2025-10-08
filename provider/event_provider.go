@@ -1,23 +1,67 @@
 package provider
 
 import (
-	"gorgany/app/core"
-	"gorgany/err"
-	eventService "gorgany/event"
-	"gorgany/internal"
+	"fmt"
+
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/event"
 )
 
 type EventProvider struct {
+	subs []subscription
 }
 
-func (thiz EventProvider) InitProvider() {
-	internal.GetFrameworkRegistrar().RegisterEventBus(eventService.NewEventBus())
+type subscription struct {
+	event string
+	ctor  func() core.ISubscriber
+	async bool
 }
 
-func (thiz EventProvider) RegisterEvent(event string, subscriber core.ISubscriber) {
-	err.HandleErrorWithStacktrace(eventService.GetEventBus().Subscribe(event, subscriber))
+func NewEventProvider() *EventProvider {
+	return &EventProvider{subs: make([]subscription, 0)}
 }
 
-func (thiz EventProvider) RegisterAsyncEvent(event string, subscriber core.ISubscriber) {
-	err.HandleErrorWithStacktrace(eventService.GetEventBus().SubscribeAsync(event, subscriber))
+// RegisterSubscriber добавляет sync подписку с фабрикой подписчика.
+func (p *EventProvider) RegisterSubscriber(eventName string, ctor func() core.ISubscriber) {
+	p.subs = append(p.subs, subscription{event: eventName, ctor: ctor, async: false})
+}
+
+func (p *EventProvider) RegisterAsyncSubscriber(eventName string, ctor func() core.ISubscriber) {
+	p.subs = append(p.subs, subscription{event: eventName, ctor: ctor, async: true})
+}
+
+func (p *EventProvider) Register(c core.IContainer) {
+	c.SingletonLazy(func() core.IEventBus {
+		return event.NewEventBus()
+	})
+	for _, sub := range p.subs {
+		c.TransientLazy(func(ctor func() core.ISubscriber) func() core.ISubscriber {
+			return ctor
+		}(sub.ctor))
+	}
+}
+
+func (p *EventProvider) Boot(c core.IContainer) error {
+	var bus core.IEventBus
+	if err := c.Make(&bus); err != nil {
+		return fmt.Errorf("event Boot: cannot Make EventBus: %w", err)
+	}
+
+	for _, sub := range p.subs {
+		inst := sub.ctor()
+		if err := c.Make(&inst); err != nil {
+			return fmt.Errorf("event Boot: cannot make subscriber %T: %w", inst, err)
+		}
+
+		if sub.async {
+			if err := bus.SubscribeAsync(sub.event, inst); err != nil {
+				return fmt.Errorf("event Boot: SubscribeAsync '%s': %w", sub.event, err)
+			}
+		} else {
+			if err := bus.Subscribe(sub.event, inst); err != nil {
+				return fmt.Errorf("event Boot: Subscribe '%s': %w", sub.event, err)
+			}
+		}
+	}
+	return nil
 }

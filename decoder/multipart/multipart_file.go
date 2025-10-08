@@ -1,33 +1,39 @@
 package multipart
 
 import (
-	"gorgany/model"
+	"git.qix.sx/gorgany/gorgany.git/model"
 	"io"
 	"mime/multipart"
 	"reflect"
+	"strings"
 )
 
-func DecodeFiles(filesMap map[string][]*multipart.FileHeader, dest any) error {
+func DecodeFiles(filesMap map[string][]*multipart.FileHeader, dest any) ([]io.Closer, error) {
 	reflectedDestVal := reflect.ValueOf(dest)
 
+	openedFiles := make([]io.Closer, 0)
 	for key, files := range filesMap {
-		field := reflectedDestVal.Elem().FieldByName(key)
+		field := reflectedDestVal.Elem().FieldByNameFunc(func(n string) bool {
+			return strings.ToLower(key) == strings.ToLower(n)
+		})
+
+		if !field.IsValid() {
+			continue
+		}
+
 		rawFile := files[0]
 		reader, err := rawFile.Open()
 		if err != nil {
-			return err
+			return openedFiles, err
 		}
-		content, err := io.ReadAll(reader)
-		if err != nil {
-			return err
-		}
-		file := model.File{
-			Name:    rawFile.Filename,
-			Content: string(content),
-			Size:    rawFile.Size,
-		}
+		openedFiles = append(openedFiles, reader)
+
+		file, err := model.NewMultipartFile(rawFile.Filename, reader)
+
+		openedFiles = append(openedFiles, file)
+
 		field.Set(reflect.ValueOf(file))
 	}
 
-	return nil
+	return openedFiles, nil
 }

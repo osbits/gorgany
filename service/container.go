@@ -3,353 +3,427 @@ package service
 import (
 	"errors"
 	"fmt"
-	"gorgany/app/core"
-	"gorgany/internal"
-	"gorgany/util"
 	"reflect"
+	"strings"
+	"sync"
 	"unsafe"
+
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 )
 
-func GetContainer() core.IContainer {
-	return internal.GetFrameworkRegistrar().GetContainer()
+var emergencyContainerFactory func() core.IEmergencyContainer
+
+func SetEmergencyContainerFactory(factory func() core.IEmergencyContainer) {
+	emergencyContainerFactory = factory
 }
 
-// binding holds a resolver and a concrete (if already resolved).
-// It is the break for the Container wall!
+func EmergencyContainer() core.IEmergencyContainer {
+	return emergencyContainerFactory()
+}
+
+// binding holds resolver and cached instance for singletons
 type binding struct {
-	resolver    interface{} // resolver is the function that is responsible for making the concrete.
-	concrete    interface{} // concrete is the stored instance for singleton bindings.
-	isSingleton bool        // isSingleton is true if the binding is a singleton.
+	resolver    interface{}
+	concrete    interface{}
+	isSingleton bool
+
+	initOnce *sync.Once
 }
 
-// make resolves the binding if needed and returns the resolved concrete.
-func (b *binding) make(c Container) (interface{}, error) {
-	if b.concrete != nil {
-		return b.concrete, nil
-	}
-
-	retVal, err := c.invoke(b.resolver)
-	if b.isSingleton {
-		b.concrete = retVal
-	}
-
-	return retVal, err
+// Container is the IoC container implementation
+type Container struct {
+	mu          sync.RWMutex
+	bindings    map[reflect.Type]map[string]*binding
+	initMu      sync.Mutex
+	initOnceMap map[interface{}]*sync.Once
 }
 
-// Container holds the bindings and provides methods to interact with them.
-// It is the entry point in the package.
-type Container map[reflect.Type]map[string]*binding
-
-// NewContainer creates a new concrete of the Container.
-func NewContainer() Container {
-	return make(Container)
+// NewContainer creates a new Container
+func NewContainer() *Container {
+	return &Container{
+		bindings:    make(map[reflect.Type]map[string]*binding),
+		initOnceMap: make(map[interface{}]*sync.Once),
+	}
 }
 
-// bind maps an abstraction to concrete and instantiates if it is a singleton binding.
-func (thiz Container) bind(resolver interface{}, name string, isSingleton bool, isLazy bool) error {
-	reflectedResolver := reflect.TypeOf(resolver)
-	if reflectedResolver.Kind() != reflect.Func {
-		return errors.New("container: the resolver must be a function")
-	}
+// Reset clears all registrations
+func (c *Container) Reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.bindings = make(map[reflect.Type]map[string]*binding)
+	c.initMu.Lock()
+	defer c.initMu.Unlock()
+	c.initOnceMap = make(map[interface{}]*sync.Once)
+}
 
-	if reflectedResolver.NumOut() > 0 {
-		if _, exist := thiz[reflectedResolver.Out(0)]; !exist {
-			thiz[reflectedResolver.Out(0)] = make(map[string]*binding)
-		}
-	}
+// Public registration methods
+func (c *Container) Singleton(resolver interface{}) error { return c.bind(resolver, "", true, false) }
+func (c *Container) SingletonLazy(resolver interface{}) error {
+	return c.bind(resolver, "", true, true)
+}
+func (c *Container) NamedSingleton(name string, resolver interface{}) error {
+	return c.bind(resolver, name, true, false)
+}
+func (c *Container) NamedSingletonLazy(name string, resolver interface{}) error {
+	return c.bind(resolver, name, true, true)
+}
+func (c *Container) Transient(resolver interface{}) error { return c.bind(resolver, "", false, false) }
+func (c *Container) TransientLazy(resolver interface{}) error {
+	return c.bind(resolver, "", false, true)
+}
+func (c *Container) NamedTransient(name string, resolver interface{}) error {
+	return c.bind(resolver, name, false, false)
+}
+func (c *Container) NamedTransientLazy(name string, resolver interface{}) error {
+	return c.bind(resolver, name, false, true)
+}
 
-	if err := thiz.validateResolverFunction(reflectedResolver); err != nil {
+// bind registers a resolver
+func (c *Container) bind(resolver interface{}, name string, isSingleton, isLazy bool) error {
+	fnType := reflect.TypeOf(resolver)
+	if fnType.Kind() != reflect.Func {
+		return errors.New("container: resolver must be a function")
+	}
+	if fnType.NumOut() == 0 || fnType.NumOut() > 2 {
+		return errors.New("container: resolver must return (instance [, error])")
+	}
+	if err := c.validateResolver(fnType); err != nil {
 		return err
 	}
-
-	var concrete interface{}
+	instType := fnType.Out(0)
+	if instType.Kind() != reflect.Ptr && instType.Kind() != reflect.Interface {
+		instType = reflect.PtrTo(instType)
+	}
+	var preInst interface{}
 	if !isLazy {
-		var err error
-		concrete, err = thiz.invoke(resolver)
+		inst, err := c.invoke(resolver, make(map[reflect.Type]interface{}))
 		if err != nil {
 			return err
 		}
+		preInst = inst
 	}
-
-	if isSingleton {
-		thiz[reflectedResolver.Out(0)][name] = &binding{resolver: resolver, concrete: concrete, isSingleton: isSingleton}
-	} else {
-		thiz[reflectedResolver.Out(0)][name] = &binding{resolver: resolver, isSingleton: isSingleton}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.bindings[instType]; !ok {
+		c.bindings[instType] = make(map[string]*binding)
 	}
-
+	c.bindings[instType][name] = &binding{resolver: resolver, concrete: preInst, isSingleton: isSingleton}
 	return nil
 }
 
-func (thiz Container) validateResolverFunction(funcType reflect.Type) error {
-	retCount := funcType.NumOut()
-
-	if retCount == 0 || retCount > 2 {
-		return errors.New("container: resolver function signature is invalid - it must return abstract, or abstract and error")
+func (c *Container) validateResolver(fnType reflect.Type) error {
+	resType := fnType.Out(0)
+	for i := 0; i < fnType.NumIn(); i++ {
+		if fnType.In(i) == resType {
+			return fmt.Errorf("container: resolver cannot depend on its own return type %s", resType)
+		}
 	}
+	return nil
+}
 
-	resolveType := funcType.Out(0)
-	for i := 0; i < funcType.NumIn(); i++ {
-		if funcType.In(i) == resolveType {
-			return fmt.Errorf("container: resolver function signature is invalid - depends on abstract it returns")
+// Make injects fields into ptr-to-struct or ptr-to-interface
+func (c *Container) Make(target interface{}, overrides ...map[string]interface{}) error {
+	v := reflect.ValueOf(target)
+	if v.Kind() != reflect.Ptr {
+		return errors.New("container: Make requires a pointer")
+	}
+	if v.Elem().Kind() == reflect.Struct {
+		if len(overrides) > 0 {
+			s := v.Elem()
+			for field, val := range overrides[0] {
+				f := s.FieldByName(field)
+				if f.IsValid() {
+					ptr := reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem()
+					if ptr.IsValid() && ptr.CanSet() {
+						ptr.Set(reflect.ValueOf(val))
+					}
+				}
+			}
+		}
+		return c.fill(v.Interface(), make(map[reflect.Type]interface{}))
+	}
+	// interface pointer: map to resolveInternal
+	return c.namedResolveInternal(target, "")
+}
+
+func (c *Container) Resolve(abstraction interface{}) error {
+	return c.namedResolveInternal(abstraction, "")
+}
+
+func (c *Container) NamedResolve(abstraction interface{}, name string) error {
+	return c.namedResolveInternal(abstraction, name)
+}
+
+func (c *Container) Invoke(fn interface{}) error {
+	if reflect.TypeOf(fn).Kind() != reflect.Func {
+		return errors.New("container: invalid function")
+	}
+	_, err := c.invoke(fn, make(map[reflect.Type]interface{}))
+	return err
+}
+
+func (c *Container) namedResolveInternal(abstraction interface{}, name string) error {
+	rv := reflect.ValueOf(abstraction)
+	if rv.Kind() != reflect.Ptr || rv.Elem().Kind() == reflect.Struct {
+		return errors.New("container: abstraction must be pointer to interface")
+	}
+	et := rv.Elem().Type()
+	inst, err := c.resolve(et, name, make(map[reflect.Type]interface{}))
+	if err != nil {
+		return err
+	}
+	iv := reflect.ValueOf(inst)
+	if !iv.Type().AssignableTo(et) {
+		return fmt.Errorf("container: cannot assign %s to %s", iv.Type(), et)
+	}
+	rv.Elem().Set(iv)
+	return nil
+}
+
+func (c *Container) resolve(t reflect.Type, name string, chain map[reflect.Type]interface{}) (interface{}, error) {
+	// First try direct type resolution
+	c.mu.RLock()
+	if m, ok := c.bindings[t]; ok {
+		if b, found := m[name]; found {
+			c.mu.RUnlock()
+			return c.getInstance(b, chain)
+		}
+		if b, found := m[""]; found {
+			c.mu.RUnlock()
+			return c.getInstance(b, chain)
+		}
+	}
+	c.mu.RUnlock()
+
+	// interface: find concrete binding that implements t
+	if t.Kind() == reflect.Interface {
+		c.mu.RLock()
+		bindings := make([]*binding, 0)
+		// Collect all potential bindings first to minimize lock time
+		for keyType, m := range c.bindings {
+			if keyType.Implements(t) || (keyType.Kind() == reflect.Ptr && keyType.Elem().Implements(t)) {
+				if b, found := m[name]; found {
+					bindings = append(bindings, b)
+				}
+				if b, found := m[""]; found {
+					bindings = append(bindings, b)
+				}
+			}
+		}
+		c.mu.RUnlock()
+
+		// Try to get instance from collected bindings
+		for _, b := range bindings {
+			inst, err := c.getInstance(b, chain)
+			if err == nil {
+				return inst, nil
+			}
 		}
 	}
 
-	return nil
+	// pointer-to-struct auto-register
+	if t.Kind() == reflect.Ptr && t.Elem().Kind() == reflect.Struct {
+		c.mu.Lock()
+		if _, ok := c.bindings[t]; !ok {
+			defaultResolver := func() (interface{}, error) {
+				return reflect.New(t.Elem()).Interface(), nil
+			}
+			c.bindings[t] = map[string]*binding{"": {resolver: defaultResolver, isSingleton: true}}
+		}
+		c.mu.Unlock()
+		return c.resolve(t, name, chain)
+	}
+	return nil, fmt.Errorf("container: no binding for type %s", t)
 }
 
-// invoke calls a function and its returned values.
-// It only accepts one value and an optional error.
-func (thiz Container) invoke(function interface{}) (interface{}, error) {
-	arguments, err := thiz.arguments(function)
+func (c *Container) getInstance(b *binding, chain map[reflect.Type]interface{}) (interface{}, error) {
+	if b.isSingleton && b.concrete != nil {
+		return b.concrete, nil
+	}
+
+	if !b.isSingleton {
+		return c.invoke(b.resolver, chain)
+	}
+
+	c.mu.RLock()
+	if b.concrete != nil {
+		instance := b.concrete
+		c.mu.RUnlock()
+		return instance, nil
+	}
+	c.mu.RUnlock()
+
+	inst, err := c.invoke(b.resolver, chain)
 	if err != nil {
 		return nil, err
 	}
 
-	values := reflect.ValueOf(function).Call(arguments)
-	if len(values) == 2 && values[1].CanInterface() {
-		if err, ok := values[1].Interface().(error); ok {
-			return values[0].Interface(), err
-		}
+	c.mu.Lock()
+	if b.concrete == nil {
+		b.concrete = inst
+	} else {
+		inst = b.concrete
 	}
-	return values[0].Interface(), nil
+	c.mu.Unlock()
+
+	return inst, nil
 }
 
-// arguments returns the list of resolved arguments for a function.
-func (thiz Container) arguments(function interface{}) ([]reflect.Value, error) {
-	reflectedFunction := reflect.TypeOf(function)
-	argumentsCount := reflectedFunction.NumIn()
-	arguments := make([]reflect.Value, argumentsCount)
-
-	for i := 0; i < argumentsCount; i++ {
-		abstraction := reflectedFunction.In(i)
-		if concrete, exist := thiz[abstraction][""]; exist {
-			instance, err := concrete.make(thiz)
-			if err != nil {
-				return nil, err
-			}
-			arguments[i] = reflect.ValueOf(instance)
-		} else {
-			return nil, errors.New("container: no concrete found for: " + abstraction.String())
-		}
-	}
-
-	return arguments, nil
-}
-
-// Reset deletes all the existing bindings and empties the container.
-func (thiz Container) Reset() {
-	for k := range thiz {
-		delete(thiz, k)
-	}
-}
-
-// Singleton binds an abstraction to concrete in singleton mode.
-// It takes a resolver function that returns the concrete, and its return type matches the abstraction (interface).
-// The resolver function can have arguments of abstraction that have been declared in the Container already.
-func (thiz Container) Singleton(resolver interface{}) error {
-	return thiz.bind(resolver, "", true, false)
-}
-
-// SingletonLazy binds an abstraction to concrete lazily in singleton mode.
-// The concrete is resolved only when the abstraction is resolved for the first time.
-// It takes a resolver function that returns the concrete, and its return type matches the abstraction (interface).
-// The resolver function can have arguments of abstraction that have been declared in the Container already.
-func (thiz Container) SingletonLazy(resolver interface{}) error {
-	return thiz.bind(resolver, "", true, true)
-}
-
-// NamedSingleton binds a named abstraction to concrete in singleton mode.
-func (thiz Container) NamedSingleton(name string, resolver interface{}) error {
-	return thiz.bind(resolver, name, true, false)
-}
-
-// NamedSingleton binds a named abstraction to concrete lazily in singleton mode.
-// The concrete is resolved only when the abstraction is resolved for the first time.
-func (thiz Container) NamedSingletonLazy(name string, resolver interface{}) error {
-	return thiz.bind(resolver, name, true, true)
-}
-
-// Bind binds an abstraction to concrete in transient mode.
-// It takes a resolver function that returns the concrete, and its return type matches the abstraction (interface).
-// The resolver function can have arguments of abstraction that have been declared in the Container already.
-func (thiz Container) Bind(resolver interface{}) error {
-	return thiz.bind(resolver, "", false, false)
-}
-
-// BindLazy binds an abstraction to concrete lazily in transient mode.
-// Normally the resolver will be called during registration, but that is skipped in lazy mode.
-// It takes a resolver function that returns the concrete, and its return type matches the abstraction (interface).
-// The resolver function can have arguments of abstraction that have been declared in the Container already.
-func (thiz Container) BindLazy(resolver interface{}) error {
-	return thiz.bind(resolver, "", false, true)
-}
-
-// NamedBind binds a named abstraction to concrete lazily in transient mode.
-func (thiz Container) NamedBind(name string, resolver interface{}) error {
-	return thiz.bind(resolver, name, false, false)
-}
-
-// NamedBindLazy binds a named abstraction to concrete in transient mode.
-// Normally the resolver will be called during registration, but that is skipped in lazy mode.
-func (thiz Container) NamedBindLazy(name string, resolver interface{}) error {
-	return thiz.bind(resolver, name, false, true)
-}
-
-// Call takes a receiver function with one or more arguments of the abstractions (interfaces).
-// It invokes the receiver function and passes the related concretes.
-func (thiz Container) Call(function interface{}) error {
-	receiverType := reflect.TypeOf(function)
-	if receiverType == nil || receiverType.Kind() != reflect.Func {
-		return errors.New("container: invalid function")
-	}
-
-	arguments, err := thiz.arguments(function)
+func (c *Container) invoke(fn interface{}, chain map[reflect.Type]interface{}) (interface{}, error) {
+	args, err := c.buildArgs(fn, chain)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	results := reflect.ValueOf(fn).Call(args)
+	if results == nil {
+		return nil, nil
 	}
 
-	result := reflect.ValueOf(function).Call(arguments)
+	inst := results[0].Interface()
 
-	if len(result) == 0 {
-		return nil
-	} else if len(result) == 1 && result[0].CanInterface() {
-		if result[0].IsNil() {
-			return nil
+	for i := 0; i < len(results); i++ {
+		if results[i].IsZero() {
+			continue
 		}
-		if err, ok := result[0].Interface().(error); ok {
+		if e, ok := results[i].Interface().(error); ok && e != nil {
+			return inst, e
+		}
+	}
+
+	if err := c.fill(inst, chain); err != nil {
+		return inst, err
+	}
+	return inst, nil
+}
+
+func (c *Container) buildArgs(fn interface{}, chain map[reflect.Type]interface{}) ([]reflect.Value, error) {
+	fnType := reflect.TypeOf(fn)
+	args := make([]reflect.Value, fnType.NumIn())
+	for i := 0; i < fnType.NumIn(); i++ {
+		dep := fnType.In(i)
+		if dep.Kind() != reflect.Interface {
+			if dep.Kind() != reflect.Ptr {
+				dep = reflect.PtrTo(dep)
+			}
+		}
+		inst, err := c.resolve(dep, "", chain)
+		if err != nil {
+			return nil, err
+		}
+		args[i] = reflect.ValueOf(inst)
+	}
+	return args, nil
+}
+
+func (c *Container) fill(target interface{}, chain map[reflect.Type]interface{}) error {
+	v := reflect.ValueOf(target)
+	if v.Kind() != reflect.Ptr || v.Elem().Kind() != reflect.Struct {
+		return nil
+	}
+	tptr := reflect.TypeOf(target)
+	if _, seen := chain[tptr]; seen {
+		return nil
+	}
+	chain[tptr] = target
+	defer delete(chain, tptr)
+
+	s := v.Elem()
+	rt := s.Type()
+	for i := 0; i < rt.NumField(); i++ {
+		field := rt.Field(i)
+		if field.Anonymous {
+			fType := field.Type
+			if fType.Kind() == reflect.Ptr {
+				if err := c.fill(s.Field(i).Interface(), chain); err != nil {
+					return err
+				}
+			} else if fType.Kind() == reflect.Struct {
+				ptr := reflect.NewAt(fType, unsafe.Pointer(s.Field(i).UnsafeAddr()))
+				if err := c.fill(ptr.Interface(), chain); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+
+		// Parse container tag
+		tag, ok := field.Tag.Lookup("container")
+		if !ok {
+			continue
+		}
+
+		// Parse tag options
+		var injectName string
+		if tag != "inject" {
+			// Check for named injection
+			if strings.HasPrefix(tag, "inject:") {
+				injectName = strings.TrimPrefix(tag, "inject:")
+			} else {
+				continue
+			}
+		}
+
+		fv := s.Field(i)
+		ftype := field.Type
+		var keyType reflect.Type
+		switch ftype.Kind() {
+		case reflect.Ptr:
+			keyType = ftype
+		case reflect.Struct:
+			keyType = reflect.PtrTo(ftype)
+		case reflect.Interface:
+			keyType = ftype
+		default:
+			continue
+		}
+
+		inst, err := c.resolve(keyType, injectName, chain)
+		if err != nil {
 			return err
 		}
-	}
 
-	return errors.New("container: receiver function signature is invalid")
-}
+		if err := c.fill(inst, chain); err != nil {
+			return err
+		}
 
-// Resolve takes an abstraction (reference of an interface type) and fills it with the related concrete.
-func (thiz Container) Resolve(abstraction interface{}) error {
-	return thiz.NamedResolve(abstraction, "")
-}
-
-// NamedResolve takes abstraction and its name and fills it with the related concrete.
-func (thiz Container) NamedResolve(abstraction interface{}, name string) error {
-	receiverType := reflect.TypeOf(abstraction)
-	if receiverType == nil {
-		return errors.New("container: invalid abstraction")
-	}
-
-	if receiverType.Kind() == reflect.Ptr {
-		elem := receiverType.Elem()
-
-		if concrete, exist := thiz[elem][name]; exist {
-			if instance, err := concrete.make(thiz); err == nil {
-				reflect.ValueOf(abstraction).Elem().Set(reflect.ValueOf(instance))
-				return nil
+		val := reflect.ValueOf(inst)
+		if ftype.Kind() == reflect.Interface {
+			ptr := unsafe.Pointer(fv.UnsafeAddr())
+			mutable := reflect.NewAt(ftype, ptr).Elem()
+			if mutable.IsValid() && mutable.CanSet() {
+				mutable.Set(val)
+			}
+		} else {
+			var toSet reflect.Value
+			if ftype.Kind() == reflect.Ptr {
+				toSet = val
 			} else {
-				return fmt.Errorf("container: encountered error while making concrete for: %s. Error encountered: %w", elem.String(), err)
+				toSet = val.Elem()
 			}
-		}
-
-		return errors.New("container: no concrete found for: " + elem.String())
-	}
-
-	return errors.New("container: invalid abstraction")
-}
-
-func (thiz Container) fill(structure interface{}, chainOfDependencies map[string]interface{}) error {
-	receiverType := reflect.TypeOf(structure)
-	if receiverType == nil {
-		return errors.New("container: invalid structure")
-	}
-
-	if receiverType.Kind() == reflect.Ptr {
-		elem := receiverType.Elem()
-		if elem.Kind() == reflect.Struct {
-			s := reflect.ValueOf(structure).Elem()
-			rtStruct := s.Type()
-
-			for i := 0; i < s.NumField(); i++ {
-				f := s.Field(i)
-
-				if t, exist := s.Type().Field(i).Tag.Lookup("container"); exist {
-					name := s.Type().Field(i).Name
-
-					if t != "inject" {
-						return fmt.Errorf("container: %v has an invalid struct tag", rtStruct.Field(i).Name)
-					}
-
-					if d, ok := chainOfDependencies[f.Type().String()]; ok {
-						//log.Log("").Warnf("container: circular dependency detected(struct: %s.%s, field: %s(%s)), "+
-						//	"avoid such dependencies, they have an extremely negative impact on the speed of the application.", rtStruct.PkgPath(), rtStruct.Name(), rtStruct.Field(i).Name, f.Type().String())
-						ptr := reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem()
-						ptr.Set(reflect.ValueOf(d))
-						continue
-					}
-
-					var concrete *binding
-					var ok bool
-					if concrete, ok = thiz[f.Type()][name]; !ok {
-						concrete = thiz[f.Type()][""]
-					}
-
-					var instance any
-					if concrete != nil {
-						var err error
-						instance, err = concrete.make(thiz)
-						if err != nil {
-							return err
-						}
-
-					} else {
-						fieldType := util.IndirectType(f.Type())
-						fieldValue := reflect.New(fieldType)
-
-						instance = fieldValue.Interface()
-					}
-
-					chainOfDependencies[receiverType.String()] = structure
-					err := thiz.fill(instance, chainOfDependencies)
-					if err != nil {
-						return fmt.Errorf("container: cannot make %v field", s.Type().Field(i).Name)
-					}
-
-					ptr := reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem()
-					ptr.Set(reflect.ValueOf(instance))
-				}
-			}
-
-			if initiator, ok := structure.(core.Initiator); ok {
-				initiator.Init()
-			}
-
-			return nil
-		}
-	}
-
-	return errors.New("container: invalid structure")
-}
-
-// Fill takes a struct and resolves the fields with the tag `container:"inject"`
-func (thiz Container) Make(structure interface{}, values ...map[string]interface{}) error {
-	receiverType := reflect.TypeOf(structure)
-	if receiverType == nil {
-		return errors.New("container: invalid structure")
-	}
-
-	if receiverType.Kind() == reflect.Ptr {
-		elem := receiverType.Elem()
-
-		if elem.Kind() == reflect.Struct {
-			s := reflect.ValueOf(structure).Elem()
-			if len(values) > 0 {
-				for fieldName, value := range values[0] {
-					f := s.FieldByName(fieldName)
-					ptr := reflect.NewAt(f.Type(), unsafe.Pointer(f.UnsafeAddr())).Elem()
-					ptr.Set(reflect.ValueOf(value))
+			if fv.CanSet() {
+				fv.Set(toSet)
+			} else {
+				ptr := reflect.NewAt(ftype, unsafe.Pointer(fv.UnsafeAddr())).Elem()
+				if ptr.IsValid() && ptr.CanSet() {
+					ptr.Set(toSet)
 				}
 			}
 		}
-
-		return thiz.fill(structure, map[string]any{receiverType.String(): structure})
 	}
 
-	return errors.New("container: invalid structure")
+	if initObj, ok := target.(core.Initiator); ok {
+		c.initMu.Lock()
+		initOnce, exists := c.initOnceMap[target]
+		if !exists {
+			initOnce = &sync.Once{}
+			c.initOnceMap[target] = initOnce
+		}
+		c.initMu.Unlock()
+
+		initOnce.Do(func() {
+			initObj.Init()
+		})
+	}
+
+	return nil
 }

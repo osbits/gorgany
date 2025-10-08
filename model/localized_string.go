@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"gorgany/app/core"
-	"gorgany/db/orm"
 )
 
 type LocalizedString struct {
@@ -14,21 +12,26 @@ type LocalizedString struct {
 	Data LocalizedStringEntries
 }
 
-func (thiz LocalizedString) TableName() string {
+func (thiz *LocalizedString) TableName() string {
 	return "localized_string"
 }
 
-func (thiz *LocalizedString) Query() core.IOrm[LocalizedString] {
-	return &orm.GorganyOrm[LocalizedString]{Model: thiz}
-}
+//
+//func (thiz *LocalizedString) Query() core.IOrm[LocalizedString] {
+//	return &orm.GorganyOrm[LocalizedString]{Model: thiz}
+//}
 
-func (thiz LocalizedString) Text(lang string) string {
+func (thiz *LocalizedString) Text(lang string) string {
 	localizedMap := thiz.Map()
 	return localizedMap[lang]
 }
 
 func (thiz LocalizedString) Map() map[string]string {
 	return thiz.Data
+}
+
+func (thiz LocalizedString) Value() (any, error) {
+	return thiz.Data, nil
 }
 
 type LocalizedStringEntries map[string]string

@@ -1,11 +1,11 @@
 package event
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	"gorgany/app/core"
-	"gorgany/internal"
-	"gorgany/service"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/err"
 	"reflect"
 	"sync"
 )
@@ -21,10 +21,6 @@ func NewEventBus() core.IEventBus {
 		waitGroup:   new(sync.WaitGroup),
 		subscribers: make(map[string]SubscriptionConfig),
 	}
-}
-
-func GetEventBus() core.IEventBus {
-	return internal.GetFrameworkRegistrar().GetEventBus()
 }
 
 type EventBus struct {
@@ -67,7 +63,7 @@ func (thiz *EventBus) SubscribeAsync(event string, subscriber core.ISubscriber) 
 	return nil
 }
 
-func (thiz *EventBus) Publish(event string, args ...map[string]any) error {
+func (thiz *EventBus) Publish(ctx context.Context, event string, args ...map[string]any) error {
 	subscriptionConfig, ok := thiz.subscribers[event]
 	if !ok {
 		return fmt.Errorf("event_bus: subscription `%s` not found", event)
@@ -75,20 +71,15 @@ func (thiz *EventBus) Publish(event string, args ...map[string]any) error {
 	subscriberRaw := subscriptionConfig.subscriber
 	rtSubscriber := reflect.TypeOf(subscriberRaw)
 
-	var err error
 	if rtSubscriber.Kind() != reflect.Ptr {
 		return errors.New("event_bus: Subscriber must be a pointer")
-	}
-	err = service.GetContainer().Make(subscriberRaw, args...)
-	if err != nil {
-		return err
 	}
 
 	subscriber := subscriberRaw.(core.ISubscriber)
 	if subscriptionConfig.async {
-		thiz.doPublishAsync(subscriber)
+		thiz.doPublishAsync(ctx, subscriber)
 	} else {
-		thiz.doPublish(subscriber)
+		thiz.doPublish(ctx, subscriber)
 	}
 
 	return nil
@@ -104,14 +95,20 @@ func (thiz *EventBus) WaitAsync() {
 	thiz.waitGroup.Wait()
 }
 
-func (thiz *EventBus) doPublish(subscriber core.ISubscriber) {
-	subscriber.Handle()
+func (thiz *EventBus) doPublish(ctx context.Context, subscriber core.ISubscriber) {
+	subscriber.Handle(ctx)
 }
 
-func (thiz *EventBus) doPublishAsync(subscriber core.ISubscriber) {
+func (thiz *EventBus) doPublishAsync(ctx context.Context, subscriber core.ISubscriber) {
 	thiz.waitGroup.Add(1)
 	go func() {
-		defer thiz.waitGroup.Done()
-		subscriber.Handle()
+		defer func() {
+			thiz.waitGroup.Done()
+
+			if r := recover(); r != nil {
+				err.HandleErrorWithStacktrace(r)
+			}
+		}()
+		subscriber.Handle(ctx)
 	}()
 }

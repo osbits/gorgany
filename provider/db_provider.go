@@ -2,54 +2,93 @@ package provider
 
 import (
 	"fmt"
+
+	dbCmd "git.qix.sx/gorgany/gorgany.git/command/db"
+	"git.qix.sx/gorgany/gorgany.git/db/migration"
+	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
+	"git.qix.sx/gorgany/gorgany.git/db/sql/gorm/postgres/v2"
+
 	"github.com/spf13/viper"
-	"gorgany/app/core"
-	postgres2 "gorgany/db/gorm/postgres"
-	"gorgany/internal"
-	"gorgany/log"
+
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/db"
 )
 
 type DbProvider struct {
+	connCtors []func() (string, dbCore.IDataSource)
 }
 
 func NewDbProvider() *DbProvider {
-	return &DbProvider{}
+	p := &DbProvider{}
+
+	p.connCtors = []func() (string, dbCore.IDataSource){
+		func() (string, dbCore.IDataSource) {
+			databases := viper.GetStringMap("databases")
+			for name, cfg := range databases {
+				conf, ok := cfg.(map[string]any)
+				if !ok {
+					panic(fmt.Errorf("incorrect config for database '%s'", name))
+				}
+				driver := core.DbType(conf["driver"].(string))
+				switch driver {
+				case core.GormPostgreSQL:
+					return name, v2.NewDataSource(conf)
+				case core.MongoDb:
+					// TODO: implement me
+				}
+			}
+			return "", nil
+		},
+	}
+	return p
 }
 
-func (thiz *DbProvider) InitProvider() {
+func (p *DbProvider) AddConnection(name string, ctor func() dbCore.IDataSource) {
+	p.connCtors = append(p.connCtors, func() (string, dbCore.IDataSource) {
+		return name, ctor()
+	})
+}
 
-	databases := viper.GetStringMap("databases")
-	for name, config := range databases {
-		configMap, ok := config.(map[string]any)
-		if !ok {
-			panic(fmt.Errorf("Incorrect config for '%s' database", name))
-		}
-		dbTypeRaw := configMap["driver"].(string)
-		if dbTypeRaw == "" {
-			panic(fmt.Errorf("Incorrect driver for '%s'", name))
-		}
-		dbType := core.DbType(dbTypeRaw)
+func (p *DbProvider) Register(c core.IContainer) {
+	// Register DBContext as singleton
+	c.SingletonLazy(func() core.IDBContext {
+		return &db.DBContext{}
+	})
 
-		conn := thiz.resolveDb(dbType, configMap)
+	// Register DataContext for migrations
+	c.SingletonLazy(func() core.IDataContext {
+		return &dbCmd.DataContext{}
+	})
+
+	for _, ctor := range p.connCtors {
+		name, conn := ctor()
+
 		if conn != nil {
-			thiz.RegisterDbConnection(name, conn)
-		} else {
-			log.Log("").Infof("Connection for %s did not initialize\n", dbType)
+			c.Invoke(func(db core.IDBContext) {
+				db.RegisterDataSource(name, conn)
+			})
 		}
+
+		// Register Session as transient
+		c.TransientLazy(func() (dbCore.ISession, error) {
+			return conn.NewSession()
+		})
+
+		// Register QueryExecutor as transient
+		c.TransientLazy(func(session dbCore.ISession) dbCore.IQueryExecutor {
+			return session.Executor()
+		})
+
+		// Register QueryBuilder as transient
+		c.TransientLazy(func(session dbCore.ISession) dbCore.IQueryBuilder {
+			return session.Query()
+		})
 	}
 }
 
-func (thiz *DbProvider) RegisterDbConnection(name string, connection core.IConnection) {
-	internal.GetFrameworkRegistrar().RegisterDbConnection(name, connection)
-	log.Log("").Infof("Connection for %s initialized", name)
-}
-
-func (thiz *DbProvider) resolveDb(kind core.DbType, config map[string]any) core.IConnection {
-	switch kind {
-	case core.GormPostgreSQL:
-		return postgres2.NewGormPostgresConnection(config)
-	case core.MongoDb:
-		//todo implement me
-	}
-	return nil
+func (p *DbProvider) Boot(c core.IContainer) {
+	// Register sessions migration
+	c.Invoke(func(dataContext core.IDataContext) {
+		dataContext.AddMigration(migration.NewSessionsMigration())
+	})
 }

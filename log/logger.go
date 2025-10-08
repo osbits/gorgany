@@ -1,22 +1,30 @@
 package log
 
 import (
-	"gorgany/app/core"
-	"gorgany/internal"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 )
 
-// Log returns the Logger instance that was registered with the specified key, you need to check if the Logger is not null
-func Log(loggerKey ...string) core.Logger {
-	key := ""
-	if len(loggerKey) > 0 {
-		key = loggerKey[0]
+var (
+	loggerFactory func(key string) core.Logger
+)
+
+func SetLoggerFactory(f func(key string) core.Logger) {
+	if loggerFactory != nil {
+		panic("log: factory already set")
+	}
+	loggerFactory = f
+}
+
+func Log(key ...string) core.Logger {
+	if loggerFactory == nil {
+		return &DefaultLogger{}
 	}
 
-	logger := internal.GetFrameworkRegistrar().GetLogger(key)
-	if logger == nil && key == "" {
-		defaultLogger := &DefaultLogger{}
-		internal.GetFrameworkRegistrar().RegisterLogger("", defaultLogger)
-		return defaultLogger
+	k := core.DefaultKeyInRegistrar
+
+	if len(key) > 0 {
+		k = key[0]
 	}
-	return logger
+
+	return loggerFactory(k)
 }

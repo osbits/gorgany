@@ -2,7 +2,7 @@ package model
 
 import (
 	"fmt"
-	"gorgany/app/core"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"strings"
 	"time"
 )
@@ -11,11 +11,11 @@ type FormDateTimeLocal struct {
 	Time time.Time
 }
 
-func (c *FormDateTimeLocal) MarshalJSON() ([]byte, error) {
+func (c FormDateTimeLocal) MarshalJSON() ([]byte, error) {
 	if c.Time.IsZero() {
 		return []byte("null"), nil
 	}
-	return []byte(fmt.Sprintf(`"%s"`, c.Time.Format(core.GlobalDateTimeFormat))), nil
+	return []byte(fmt.Sprintf(`"%s"`, c.Time.UTC().Format(core.GlobalDateTimeFormat))), nil
 }
 
 func (c *FormDateTimeLocal) UnmarshalJSON(b []byte) (err error) {
@@ -35,7 +35,7 @@ func (c FormDateLocal) MarshalJSON() ([]byte, error) {
 	if c.Time.IsZero() {
 		return []byte("null"), nil
 	}
-	return []byte(fmt.Sprintf(`"%s"`, c.Time.Format(core.GlobalDateFormat))), nil
+	return []byte(fmt.Sprintf(`"%s"`, c.Time.UTC().Format(core.GlobalDateFormat))), nil
 }
 
 func (c *FormDateLocal) UnmarshalJSON(b []byte) (err error) {
@@ -45,4 +45,12 @@ func (c *FormDateLocal) UnmarshalJSON(b []byte) (err error) {
 	}
 	c.Time, err = time.Parse(core.GlobalDateFormat, s)
 	return
+}
+
+type DateLocal struct {
+	FormDateLocal
+}
+
+type DateTimeLocal struct {
+	FormDateLocal
 }

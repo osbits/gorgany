@@ -1,10 +1,11 @@
 package provider
 
 import (
+	"fmt"
+
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/i18n"
 	"github.com/spf13/viper"
-	"gorgany/app/core"
-	"gorgany/i18n"
-	"gorgany/internal"
 )
 
 type I18nProvider struct{}
@@ -13,30 +14,43 @@ func NewI18nProvider() *I18nProvider {
 	return &I18nProvider{}
 }
 
-func (thiz *I18nProvider) InitProvider() {
-	availableLangs := viper.GetStringSlice("i18n.lang.available")
-	defaultLang := viper.GetString("i18n.lang.default")
-	availableLangs = append(availableLangs, defaultLang)
+func (p *I18nProvider) Register(c core.IContainer) {
+	c.SingletonLazy(func() core.Ii18nManager {
+		available := viper.GetStringSlice("i18n.lang.available")
+		defaultLang := viper.GetString("i18n.lang.default")
 
-	i18nConfigs := make(map[string]core.Ii18nConfig)
-	for _, lang := range availableLangs {
-		v := viper.New()
-		v.AddConfigPath("resource/i18n")
-		v.SetConfigName(lang)
-		err := v.ReadInConfig()
-		if err != nil {
-			panic(err)
+		foundDefault := false
+		for _, lang := range available {
+			if lang == defaultLang {
+				foundDefault = true
+				break
+			}
 		}
-		i18nConfigs[lang] = v
-	}
+		if !foundDefault {
+			available = append(available, defaultLang)
+		}
 
-	manager := &i18n.Manager{
-		Configs: i18nConfigs,
-	}
+		configs := make(map[string]core.Ii18nConfig, len(available))
+		for _, lang := range available {
+			cfg := viper.New()
+			cfg.AddConfigPath("resource/i18n")
+			cfg.SetConfigName(lang)
+			if err := cfg.ReadInConfig(); err != nil {
+				panic(fmt.Errorf("i18n: failed to read config for '%s': %w", lang, err))
+			}
+			configs[lang] = cfg
+		}
 
-	thiz.SetManager(manager)
+		mgr := i18n.Manager{
+			Configs: configs,
+		}
+
+		return mgr
+	})
 }
 
-func (thiz I18nProvider) SetManager(manager core.Ii18nManager) {
-	internal.GetFrameworkRegistrar().SetI18nManager(manager)
+func (p *I18nProvider) Boot(c core.IContainer) {
+	c.Invoke(func(m core.Ii18nManager) {
+		i18n.SetManager(m)
+	})
 }
