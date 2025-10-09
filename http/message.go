@@ -6,9 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	err2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/util"
-	"github.com/google/uuid"
 	"io"
 	"mime/multipart"
 	"net"
@@ -18,6 +15,10 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+
+	err2 "git.qix.sx/gorgany/gorgany.git/err"
+	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/google/uuid"
 
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
@@ -518,7 +519,9 @@ func (m *Message) RedirectWithFlash(urlStr string, code int, data map[string]int
 	if err != nil {
 		err2.HandleError(err)
 	} else {
-		m.Session().Get().SetItem(core.OneTimeSessionAttributeKey, string(buf))
+		if session := m.Session().Get(); session != nil {
+			session.SetItem(core.OneTimeSessionAttributeKey, string(buf))
+		}
 	}
 
 	m.Response().Redirect(urlStr, code)

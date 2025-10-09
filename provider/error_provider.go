@@ -19,7 +19,6 @@ func (p *ErrorProvider) AddHandler(errName string, handler core.ErrorHandler) {
 
 func (p *ErrorProvider) Register(c core.IContainer) {}
 
-func (p *ErrorProvider) Boot(c core.IContainer) error {
+func (p *ErrorProvider) Boot(c core.IContainer) {
 	http.SetErrorHandlers(p.handlers)
-	return nil
 }

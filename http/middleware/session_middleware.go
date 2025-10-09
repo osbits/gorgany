@@ -2,9 +2,10 @@ package middleware
 
 import (
 	"encoding/json"
-	"git.qix.sx/gorgany/gorgany.git/auth"
 	"net/http"
 	"time"
+
+	"git.qix.sx/gorgany/gorgany.git/auth"
 
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	err2 "git.qix.sx/gorgany/gorgany.git/err"
@@ -75,6 +76,11 @@ func (thiz SessionMiddleware) Handle(next func(core.HttpMessage)) func(core.Http
 		newSess, err := strat.NewSessionWithoutUser(ctx)
 		if err != nil {
 			err2.HandleError(err)
+			next(message)
+			return
+		}
+
+		if newSess == nil {
 			next(message)
 			return
 		}
