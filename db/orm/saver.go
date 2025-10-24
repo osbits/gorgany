@@ -9,7 +9,6 @@ import (
 
 	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
 	v2 "git.qix.sx/gorgany/gorgany.git/db/sql/gorm/postgres/v2"
-	"git.qix.sx/gorgany/gorgany.git/util"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 )
@@ -301,10 +300,7 @@ func (o *ORM[T]) updateEntity(entity T) error {
 	// Get table name
 	tableName := meta.TableName
 	if tableName == "" {
-		rEntity := reflect.ValueOf(entity)
-		indirectEntityType := util.IndirectType(rEntity.Type())
-		namer := schema.NamingStrategy{}
-		tableName = namer.TableName(indirectEntityType.Name())
+		tableName = GetTableName(entity)
 		meta.TableName = tableName
 	}
 

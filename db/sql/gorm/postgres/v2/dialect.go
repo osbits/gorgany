@@ -170,7 +170,7 @@ func (d *PostgresDialect) FormatQuery(q *dbCore.Query) (string, []interface{}) {
 		// Handle DELETE queries
 		sql, args = d.formatDelete(q)
 	} else {
-		// Handle SELECT queries (existing code)
+		// Handle SELECT queries
 		sql, args = d.formatSelect(q)
 	}
 

@@ -418,8 +418,7 @@ func (o *ORM[T]) AllByQuery(qb dbCore.IQueryBuilder) ([]T, error) {
 	if entitySchema != nil {
 		tableName = entitySchema.Table
 	} else {
-		namer := schema.NamingStrategy{}
-		tableName = namer.TableName(indirectEntityType.Name())
+		tableName = GetTableName(indirectEntityType)
 	}
 
 	qb = qb.From(tableName)
@@ -447,6 +446,7 @@ func (o *ORM[T]) AllByQuery(qb dbCore.IQueryBuilder) ([]T, error) {
 				LastQuery:     sql,
 				LastArgs:      args,
 				QueryResult:   &queryResult,
+				TableName:     tableName,
 			}
 			entities[i].SetMeta(meta)
 		} else {
