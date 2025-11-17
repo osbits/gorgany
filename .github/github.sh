@@ -139,6 +139,9 @@ else
   git ls-files -z -- ':(glob)**' ':(glob,exclude).*/**' ':(glob,exclude)**/.*/**' \
     | xargs -0 perl -0777 -pi -e 's/git\.qix\.sx\/gorgany\//github\.com\/osbits\//g'
 
+  git ls-files -z -- ':(glob)**' ':(glob,exclude).*/**' ':(glob,exclude)**/.*/**' \
+    | xargs -0 perl -0777 -pi -e 's/github\.com\/osbits\/gorgany\.git\//github\.com\/osbits\/gorgany\//g'
+
   if ! git diff --quiet; then
     git add -A
     git commit -m "Replace ${OLD_BASE} with ${NEW_BASE} across repository"
