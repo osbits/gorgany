@@ -127,20 +127,6 @@ if [ -n "$VERSION_INPUT" ]; then
   maybe_stash
   update_framework_version "$VERSION_TAG"
 
-  # Create annotated tag if missing
-  if git rev-parse -q --verify "refs/tags/${VERSION_TAG}" >/dev/null; then
-    echo "Tag ${VERSION_TAG} already exists locally."
-  else
-    echo "Creating tag ${VERSION_TAG}"
-    git tag -a "$VERSION_TAG" -m "Release ${VERSION_TAG}"
-  fi
-
-  echo "Pushing branch '$CURRENT_BRANCH' to '${REMOTE_NAME}' ..."
-  git push "${REMOTE_NAME}" "$CURRENT_BRANCH:$CURRENT_BRANCH"
-
-  echo "Pushing tag ${VERSION_TAG} to '${REMOTE_NAME}' ..."
-  git push "${REMOTE_NAME}" "$VERSION_TAG"
-
   echo "Done (version mode)."
   exit 0
 fi
@@ -217,6 +203,14 @@ else
   else
     echo "No replacements were necessary."
   fi
+fi
+
+# Create annotated tag if missing
+if git rev-parse -q --verify "refs/tags/${VERSION_TAG}" >/dev/null; then
+  echo "Tag ${VERSION_TAG} already exists locally."
+else
+  echo "Creating tag ${VERSION_TAG}"
+  git tag -a "$VERSION_TAG" -m "Release ${VERSION_TAG}"
 fi
 
 # Push temp branch to remote develop, rewriting history and tags
