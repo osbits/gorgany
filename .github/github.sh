@@ -128,7 +128,6 @@ if [ -n "$VERSION_INPUT" ]; then
   update_framework_version "$VERSION_TAG"
 
   echo "Done (version mode)."
-  exit 0
 fi
 
 # Rewrite mode (no args): original behavior
