@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# Rewrite commit author/committer to osbits, replace occurrences in files,
-# and perform the workflow on a temporary branch which is then force-pushed to github/develop.
-# WARNING: This rewrites history. Ensure you have backups and understand the implications.
+# GitHub push helper.
+# Two modes:
+#  1) Version mode: `./.github/push.sh v1.2.3`
+#     - Validate version, update `constants.go` FrameworkVersion to 1.2.3,
+#       commit the bump if changed, create annotated tag v1.2.3, push current
+#       branch to `github`, then push only that tag.
+#  2) Rewrite mode (default when no args):
+#     - Rewrite commit author/committer to osbits, replace old host strings,
+#       push rewritten history to github/develop with tags. WARNING: rewrites history.
 
 set -euo pipefail
 
@@ -48,6 +54,23 @@ fi
   export GIT_COMMITTER_EMAIL="${COMMITTER_EMAIL}"
 } >/dev/null 2>&1 || true
 
+# Common helpers
+maybe_stash() {
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    if [ "$BYPASS_DIRTY" = "1" ]; then
+      echo "Working tree is dirty but BYPASS_DIRTY=1 set; continuing without stashing."
+    elif [ "$AUTO_STASH" = "1" ]; then
+      echo "Working tree is dirty; AUTO_STASH=1 set. Stashing changes..."
+      git stash push -u -k -m "auto-stash-$(date +%Y%m%d%H%M%S)" || true
+      AUTO_STASH_STATE=1
+    else
+      echo "Your working tree has uncommitted changes. Please commit or stash them before running this script." >&2
+      echo "Alternatively, set AUTO_STASH=1 to stash automatically, or BYPASS_DIRTY=1 to proceed at your own risk." >&2
+      exit 1
+    fi
+  fi
+}
+
 restore_stash() {
   if [ "${AUTO_STASH_STATE:-0}" = "1" ]; then
     echo "Restoring working tree from auto-stash..."
@@ -63,21 +86,66 @@ restore_stash() {
 }
 trap restore_stash EXIT
 
-# Ensure working tree is clean to avoid accidental loss, unless overridden
-if ! git diff --quiet || ! git diff --cached --quiet; then
-  if [ "$BYPASS_DIRTY" = "1" ]; then
-    echo "Working tree is dirty but BYPASS_DIRTY=1 set; continuing without stashing."
-  elif [ "$AUTO_STASH" = "1" ]; then
-    echo "Working tree is dirty; AUTO_STASH=1 set. Stashing changes..."
-    git stash push -u -k -m "auto-stash-$(date +%Y%m%d%H%M%S)" || true
-    AUTO_STASH_STATE=1
-  else
-    echo "Your working tree has uncommitted changes. Please commit or stash them before running this script." >&2
-    echo "Alternatively, set AUTO_STASH=1 to stash automatically, or BYPASS_DIRTY=1 to proceed at your own risk." >&2
+normalize_version() {
+  local v="$1"
+  [[ "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  printf '%s' "$v"
+}
+
+update_framework_version() {
+  local vtag="$1"      # e.g., v1.2.3
+  local v_no_v="${vtag#v}"
+  local file="constants.go"
+  if [ ! -f "$file" ]; then
+    echo "constants.go not found at $file" >&2
     exit 1
   fi
+  perl -0777 -pi -e "s/const[[:space:]]+FrameworkVersion[[:space:]]*=\s*\"[^\"]*\"/const FrameworkVersion = \"${v_no_v}\"/" "$file"
+  if ! git diff --quiet -- "$file"; then
+    git add "$file"
+    git commit -m "bump: FrameworkVersion ${v_no_v} (tag ${vtag})"
+  else
+    echo "FrameworkVersion already set to ${v_no_v}; no commit created."
+  fi
+}
+
+VERSION_INPUT="${1:-}"
+if [ -n "$VERSION_INPUT" ]; then
+  # Version mode: bump + single-tag push, no history rewrite, no --tags
+  if ! VERSION_TAG=$(normalize_version "$VERSION_INPUT"); then
+    echo "Invalid version format: '$VERSION_INPUT'. Expected like v1.2.3" >&2
+    exit 1
+  fi
+
+  # Ensure on a branch, not detached
+  CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+  if [ "$CURRENT_BRANCH" = "HEAD" ]; then
+    echo "Detached HEAD detected. Please checkout a branch before pushing." >&2
+    exit 1
+  fi
+
+  maybe_stash
+  update_framework_version "$VERSION_TAG"
+
+  # Create annotated tag if missing
+  if git rev-parse -q --verify "refs/tags/${VERSION_TAG}" >/dev/null; then
+    echo "Tag ${VERSION_TAG} already exists locally."
+  else
+    echo "Creating tag ${VERSION_TAG}"
+    git tag -a "$VERSION_TAG" -m "Release ${VERSION_TAG}"
+  fi
+
+  echo "Pushing branch '$CURRENT_BRANCH' to '${REMOTE_NAME}' ..."
+  git push "${REMOTE_NAME}" "$CURRENT_BRANCH:$CURRENT_BRANCH"
+
+  echo "Pushing tag ${VERSION_TAG} to '${REMOTE_NAME}' ..."
+  git push "${REMOTE_NAME}" "$VERSION_TAG"
+
+  echo "Done (version mode)."
+  exit 0
 fi
 
+# Rewrite mode (no args): original behavior
 original_branch=$(git rev-parse --abbrev-ref HEAD)
 
 # Ensure base branch exists locally

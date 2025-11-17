@@ -66,11 +66,11 @@ if [ -n "$GITHUB_REPO_ENV" ]; then
 fi
 
 # Default command to run inside the container: explicitly run the internal workflow
-# We do not rely on the container entrypoint to auto-discover scripts.
+# Always invoke the internal script and pass through any arguments (e.g., version tag)
 if [ "$#" -gt 0 ]; then
-  CMD=("$@")
+  CMD=(./.github/github.sh "$@")
 else
-  CMD=(bash -lc "./.github/github.sh")
+  CMD=(./.github/github.sh)
 fi
 
 echo "Running container to perform GitHub push via Docker..."
