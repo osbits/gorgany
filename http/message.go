@@ -16,16 +16,16 @@ import (
 	"regexp"
 	"strings"
 
-	err2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/util"
+	err2 "github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/util"
 	"github.com/google/uuid"
 
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/decoder"
-	"git.qix.sx/gorgany/gorgany.git/model"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/decoder"
+	"github.com/osbits/gorgany/model"
 )
 
 type ResponseWriterWrapper struct {

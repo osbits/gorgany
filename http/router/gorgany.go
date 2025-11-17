@@ -3,16 +3,16 @@ package router
 import (
 	"context"
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/util"
 	"io"
 	"net/http"
 	"reflect"
 	"regexp"
 	"strings"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	grghttp "git.qix.sx/gorgany/gorgany.git/http"
+	"github.com/osbits/gorgany/app/core"
+	grghttp "github.com/osbits/gorgany/http"
 	"github.com/go-chi/chi"
 )
 

@@ -9,9 +9,9 @@ import (
 
 	"fmt"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/db/orm"
-	grgErr "git.qix.sx/gorgany/gorgany.git/err"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/db/orm"
+	grgErr "github.com/osbits/gorgany/err"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 )

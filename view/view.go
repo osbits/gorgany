@@ -2,10 +2,10 @@ package view
 
 import (
 	"context"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/i18n"
-	"git.qix.sx/gorgany/gorgany.git/service"
-	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/i18n"
+	"github.com/osbits/gorgany/service"
+	"github.com/osbits/gorgany/util"
 	"github.com/go-chi/chi"
 	"html/template"
 	"io"
