@@ -28,6 +28,26 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit 1
 fi
 
+# Configure identity for commits inside containerized runs (no global config required)
+# Set repo-local identity to avoid "Author identity unknown" during the replacement commit.
+# Also export env vars as a safeguard so any child git process sees correct identity.
+{
+  git config user.name "${AUTHOR_NAME}" || true
+  git config user.email "${AUTHOR_EMAIL}" || true
+  # Some environments require explicit committer identity
+  git config committer.name "${COMMITTER_NAME}" || true
+  git config committer.email "${COMMITTER_EMAIL}" || true
+  # Prefer repo config only
+  git config user.useConfigOnly true || true
+  # In root-in-container scenarios, mark this directory as safe to avoid ownership warnings
+  git config --global --add safe.directory "$(pwd)" 2>/dev/null || true
+
+  export GIT_AUTHOR_NAME="${AUTHOR_NAME}"
+  export GIT_AUTHOR_EMAIL="${AUTHOR_EMAIL}"
+  export GIT_COMMITTER_NAME="${COMMITTER_NAME}"
+  export GIT_COMMITTER_EMAIL="${COMMITTER_EMAIL}"
+} >/dev/null 2>&1 || true
+
 restore_stash() {
   if [ "${AUTO_STASH_STATE:-0}" = "1" ]; then
     echo "Restoring working tree from auto-stash..."
@@ -114,7 +134,10 @@ if [ -z "$(git ls-files)" ]; then
 else
   # Use Perl for portable in-place replacement across platforms (macOS/Linux)
   # Run on all tracked files safely, handling special characters via NUL separation
-  git ls-files -z | xargs -0 perl -0777 -pi -e 's/git\.qix\.sx\/gorgany\//github\.com\/osbits\//g'
+  # Exclude any files that are inside directories whose names start with a dot (e.g., .git, .github, .cache) at any depth.
+  # Keep dotfiles themselves (like .env) eligible for replacement.
+  git ls-files -z -- ':(glob)**' ':(glob,exclude).*/**' ':(glob,exclude)**/.*/**' \
+    | xargs -0 perl -0777 -pi -e 's/git\.qix\.sx\/gorgany\//github\.com\/osbits\//g'
 
   if ! git diff --quiet; then
     git add -A
