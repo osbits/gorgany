@@ -2,7 +2,7 @@ package gorgany
 
 const FrameworkGit = "git.qix.sx/gorgany/gorgany.git"
 
-const FrameworkVersion = "1.2.3"
+const FrameworkVersion = "1.2.4"
 
 type ExecType string
 
