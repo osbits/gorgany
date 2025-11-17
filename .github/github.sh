@@ -19,16 +19,43 @@ BASE_BRANCH="develop"
 REMOTE_NAME="github"
 TEMP_BRANCH_BASE="build"
 
+AUTO_STASH="${AUTO_STASH:-0}"
+BYPASS_DIRTY="${BYPASS_DIRTY:-0}"
+
 # Ensure we're inside a git repository
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "This script must be run inside a Git repository." >&2
   exit 1
 fi
 
-# Ensure working tree is clean to avoid accidental loss
+restore_stash() {
+  if [ "${AUTO_STASH_STATE:-0}" = "1" ]; then
+    echo "Restoring working tree from auto-stash..."
+    # Try pop first; if it fails (conflicts), attempt apply then drop
+    if git stash pop -q >/dev/null 2>&1; then
+      echo "Auto-stash restored."
+    else
+      echo "Auto-stash pop had issues; attempting apply..." >&2
+      git stash apply -q || true
+      git stash drop -q || true
+    fi
+  fi
+}
+trap restore_stash EXIT
+
+# Ensure working tree is clean to avoid accidental loss, unless overridden
 if ! git diff --quiet || ! git diff --cached --quiet; then
-  echo "Your working tree has uncommitted changes. Please commit or stash them before running this script." >&2
-  exit 1
+  if [ "$BYPASS_DIRTY" = "1" ]; then
+    echo "Working tree is dirty but BYPASS_DIRTY=1 set; continuing without stashing."
+  elif [ "$AUTO_STASH" = "1" ]; then
+    echo "Working tree is dirty; AUTO_STASH=1 set. Stashing changes..."
+    git stash push -u -k -m "auto-stash-$(date +%Y%m%d%H%M%S)" || true
+    AUTO_STASH_STATE=1
+  else
+    echo "Your working tree has uncommitted changes. Please commit or stash them before running this script." >&2
+    echo "Alternatively, set AUTO_STASH=1 to stash automatically, or BYPASS_DIRTY=1 to proceed at your own risk." >&2
+    exit 1
+  fi
 fi
 
 original_branch=$(git rev-parse --abbrev-ref HEAD)
