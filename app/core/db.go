@@ -2,7 +2,7 @@ package core
 
 import (
 	"context"
-	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
+	dbCore "github.com/osbits/gorgany/db/sql/core"
 
 	"gorm.io/gorm"
 )

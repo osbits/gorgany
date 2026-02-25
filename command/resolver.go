@@ -2,8 +2,8 @@ package command
 
 import (
 	"flag"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/log"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/log"
 	goValidator "github.com/go-playground/validator/v10"
 	"os"
 	"reflect"

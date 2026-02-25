@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	b64 "encoding/base64"
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/osbits/gorgany/app/core"
 	str "strings"
 )
 

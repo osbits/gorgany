@@ -1,7 +1,7 @@
 package log
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/osbits/gorgany/app/core"
 )
 
 var (

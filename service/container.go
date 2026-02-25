@@ -8,7 +8,7 @@ import (
 	"sync"
 	"unsafe"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/osbits/gorgany/app/core"
 )
 
 var emergencyContainerFactory func() core.IEmergencyContainer

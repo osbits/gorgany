@@ -8,9 +8,9 @@ import (
 	"net/url"
 	"testing"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/decoder"
-	error2 "git.qix.sx/gorgany/gorgany.git/err"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/decoder"
+	error2 "github.com/osbits/gorgany/err"
 )
 
 // QueryTestStruct represents a simple struct for testing basic query parsing

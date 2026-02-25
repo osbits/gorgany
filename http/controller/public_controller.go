@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/http/router"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/http/router"
 )
 
 func NewPublicController() *PublicController {
