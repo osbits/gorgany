@@ -2,10 +2,10 @@ package auth
 
 import (
 	"context"
-	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/osbits/gorgany/util"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	err2 "git.qix.sx/gorgany/gorgany.git/err"
+	"github.com/osbits/gorgany/app/core"
+	err2 "github.com/osbits/gorgany/err"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/spf13/viper"
 )

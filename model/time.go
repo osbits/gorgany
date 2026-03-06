@@ -2,7 +2,7 @@ package model
 
 import (
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/osbits/gorgany/app/core"
 	"strings"
 	"time"
 )

@@ -3,12 +3,12 @@ package provider
 import (
 	"time"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/auth"
-	"git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/model"
-	"git.qix.sx/gorgany/gorgany.git/service"
-	"git.qix.sx/gorgany/gorgany.git/validator"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/auth"
+	"github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/model"
+	"github.com/osbits/gorgany/service"
+	"github.com/osbits/gorgany/validator"
 	"github.com/spf13/viper"
 )
 

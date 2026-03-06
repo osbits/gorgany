@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"strings"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/util"
 
 	"github.com/iancoleman/strcase"
 )
