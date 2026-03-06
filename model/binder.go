@@ -253,15 +253,5 @@ func (thiz FieldBinder) matchFieldName(structFieldName, requestedField string) b
 		return true
 	}
 
-	// 4. Handle common field name variations
-	// Convert PascalCase to lowercase for comparison
-	structLower := strings.ToLower(structFieldName)
-	requestedLower := strings.ToLower(requestedField)
-
-	// Remove common prefixes/suffixes and compare
-	if strings.HasSuffix(structLower, requestedLower) || strings.HasSuffix(requestedLower, structLower) {
-		return true
-	}
-
 	return false
 }
