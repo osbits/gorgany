@@ -3,13 +3,14 @@ package router
 import (
 	"context"
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/util"
 	"io"
 	"net/http"
 	"reflect"
 	"regexp"
 	"strings"
+
+	"git.qix.sx/gorgany/gorgany.git/err"
+	"git.qix.sx/gorgany/gorgany.git/util"
 
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	grghttp "git.qix.sx/gorgany/gorgany.git/http"
@@ -264,12 +265,17 @@ func (thiz *ChiRouterAdapter) replaceRouteSegments(routePattern string, params m
 
 	result := r.ReplaceAllStringFunc(routePattern, func(match string) string {
 		index := strings.IndexByte(match, ':')
+		defaultValue := ""
 		if index == -1 {
 			index = len(match) - 1
+		} else {
+			defaultValue = match[index+1 : len(match)-1]
 		}
 		paramName := match[1:index]
 		if value, ok := params[paramName]; ok {
 			return fmt.Sprintf("%v", value)
+		} else if defaultValue != "" {
+			return defaultValue
 		}
 		panic(fmt.Errorf("Expected parameter '%s' for pattern '%s' was not found", paramName, routePattern))
 	})
@@ -284,8 +290,11 @@ func (thiz *ChiRouterAdapter) replaceRouteSegmentsSequence(routePattern string, 
 	result := r.ReplaceAllStringFunc(routePattern, func(match string) string {
 		paramIndex++
 		index := strings.IndexByte(match, ':')
+		defaultValue := ""
 		if index == -1 {
 			index = len(match) - 1
+		} else {
+			defaultValue = match[index+1 : len(match)-1]
 		}
 		paramName := match[1:index]
 		if len(params) < paramIndex {
@@ -293,6 +302,11 @@ func (thiz *ChiRouterAdapter) replaceRouteSegmentsSequence(routePattern string, 
 		}
 
 		p := params[paramIndex]
+		if p == nil && defaultValue != "" {
+			return defaultValue
+		} else if p == nil {
+			panic(fmt.Errorf("Expected parameter '%s' for pattern '%s' was not found", paramName, routePattern))
+		}
 		return fmt.Sprintf("%v", p)
 	})
 
