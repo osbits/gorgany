@@ -1,6 +1,6 @@
 package gorgany
 
-const FrameworkGit = "git.qix.sx/gorgany/gorgany.git"
+const FrameworkGit = "github.com/osbits/gorgany"
 
 const FrameworkVersion = "1.2.8"
 

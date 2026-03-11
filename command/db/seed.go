@@ -2,9 +2,9 @@ package db
 
 import (
 	"context"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/db"
-	"git.qix.sx/gorgany/gorgany.git/log"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/db"
+	"github.com/osbits/gorgany/log"
 	"gorm.io/gorm"
 	"time"
 )

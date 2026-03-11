@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/osbits/gorgany/app/core"
 )
 
 // ExampleUser represents a user domain that implements Authenticable

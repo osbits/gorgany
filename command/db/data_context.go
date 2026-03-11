@@ -1,6 +1,6 @@
 package db
 
-import "git.qix.sx/gorgany/gorgany.git/app/core"
+import "github.com/osbits/gorgany/app/core"
 
 type DataContext struct {
 	migrations []core.IMigration

@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
-	v2 "git.qix.sx/gorgany/gorgany.git/db/sql/gorm/postgres/v2"
-	err2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/service/cache"
+	"github.com/osbits/gorgany/app/core"
+	dbCore "github.com/osbits/gorgany/db/sql/core"
+	v2 "github.com/osbits/gorgany/db/sql/gorm/postgres/v2"
+	err2 "github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/service/cache"
 	"gorm.io/gorm/schema"
 )
 

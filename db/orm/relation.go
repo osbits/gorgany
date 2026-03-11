@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
-	v2 "git.qix.sx/gorgany/gorgany.git/db/sql/gorm/postgres/v2"
+	dbCore "github.com/osbits/gorgany/db/sql/core"
+	v2 "github.com/osbits/gorgany/db/sql/gorm/postgres/v2"
 	"gorm.io/gorm/schema"
 )
 

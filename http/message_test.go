@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
+	dbCore "github.com/osbits/gorgany/db/sql/core"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -16,9 +16,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/db"
-	"git.qix.sx/gorgany/gorgany.git/model"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/db"
+	"github.com/osbits/gorgany/model"
 )
 
 // Mock implementations
