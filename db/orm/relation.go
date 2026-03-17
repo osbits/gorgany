@@ -126,20 +126,125 @@ func (o *ORM[T]) SaveRelations(entity T) error {
 				}
 			}
 		case schema.Many2Many:
-			// For now, just save related entities (not join table)
-			if relField.Kind() == reflect.Slice {
-				for i := 0; i < relField.Len(); i++ {
-					item := relField.Index(i)
-					if item.Kind() == reflect.Ptr && !item.IsNil() {
-						relEntity, ok := item.Interface().(EntityWithMeta)
-						if ok {
-							orm := New[EntityWithMeta](o.db)
-							if err := orm.Save(relEntity); err != nil {
-								return err
-							}
-						}
-					}
+			if relField.Kind() != reflect.Slice {
+				continue
+			}
+
+			// Resolve join table info
+			if rel.JoinTable == nil || len(rel.References) == 0 {
+				continue
+			}
+			joinTable := rel.JoinTable.Name
+
+			var ownerFKCol, relatedFKCol string
+			var ownerPKField string
+			for _, ref := range rel.References {
+				if ref.OwnPrimaryKey {
+					ownerFKCol = ref.ForeignKey.DBName
+					ownerPKField = ref.PrimaryKey.Name
+				} else {
+					relatedFKCol = ref.ForeignKey.DBName
 				}
+			}
+			if ownerFKCol == "" || relatedFKCol == "" {
+				continue
+			}
+
+			// Get the owner's PK value once
+			ownerPKValue := entityValue.FieldByName(ownerPKField)
+			if !ownerPKValue.IsValid() || isZeroValue(ownerPKValue.Interface()) {
+				continue
+			}
+
+			// Collect PKs of related entities still present in the slice
+			var keptRelatedPKs []interface{}
+
+			for i := 0; i < relField.Len(); i++ {
+				item := relField.Index(i)
+
+				// Normalise: accept both *T and T elements
+				var relEntity EntityWithMeta
+				switch item.Kind() {
+				case reflect.Ptr:
+					if item.IsNil() {
+						continue
+					}
+					var ok bool
+					relEntity, ok = item.Interface().(EntityWithMeta)
+					if !ok {
+						continue
+					}
+				case reflect.Struct:
+					// Value element: get an addressable copy so we can call pointer receivers
+					ptr := reflect.New(item.Type())
+					ptr.Elem().Set(item)
+					var ok bool
+					relEntity, ok = ptr.Interface().(EntityWithMeta)
+					if !ok {
+						continue
+					}
+				default:
+					continue
+				}
+
+				// Save the related entity
+				relOrm := New[EntityWithMeta](o.db)
+				if err := relOrm.Save(relEntity); err != nil {
+					return err
+				}
+
+				// Resolve related entity's PK via schema
+				relEntityValue := reflect.ValueOf(relEntity)
+				if relEntityValue.Kind() == reflect.Ptr {
+					relEntityValue = relEntityValue.Elem()
+				}
+				relSchemaCache := &sync.Map{}
+				relSchema, err := schema.Parse(relEntity, relSchemaCache, schema.NamingStrategy{})
+				if err != nil || len(relSchema.PrimaryFields) == 0 {
+					continue
+				}
+				relPKField := relEntityValue.FieldByName(relSchema.PrimaryFields[0].Name)
+				if !relPKField.IsValid() || isZeroValue(relPKField.Interface()) {
+					continue
+				}
+
+				relPK := relPKField.Interface()
+				keptRelatedPKs = append(keptRelatedPKs, relPK)
+
+				// Upsert a row in the join table (ignore if already exists)
+				joinBuilder := v2.NewBuilder().
+					Insert(joinTable).
+					Columns(ownerFKCol, relatedFKCol).
+					Values(ownerPKValue.Interface(), relPK).
+					OnConflict(ownerFKCol, relatedFKCol).
+					DoNothing()
+
+				queryRes := o.db.Executor().Exec(context.Background(), joinBuilder)
+				if queryRes.Error != nil {
+					return fmt.Errorf("failed to upsert join table %s: %w", joinTable, queryRes.Error)
+				}
+			}
+
+			// Delete stale join rows: those belonging to this owner but not in keptRelatedPKs
+			deleteBuilder := v2.NewBuilder().
+				Delete(joinTable).
+				Where(&dbCore.BinaryCondition{
+					Left:     ownerFKCol,
+					Operator: "=",
+					Right:    ownerPKValue.Interface(),
+				})
+			if len(keptRelatedPKs) > 0 {
+				deleteBuilder = deleteBuilder.Where(&dbCore.InCondition{
+					Field:  relatedFKCol,
+					Values: keptRelatedPKs,
+					Not:    true,
+				})
+			}
+			// If keptRelatedPKs is empty, no NOT IN clause is added and all rows for
+			// this owner are removed — which is the correct behaviour for a cleared slice.
+			deleteRes := o.db.Executor().Exec(context.Background(), deleteBuilder)
+			if deleteRes.Error != nil {
+				return fmt.Errorf("failed to clean up join table %s: %w", joinTable, deleteRes.Error)
 			}
 		}
 	}
