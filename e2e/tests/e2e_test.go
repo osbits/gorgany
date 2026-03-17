@@ -303,6 +303,10 @@ func baseURL() string {
 func waitForServer(t *testing.T) {
 	t.Helper()
 
+	if os.Getenv("E2E_BASE_URL") == "" {
+		t.Skip("skipping docker e2e test outside configured E2E environment")
+	}
+
 	deadline := time.Now().Add(45 * time.Second)
 	for time.Now().Before(deadline) {
 		resp, err := http.Get(baseURL() + "/health")

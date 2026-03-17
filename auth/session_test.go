@@ -44,11 +44,12 @@ func (m *MockSessionRepository) DeleteExpired() error {
 func TestDbSessionStorage_GetSessionById(t *testing.T) {
 	// Create mock repository
 	mockRepo := &MockSessionRepository{}
-	
+
 	// Create storage with mock repository
+	mediator := NewDbSessionMediator(mockRepo)
 	storage := &DbSessionStorage{
 		sessionLifetime: 30 * time.Minute,
-		sessionRepo:     mockRepo,
+		mediator:        mediator,
 	}
 
 	// Test case 1: Session found and not expired
@@ -64,7 +65,7 @@ func TestDbSessionStorage_GetSessionById(t *testing.T) {
 	}
 
 	mockRepo.On("FindById", "test-session-1").Return(session, nil)
-	
+
 	result := storage.GetSessionById("test-session-1")
 	assert.NotNil(t, result)
 	assert.Equal(t, "test-session-1", result.GetId())
@@ -73,7 +74,7 @@ func TestDbSessionStorage_GetSessionById(t *testing.T) {
 
 	// Test case 2: Session not found
 	mockRepo.On("FindById", "non-existent").Return(nil, assert.AnError)
-	
+
 	result = storage.GetSessionById("non-existent")
 	assert.Nil(t, result)
 
@@ -89,7 +90,7 @@ func TestDbSessionStorage_GetSessionById(t *testing.T) {
 
 	mockRepo.On("FindById", "expired-session").Return(expiredSession, nil)
 	mockRepo.On("DeleteById", "expired-session").Return(nil)
-	
+
 	result = storage.GetSessionById("expired-session")
 	assert.Nil(t, result)
 
@@ -99,14 +100,15 @@ func TestDbSessionStorage_GetSessionById(t *testing.T) {
 func TestDbSessionStorage_AddSession(t *testing.T) {
 	// Create mock repository
 	mockRepo := &MockSessionRepository{}
-	
+
 	// Create storage with mock repository
+	mediator := NewDbSessionMediator(mockRepo)
 	storage := &DbSessionStorage{
 		sessionLifetime: 30 * time.Minute,
-		sessionRepo:     mockRepo,
+		mediator:        mediator,
 	}
 
-	// Test case 1: Add DbSessionEntity
+	// Test case 1: Add a new mediated session
 	now := time.Now()
 	dbSession := &DbSessionEntity{
 		ID:           "test-session",
@@ -116,26 +118,29 @@ func TestDbSessionStorage_AddSession(t *testing.T) {
 		LastActivity: now,
 		Attributes:   make(map[string]string),
 	}
+	wrappedSession := NewDbSessionEntityWithMediator(dbSession, mediator)
 
+	mockRepo.On("FindById", "test-session").Return(nil, nil)
 	mockRepo.On("Save", dbSession).Return(nil)
-	
-	storage.AddSession(dbSession)
+
+	storage.AddSession(wrappedSession)
 	mockRepo.AssertExpectations(t)
 
-	// Test case 2: Add regular Session (should be converted)
-	regularSession := &Session{
-		id:           "regular-session",
-		userId:       "user-2",
-		expiry:       now.Add(1 * time.Hour),
-		createdAt:    now,
-		lastActivity: now,
-		attributes:   make(map[string]string),
+	// Test case 2: Update an existing mediated session
+	existingSession := &DbSessionEntity{
+		ID:           "regular-session",
+		UserID:       "user-2",
+		Expiry:       now.Add(1 * time.Hour),
+		CreatedAt:    now,
+		LastActivity: now,
+		Attributes:   make(map[string]string),
 	}
+	wrappedExistingSession := NewDbSessionEntityWithMediator(existingSession, mediator)
 
-	// The mock should be called with a DbSessionEntity
-	mockRepo.On("Save", mock.AnythingOfType("*auth.DbSessionEntity")).Return(nil)
-	
-	storage.AddSession(regularSession)
+	mockRepo.On("FindById", "regular-session").Return(existingSession, nil)
+	mockRepo.On("Save", existingSession).Return(nil)
+
+	storage.AddSession(wrappedExistingSession)
 	mockRepo.AssertExpectations(t)
 }
 
@@ -153,7 +158,7 @@ func TestDbSessionEntity_ISimpleStorage(t *testing.T) {
 	// Test SetItem and GetItem
 	session.SetItem("key1", "value1")
 	session.SetItem("key2", "value2")
-	
+
 	assert.Equal(t, "value1", session.GetItem("key1"))
 	assert.Equal(t, "value2", session.GetItem("key2"))
 	assert.Equal(t, "", session.GetItem("non-existent"))
@@ -171,10 +176,10 @@ func TestDbSessionEntity_ISimpleStorage(t *testing.T) {
 func TestSessionFactory(t *testing.T) {
 	// Test MemorySessionFactory
 	memoryFactory := NewMemorySessionFactory()
-	
+
 	now := time.Now()
 	expiry := now.Add(1 * time.Hour)
-	
+
 	session := memoryFactory.CreateSession("test-id", expiry)
 	assert.NotNil(t, session)
 	assert.Equal(t, "test-id", session.GetId())
@@ -183,12 +188,12 @@ func TestSessionFactory(t *testing.T) {
 
 	// Test DbSessionFactory
 	dbFactory := NewDbSessionFactory()
-	
+
 	dbSession := dbFactory.CreateSession("test-id", expiry)
 	assert.NotNil(t, dbSession)
 	assert.Equal(t, "test-id", dbSession.GetId())
 	assert.Equal(t, expiry, dbSession.GetExpiry())
-	assert.IsType(t, &DbSessionEntity{}, dbSession)
+	assert.IsType(t, &DbSessionEntityWithMediator{}, dbSession)
 
 	// Test CreateSessionWithUser
 	userSession := dbFactory.CreateSessionWithUser("test-id", "user-1", expiry)

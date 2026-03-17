@@ -389,18 +389,7 @@ func TestMessage_RedirectWithFlash(t *testing.T) {
 	mockAuthStrategy.On("CurrentSession", mock.Anything).Return(mockSession)
 
 	// Setup session
-	mockSession.On("IsExpired").Return(false)
-	mockSession.On("SetExpiry", mock.Anything).Return()
-	mockSession.On("GetItem", core.OneTimeSessionAttributeKey).Return("")
 	mockSession.On("SetItem", core.OneTimeSessionAttributeKey, mock.Anything).Return()
-	mockSession.On("SetLastActivity", mock.Anything).Return()
-
-	// Setup session storage
-	mockSessionStorage.On("GetSessionLifetime").Return(time.Duration(3600) * time.Second)
-	mockSessionStorage.On("Get").Return(time.Duration(3600) * time.Second)
-	mockSessionStorage.On("AddSession", mockSession).Return()
-	mockSessionStorage.On("GetSessionRotationInterval").Return(time.Duration(24) * time.Hour)
-	mockSessionStorage.On("GetSessionActivityTimeout").Return(time.Duration(30) * time.Second)
 
 	msg := &Message{
 		writer:         w,
@@ -425,7 +414,7 @@ func TestMessage_RedirectWithFlash(t *testing.T) {
 
 	// Verify flash data was set
 	var oneTimeParams model.OneTimeParams
-	flashJSON := mockSession.Calls[0].Arguments[1].(string)
+	flashJSON := mockSession.Calls[len(mockSession.Calls)-1].Arguments[1].(string)
 	err := json.Unmarshal([]byte(flashJSON), &oneTimeParams)
 	assert.NoError(t, err)
 	assert.True(t, oneTimeParams.Start)
@@ -492,16 +481,6 @@ func TestMessage_Init(t *testing.T) {
 	// Setup auth strategy
 	mockAuthStrategy.On("CurrentSession", mock.Anything).Return(mockSession)
 
-	// Setup session
-	mockSession.On("IsExpired").Return(false)
-	mockSession.On("SetExpiry", mock.Anything).Return()
-	mockSession.On("GetItem", core.OneTimeSessionAttributeKey).Return("")
-	mockSession.On("SetLastActivity", mock.Anything).Return()
-
-	// Setup session storage
-	mockSessionStorage.On("GetSessionLifetime").Return(time.Duration(3600) * time.Second)
-	mockSessionStorage.On("AddSession", mockSession).Return()
-
 	// Create test request and response
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/", nil)
@@ -548,24 +527,6 @@ func TestMessage_Init_WithPathParams(t *testing.T) {
 	mockViewEngine := new(MockEngineRenderer)
 	mockAuthContext := new(MockAuthContext)
 	mockSessionStorage := new(MockSessionStorage)
-	mockAuthStrategy := new(MockAuthStrategy)
-	mockSession := new(MockSession)
-
-	// Setup auth context and strategy
-	mockAuthContext.On("ResolveAuthStrategyByContext", mock.Anything).Return(mockAuthStrategy)
-
-	// Setup auth strategy
-	mockAuthStrategy.On("CurrentSession", mock.Anything).Return(mockSession)
-
-	// Setup session
-	mockSession.On("IsExpired").Return(false)
-	mockSession.On("SetExpiry", mock.Anything).Return()
-	mockSession.On("GetItem", core.OneTimeSessionAttributeKey).Return("")
-	mockSession.On("SetLastActivity", mock.Anything).Return()
-
-	// Setup session storage
-	mockSessionStorage.On("GetSessionLifetime").Return(time.Duration(3600) * time.Second)
-	mockSessionStorage.On("AddSession", mockSession).Return()
 
 	// Setup DB context
 	db.SetDBContext(mockDBContext)
@@ -595,12 +556,6 @@ func TestMessage_Init_WithPathParams(t *testing.T) {
 
 	// Verify path parameters
 	assert.Equal(t, "123", msg.Req.PathParam("id"))
-
-	// Verify auth context was used
-	mockAuthContext.AssertExpectations(t)
-	mockAuthStrategy.AssertExpectations(t)
-	mockSession.AssertExpectations(t)
-	mockSessionStorage.AssertExpectations(t)
 }
 
 func TestMessage_Close(t *testing.T) {
@@ -625,14 +580,7 @@ func TestMessage_Close(t *testing.T) {
 	mockAuthStrategy.On("CurrentSession", mock.Anything).Return(mockSession)
 
 	// Setup session
-	mockSession.On("IsExpired").Return(false)
-	mockSession.On("SetExpiry", mock.Anything).Return()
 	mockSession.On("GetItem", core.OneTimeSessionAttributeKey).Return("")
-	mockSession.On("SetLastActivity", mock.Anything).Return()
-
-	// Setup session storage
-	mockSessionStorage.On("GetSessionLifetime").Return(time.Duration(3600) * time.Second)
-	mockSessionStorage.On("AddSession", mockSession).Return()
 
 	// Create test request and response
 	w := httptest.NewRecorder()

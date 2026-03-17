@@ -78,10 +78,18 @@ func TestDbSessionMediator_CreateSession(t *testing.T) {
 
 	now := time.Now()
 	expiry := now.Add(time.Hour)
+	session := &DbSessionEntity{
+		ID:           "new-session",
+		UserID:       "user-1",
+		Expiry:       expiry,
+		CreatedAt:    now,
+		LastActivity: now,
+		Attributes:   make(map[string]string),
+	}
 
 	mockRepo.On("Save", mock.AnythingOfType("*auth.DbSessionEntity")).Return(nil)
 
-	session, err := mediator.CreateSession("new-session", "user-1", expiry)
+	session, err := mediator.CreateSession(session)
 	assert.NoError(t, err)
 	assert.NotNil(t, session)
 	assert.Equal(t, "new-session", session.GetId())
