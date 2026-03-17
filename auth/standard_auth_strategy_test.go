@@ -25,6 +25,15 @@ type MockSessionFactory struct {
 	mock.Mock
 }
 
+func (m *MockSessionStorage) hasExpectation(method string) bool {
+	for _, call := range m.ExpectedCalls {
+		if call.Method == method {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *MockSessionFactory) CreateSession(id string, expiry time.Time) core.ISession {
 	args := m.Called(id, expiry)
 	if args.Get(0) == nil {
@@ -75,11 +84,17 @@ func (m *MockSessionStorage) GetSessionLifetime() time.Duration {
 }
 
 func (m *MockSessionStorage) GetSessionRotationInterval() time.Duration {
+	if !m.hasExpectation("GetSessionRotationInterval") {
+		return 24 * time.Hour
+	}
 	args := m.Called()
 	return args.Get(0).(time.Duration)
 }
 
 func (m *MockSessionStorage) GetSessionActivityTimeout() time.Duration {
+	if !m.hasExpectation("GetSessionActivityTimeout") {
+		return sessionActivityTimeout
+	}
 	args := m.Called()
 	return args.Get(0).(time.Duration)
 }
@@ -238,7 +253,13 @@ func TestStandardAuthStrategy_NewSessionWithoutUser(t *testing.T) {
 
 func TestStandardAuthStrategy_ShouldRotateSession(t *testing.T) {
 	// Setup
-	strategy := &StandardAuthStrategy{}
+	mockStorage := new(MockSessionStorage)
+	mockStorage.On("GetSessionActivityTimeout").Return(sessionActivityTimeout)
+	mockStorage.On("GetSessionRotationInterval").Return(24 * time.Hour)
+
+	strategy := &StandardAuthStrategy{
+		sessionManager: mockStorage,
+	}
 	now := time.Now()
 
 	tests := []struct {
@@ -272,6 +293,7 @@ func TestStandardAuthStrategy_ShouldRotateSession(t *testing.T) {
 			name: "valid session",
 			session: &Session{
 				createdAt:    now,
+				expiry:       now.Add(time.Hour),
 				lastActivity: now,
 			},
 			expected: false,
@@ -284,6 +306,8 @@ func TestStandardAuthStrategy_ShouldRotateSession(t *testing.T) {
 			assert.Equal(t, tt.expected, result)
 		})
 	}
+
+	mockStorage.AssertExpectations(t)
 }
 
 func TestStandardAuthStrategy_Login(t *testing.T) {

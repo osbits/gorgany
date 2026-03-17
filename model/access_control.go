@@ -316,20 +316,35 @@ func (rbac *RoleBasedAccessControl) getUserContextCache(ctx context.Context) *Us
 	cache := &UserContextCache{}
 
 	// Get user from auth context
-	if user, err := rbac.authContext.ResolveAuthStrategyByContext(ctx).CurrentUser(ctx); err == nil && user != nil {
-		cache.user = user
-		cache.isGuest = false
+	var strategy core.IAuthStrategy
+	if rbac.authContext != nil {
+		strategy = rbac.authContext.ResolveAuthStrategyByContext(ctx)
+	}
 
-		// Get user roles
-		if roleProvider, ok := user.(core.RoleProvider); ok {
-			cache.roles = roleProvider.GetRoles()
+	if strategy != nil {
+		if user, err := strategy.CurrentUser(ctx); err == nil && user != nil {
+			cache.user = user
+			cache.isGuest = false
+
+			// Get user roles
+			if roleProvider, ok := user.(core.RoleProvider); ok {
+				cache.roles = roleProvider.GetRoles()
+			} else {
+				cache.roles = []string{}
+			}
 		} else {
-			cache.roles = []string{}
+			cache.user = nil
+			cache.isGuest = true
+			// Assign guest role if guest access is allowed
+			if rbac.config.AllowGuestAccess {
+				cache.roles = []string{"guest"}
+			} else {
+				cache.roles = []string{}
+			}
 		}
 	} else {
 		cache.user = nil
 		cache.isGuest = true
-		// Assign guest role if guest access is allowed
 		if rbac.config.AllowGuestAccess {
 			cache.roles = []string{"guest"}
 		} else {
@@ -535,6 +550,11 @@ func (rbac *RoleBasedAccessControl) CanReadField(ctx context.Context, field stri
 		return false
 	}
 
+	// Entity-level rules are authoritative when provided.
+	if accessibleEntity, ok := entity.(core.AccessibleEntity); ok {
+		return accessibleEntity.CanAccessField(ctx, userCache.user, field, "read")
+	}
+
 	// Get field configuration
 	fieldConfig, exists := rbac.config.FieldAccess[strings.ToLower(field)]
 	if !exists {
@@ -562,13 +582,6 @@ func (rbac *RoleBasedAccessControl) CanReadField(ctx context.Context, field stri
 		return false
 	}
 
-	// Check if domain implements AccessibleEntity interface for custom access control first
-	if accessibleEntity, ok := entity.(core.AccessibleEntity); ok && userCache.user != nil {
-		if accessibleEntity.CanAccessField(ctx, userCache.user, field, "read") {
-			return true
-		}
-	}
-
 	// Check role requirements
 	if len(operationConfig.RequiredRoles) > 0 {
 		if !rbac.hasAnyRole(userCache.roles, operationConfig.RequiredRoles) {
@@ -592,7 +605,7 @@ func (rbac *RoleBasedAccessControl) GetReadableFields(ctx context.Context, entit
 	userCache := rbac.getUserContextCache(ctx)
 
 	// If domain implements AccessibleEntity interface, use its custom logic
-	if accessibleEntity, ok := entity.(core.AccessibleEntity); ok && userCache.user != nil {
+	if accessibleEntity, ok := entity.(core.AccessibleEntity); ok {
 		return accessibleEntity.GetAccessibleFields(ctx, userCache.user, "read")
 	}
 
@@ -730,7 +743,7 @@ func (rbac *RoleBasedAccessControl) GetReadableFieldsForCollection(ctx context.C
 	userCache := rbac.getUserContextCache(ctx)
 
 	// If entity type implements AccessibleEntity interface, use its custom logic
-	if accessibleEntity, ok := entityType.(core.AccessibleEntity); ok && userCache.user != nil {
+	if accessibleEntity, ok := entityType.(core.AccessibleEntity); ok {
 		return accessibleEntity.GetAccessibleFields(ctx, userCache.user, "read")
 	}
 
