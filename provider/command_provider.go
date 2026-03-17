@@ -1,11 +1,11 @@
 package provider
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/command"
-	"git.qix.sx/gorgany/gorgany.git/command/db"
-	"git.qix.sx/gorgany/gorgany.git/command/domain"
-	"git.qix.sx/gorgany/gorgany.git/err"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/command"
+	"github.com/osbits/gorgany/command/db"
+	"github.com/osbits/gorgany/command/domain"
+	"github.com/osbits/gorgany/err"
 )
 
 type CommandProvider struct {

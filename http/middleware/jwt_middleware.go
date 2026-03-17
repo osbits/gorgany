@@ -1,10 +1,10 @@
 package middleware
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/auth"
-	error2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/service/dto"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/auth"
+	error2 "github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/service/dto"
 	"github.com/spf13/viper"
 )
 

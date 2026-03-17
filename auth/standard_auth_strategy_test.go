@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/osbits/gorgany/app/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )

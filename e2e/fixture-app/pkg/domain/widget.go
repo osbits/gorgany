@@ -3,7 +3,7 @@ package fixturedomain
 import (
 	"time"
 
-	"git.qix.sx/gorgany/gorgany.git/db/orm"
+	"github.com/osbits/gorgany/db/orm"
 )
 
 type Widget struct {
