@@ -1,0 +1,55 @@
+app:
+  gorgany:
+    validate: false
+  server:
+    port: ${SERVER_PORT}
+    timezone: UTC
+  fixture:
+    greeting: ${APP_GREETING}
+
+auth:
+  login:
+    formUrl: /session/login
+  session:
+    storage: database
+    lifeTime: 3600
+    cookie:
+      domain: ""
+    rotationInterval: 24h
+    activityTimeout: 30m
+  jwt:
+    secret: ${JWT_SECRET}
+    lifeTime: 3600
+
+http:
+  security:
+    file:
+      maxSizeMB: 2
+      allowedMimes:
+        - text/plain
+        - application/octet-stream
+    body:
+      maxSizeMB: 2
+
+i18n:
+  lang:
+    default: en
+    available:
+      - en
+
+databases:
+  default:
+    driver: postgres_gorm
+    host: ${DB_HOST}
+    port: ${DB_PORT}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    db: ${DB_NAME}
+    ssl: ${DB_SSL}
+    prefer_simple_protocol: true
+    log: false
+    properties:
+      maxOpenConnections: 5
+      maxIdleConnections: 5
+      connectionMaxLifetime: 300
+      connectionMaxIdleLifetime: 300
