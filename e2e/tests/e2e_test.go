@@ -293,6 +293,69 @@ func TestManyToManyDetachedExistingRelationDoesNotDuplicateInsert(t *testing.T) 
 	assertIntQuery(t, db, "SELECT COUNT(*) FROM fixture_widget_tags WHERE widget_id = '"+createdID+"' AND tag_id = '"+fixtureRelationTagBID+"'", 1)
 }
 
+func TestUpdatingOneRelationDoesNotClearUnloadedRelations(t *testing.T) {
+	waitForServer(t)
+
+	resp := mustJSON(t, http.MethodPost, baseURL()+"/api/v1/login", map[string]any{
+		"username": fixtureLoginUsername,
+		"password": fixtureLoginPassword,
+	}, nil, false)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected api login 200, got %d body=%s", resp.StatusCode, string(resp.Body))
+	}
+
+	var login apiResponse
+	decodeJSON(t, resp.Body, &login)
+	var tokenPayload map[string]string
+	decodeJSON(t, login.Body, &tokenPayload)
+	token := tokenPayload["access_token"]
+	if token == "" {
+		t.Fatal("expected access token in login response")
+	}
+
+	authHeader := map[string]string{"Authorization": "Bearer " + token}
+
+	resp = mustJSON(t, http.MethodPost, baseURL()+"/api/v1/widgets", map[string]any{
+		"name":        "relation-isolation-widget",
+		"description": "created for unloaded relation isolation test",
+	}, authHeader, false)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected widget create 201, got %d body=%s", resp.StatusCode, string(resp.Body))
+	}
+
+	var createResp apiResponse
+	decodeJSON(t, resp.Body, &createResp)
+	var created map[string]any
+	decodeJSON(t, createResp.Body, &created)
+	createdID, _ := created["id"].(string)
+	if createdID == "" {
+		t.Fatalf("expected created widget id, body=%v", created)
+	}
+
+	db := openDB(t)
+	defer db.Close()
+	if _, err := db.Exec(
+		"INSERT INTO fixture_widget_shadow_tags (widget_id, tag_id) VALUES ($1, $2)",
+		createdID,
+		"tag-green",
+	); err != nil {
+		t.Fatalf("failed to seed shadow relation: %v", err)
+	}
+	assertIntQuery(t, db, "SELECT COUNT(*) FROM fixture_widget_shadow_tags WHERE widget_id = '"+createdID+"'", 1)
+
+	resp = mustJSON(t, http.MethodPut, baseURL()+"/api/v1/widgets/"+createdID+"/tags", map[string]any{
+		"tagIds": []string{fixtureRelationTagAID},
+	}, authHeader, false)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected widget tag update 200, got %d body=%s", resp.StatusCode, string(resp.Body))
+	}
+
+	assertIntQuery(t, db, "SELECT COUNT(*) FROM fixture_widget_tags WHERE widget_id = '"+createdID+"'", 1)
+	assertIntQuery(t, db, "SELECT COUNT(*) FROM fixture_widget_tags WHERE widget_id = '"+createdID+"' AND tag_id = '"+fixtureRelationTagAID+"'", 1)
+	assertIntQuery(t, db, "SELECT COUNT(*) FROM fixture_widget_shadow_tags WHERE widget_id = '"+createdID+"'", 1)
+	assertIntQuery(t, db, "SELECT COUNT(*) FROM fixture_widget_shadow_tags WHERE widget_id = '"+createdID+"' AND tag_id = 'tag-green'", 1)
+}
+
 func TestValidationAndMultipartParsing(t *testing.T) {
 	waitForServer(t)
 
