@@ -1,0 +1,16 @@
+package provider
+
+import (
+{{- range .Imports }}
+    "{{.}}"
+{{- end }}
+)
+
+// Run `go run ./cmd/cli.go domains:register`
+func generatedDomains() map[string]any {
+    return map[string]any{
+        {{- range .Registers }}
+        {{ . }}
+        {{- end }}
+    }
+}

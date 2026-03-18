@@ -1,0 +1,70 @@
+package db
+
+import (
+	"context"
+	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/db"
+	"git.qix.sx/gorgany/gorgany.git/log"
+	"gorm.io/gorm"
+	"time"
+)
+
+type SeedCommand struct {
+	dataContext core.IDataContext `container:"inject"`
+	dbContext   core.IDBContext   `container:"inject"`
+}
+
+func (thiz SeedCommand) GetName() string {
+	return "db:seed"
+}
+
+func (thiz SeedCommand) Execute(ctx context.Context) {
+	driver, err := thiz.dbContext.GetDataSource(core.DefaultKeyInRegistrar).GetDriver()
+	if err != nil {
+		panic(err)
+	}
+
+	gormInstance, ok := driver.(*gorm.DB)
+	if !ok {
+		panic("Diff command can`t be executed, because driver is not gorm.DB")
+	}
+
+	err = gormInstance.AutoMigrate(&db.Seeder{})
+	if err != nil {
+		panic("Unable to migrate table `migrations`")
+	}
+
+	total := 0
+	tx := gormInstance.Begin()
+	for _, seeder := range thiz.dataContext.Seeders() {
+		var seederDomain db.Seeder
+		gormInstance.First(&seederDomain, "name = ?", seeder.Name())
+
+		if thiz.isSeederExists(seederDomain) {
+			continue
+		}
+
+		log.Log().Infof("Executing %s seeder", seeder.Name())
+		seederCount := 0
+		for _, model := range seeder.CollectInsertModels() {
+			res := gormInstance.Save(model)
+			if res.Error != nil {
+				tx.Rollback()
+				panic(res.Error)
+			}
+		}
+		log.Log().Infof("Seeder %s successfully executed.", seeder.Name())
+		total += seederCount
+
+		gormInstance.Create(&db.Seeder{
+			Name: seeder.Name(),
+			Date: time.Now(),
+		})
+	}
+	tx.Commit()
+	log.Log().Info("Seeding finished.")
+}
+
+func (thiz SeedCommand) isSeederExists(seeder db.Seeder) bool {
+	return !seeder.Date.IsZero() && seeder.Name != ""
+}

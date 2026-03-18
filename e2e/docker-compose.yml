@@ -1,0 +1,54 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: gorgany
+      POSTGRES_PASSWORD: gorgany
+      POSTGRES_DB: gorgany_e2e
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  app-migrate:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+    working_dir: /workspace/e2e/fixture-app
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["go", "run", "./cmd/cli", "db:migrate", "up"]
+
+  app-seed:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+    working_dir: /workspace/e2e/fixture-app
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["go", "run", "./cmd/cli", "db:seed"]
+
+  app-server:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+    working_dir: /workspace/e2e/fixture-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["go", "run", "./cmd/server"]
+
+  runner:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile
+    working_dir: /workspace
+    environment:
+      E2E_BASE_URL: http://app-server:8080
+      E2E_DB_DSN: postgres://gorgany:gorgany@postgres:5432/gorgany_e2e?sslmode=disable
+    command: ["go", "test", "./e2e/tests/...", "-count=1", "-v"]
