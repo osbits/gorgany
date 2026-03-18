@@ -25,6 +25,12 @@ func (m *FixtureMigration) Up() core.MigrationClosure {
 
 func (m *FixtureMigration) Down() core.MigrationClosure {
 	return func(db *gorm.DB) error {
-		return db.Migrator().DropTable("fixture_widget_tags", &fixturedomain.Widget{}, &fixturedomain.Tag{}, &fixturedomain.User{})
+		return db.Migrator().DropTable(
+			"fixture_widget_shadow_tags",
+			"fixture_widget_tags",
+			&fixturedomain.Widget{},
+			&fixturedomain.Tag{},
+			&fixturedomain.User{},
+		)
 	}
 }

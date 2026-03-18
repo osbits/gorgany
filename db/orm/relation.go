@@ -129,6 +129,10 @@ func (o *ORM[T]) SaveRelations(entity T) error {
 			if relField.Kind() != reflect.Slice {
 				continue
 			}
+			if relField.IsNil() && !isRelationExplicitlyLoaded(entity, relName) {
+				// Leave untouched many-to-many relations that were never loaded or set.
+				continue
+			}
 
 			// Resolve join table info
 			if rel.JoinTable == nil || len(rel.References) == 0 {
@@ -944,6 +948,11 @@ func setForeignKeyValue(dest reflect.Value, src reflect.Value) {
 	if src.Type().AssignableTo(dest.Type()) {
 		dest.Set(src)
 	}
+}
+
+func isRelationExplicitlyLoaded(entity EntityWithMeta, relationName string) bool {
+	meta := entity.GetMeta()
+	return meta != nil && meta.IsRelationLoaded(relationName)
 }
 
 func (o *ORM[T]) saveManyToManyRelatedEntity(relEntity EntityWithMeta) error {

@@ -13,6 +13,7 @@ type Widget struct {
 	Description    string    `json:"description" gorm:"column:description;not null"`
 	CreatedBy      string    `json:"createdBy" gorm:"column:created_by;not null"`
 	Tags           []*Tag    `json:"tags,omitempty" gorm:"many2many:fixture_widget_tags;"`
+	ShadowTags     []*Tag    `json:"shadowTags,omitempty" gorm:"many2many:fixture_widget_shadow_tags;"`
 	CreatedAt      time.Time `json:"createdAt" gorm:"column:created_at;autoCreateTime"`
 	UpdatedAt      time.Time `json:"updatedAt" gorm:"column:updated_at;autoUpdateTime"`
 }
