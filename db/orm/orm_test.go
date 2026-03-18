@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
@@ -27,6 +28,19 @@ type TestRelatedEntity struct {
 	ID       int    `gorm:"primaryKey"`
 	TestID   int    `gorm:"column:test_id"`
 	Category string `gorm:"column:category"`
+}
+
+type TestManyToManyRole struct {
+	BaseEntity
+	ID   int    `gorm:"primaryKey"`
+	Name string `gorm:"column:name"`
+}
+
+type TestManyToManyUser struct {
+	BaseEntity
+	ID    int                   `gorm:"primaryKey"`
+	Name  string                `gorm:"column:name"`
+	Roles []*TestManyToManyRole `gorm:"many2many:test_user_roles;"`
 }
 
 // TestEmbeddedStruct is a struct to be embedded in TestEntityWithEmbedded
@@ -553,6 +567,128 @@ func TestSaveRelations(t *testing.T) {
 	// Should not panic or error (no relations defined in schema)
 	if err := orm.SaveRelations(entity); err != nil {
 		t.Errorf("Expected no error, got: %v", err)
+	}
+}
+
+func TestSaveRelationsManyToManyUsesExistingRelatedEntity(t *testing.T) {
+	mockDS := NewMockDataSource()
+	executedSQL := make([]string, 0)
+
+	mockDS.session.executor.queryOneFunc = func(ctx context.Context, q dbCore.IQueryBuilder, dest interface{}) dbCore.QueryResult {
+		sql, _ := q.ToSQL()
+		if strings.HasPrefix(sql, "INSERT INTO test_many_to_many_roles") {
+			return dbCore.QueryResult{
+				Error: errors.New("duplicate key value violates unique constraint"),
+			}
+		}
+		return dbCore.QueryResult{}
+	}
+
+	mockDS.session.executor.countRawFunc = func(ctx context.Context, sql string, args ...interface{}) (int64, error) {
+		if !strings.Contains(sql, "FROM test_many_to_many_roles") {
+			t.Fatalf("unexpected existence check SQL: %s", sql)
+		}
+		if len(args) != 1 || args[0] != 10 {
+			t.Fatalf("unexpected existence check args: %v", args)
+		}
+		return 1, nil
+	}
+
+	mockDS.session.executor.execFunc = func(ctx context.Context, q dbCore.IQueryBuilder) dbCore.QueryResult {
+		sql, _ := q.ToSQL()
+		executedSQL = append(executedSQL, sql)
+		return dbCore.QueryResult{RowsAffected: 1}
+	}
+
+	var orm RelationLoader[*TestManyToManyUser] = New[*TestManyToManyUser](mockDS.session)
+	entity := &TestManyToManyUser{
+		ID:   1,
+		Name: "Test User",
+		Roles: []*TestManyToManyRole{
+			{ID: 10, Name: "admin"},
+		},
+	}
+	entity.SetMeta(&EntityMeta{
+		TableName:     "test_many_to_many_users",
+		PrimaryKey:    "id",
+		IsLoaded:      true,
+		LoadedColumns: make(map[string]bool),
+		RelationMeta:  make(map[string]*RelationMeta),
+	})
+
+	if err := orm.SaveRelations(entity); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	for _, sql := range executedSQL {
+		if strings.HasPrefix(sql, "INSERT INTO test_many_to_many_roles") {
+			t.Fatalf("expected existing related entity to avoid insert, got SQL: %s", sql)
+		}
+	}
+
+	if !entity.Roles[0].GetMeta().IsLoaded {
+		t.Fatalf("expected existing related entity to be marked as loaded")
+	}
+}
+
+func TestSaveManyToManyRelatedEntitySetsReflectablePrimaryKey(t *testing.T) {
+	mockDS := NewMockDataSource()
+	mockDS.session.executor.countRawFunc = func(ctx context.Context, sql string, args ...interface{}) (int64, error) {
+		if !strings.Contains(sql, "FROM test_many_to_many_roles") {
+			t.Fatalf("unexpected existence check SQL: %s", sql)
+		}
+		return 1, nil
+	}
+	mockDS.session.executor.execFunc = func(ctx context.Context, q dbCore.IQueryBuilder) dbCore.QueryResult {
+		return dbCore.QueryResult{RowsAffected: 1}
+	}
+
+	orm := New[*TestManyToManyUser](mockDS.session)
+	role := &TestManyToManyRole{ID: 10, Name: "admin"}
+
+	if err := orm.saveManyToManyRelatedEntity(role); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if role.GetMeta().PrimaryKey != "ID" {
+		t.Fatalf("expected reflectable primary key field name, got: %q", role.GetMeta().PrimaryKey)
+	}
+
+	roleORM := New[*TestManyToManyRole](mockDS.session)
+	if pk := roleORM.getPrimaryKeyValue(role); pk != 10 {
+		t.Fatalf("expected getPrimaryKeyValue to return 10, got: %#v", pk)
+	}
+}
+
+func TestSaveManyToManyRelatedEntityUsesSchemaPrimaryKeyWhenMetaAlreadySet(t *testing.T) {
+	mockDS := NewMockDataSource()
+	mockDS.session.executor.countRawFunc = func(ctx context.Context, sql string, args ...interface{}) (int64, error) {
+		if !strings.Contains(sql, "FROM test_many_to_many_roles") {
+			t.Fatalf("unexpected existence check SQL: %s", sql)
+		}
+		if len(args) != 1 || args[0] != 10 {
+			t.Fatalf("expected schema primary key value 10, got args: %v", args)
+		}
+		return 1, nil
+	}
+	mockDS.session.executor.execFunc = func(ctx context.Context, q dbCore.IQueryBuilder) dbCore.QueryResult {
+		return dbCore.QueryResult{RowsAffected: 1}
+	}
+
+	orm := New[*TestManyToManyUser](mockDS.session)
+	role := &TestManyToManyRole{ID: 10, Name: "admin"}
+	role.SetMeta(&EntityMeta{
+		PrimaryKey:    "ID",
+		LoadedColumns: make(map[string]bool),
+		RelationMeta:  make(map[string]*RelationMeta),
+	})
+
+	if err := orm.saveManyToManyRelatedEntity(role); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	if !role.GetMeta().IsLoaded {
+		t.Fatalf("expected existing related entity to be marked as loaded")
 	}
 }
 

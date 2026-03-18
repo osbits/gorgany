@@ -119,6 +119,37 @@ func (s *WidgetService) UpdateTags(id string, tagIDs []string) (*fixturedomain.W
 	return widget, nil
 }
 
+func (s *WidgetService) UpdateTagsDetached(id string, tagIDs []string) (*fixturedomain.Widget, error) {
+	session, err := s.newSession()
+	if err != nil {
+		return nil, err
+	}
+	defer session.Close()
+
+	repo := orm.New[*fixturedomain.Widget](session)
+	widget, err := repo.Find(id)
+	if err != nil {
+		return nil, err
+	}
+	if widget == nil {
+		return nil, nil
+	}
+
+	tags := make([]*fixturedomain.Tag, 0, len(tagIDs))
+	for _, tagID := range tagIDs {
+		tags = append(tags, &fixturedomain.Tag{ID: tagID})
+	}
+
+	widget.Tags = tags
+	if err := repo.Save(widget); err != nil {
+		return nil, err
+	}
+	if err := repo.LoadRelation(widget, "Tags"); err != nil {
+		return nil, err
+	}
+	return widget, nil
+}
+
 func (s *WidgetService) Count() (int64, error) {
 	session, err := s.newSession()
 	if err != nil {

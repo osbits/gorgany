@@ -233,6 +233,20 @@ func (c *APIController) UpdateWidgetTags(message core.HttpMessage, id string, pa
 	message.Response().JSON(dto.ReturnObject(widget, core.SuccessHttpStatus, nil), http.StatusOK)
 }
 
+func (c *APIController) UpdateWidgetTagsDetached(message core.HttpMessage, id string, payload WidgetRelationsPayload) {
+	widget, err := c.WidgetService.UpdateTagsDetached(id, payload.TagIDs)
+	if err != nil {
+		message.Response().JSON(dto.ReturnObject(nil, core.InternalErrorHttpStatus, err.Error()), http.StatusInternalServerError)
+		return
+	}
+	if widget == nil {
+		message.Response().JSON(dto.ReturnObject(nil, core.NotFoundHttpStatus, "widget not found"), http.StatusNotFound)
+		return
+	}
+
+	message.Response().JSON(dto.ReturnObject(widget, core.SuccessHttpStatus, nil), http.StatusOK)
+}
+
 func (c *APIController) JSONEcho(message core.HttpMessage, payload JSONEchoRequest) {
 	message.Response().JSON(dto.ReturnObject(payload, core.SuccessHttpStatus, nil), http.StatusOK)
 }
@@ -310,6 +324,14 @@ func (c *APIController) GetRoutes() []core.IRouteConfig {
 			Middlewares: []core.IMiddleware{apiAuth},
 			Namespace:   "api",
 			Name:        "fixture.api.widgets.tags.update",
+		},
+		&router.RouteConfig{
+			Path:        "/v1/widgets/{id}/tags/detached",
+			Method:      core.PUT,
+			Handler:     c.UpdateWidgetTagsDetached,
+			Middlewares: []core.IMiddleware{apiAuth},
+			Namespace:   "api",
+			Name:        "fixture.api.widgets.tags.update_detached",
 		},
 		&router.RouteConfig{
 			Path:      "/v1/parse/json",

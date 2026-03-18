@@ -229,6 +229,70 @@ func TestJWTAndWidgetFlow(t *testing.T) {
 	assertIntQuery(t, db, "SELECT COUNT(*) FROM fixture_widget_tags WHERE widget_id = '"+createdID+"' AND tag_id = '"+fixtureRelationTagAID+"'", 0)
 }
 
+func TestManyToManyDetachedExistingRelationDoesNotDuplicateInsert(t *testing.T) {
+	waitForServer(t)
+
+	resp := mustJSON(t, http.MethodPost, baseURL()+"/api/v1/login", map[string]any{
+		"username": fixtureLoginUsername,
+		"password": fixtureLoginPassword,
+	}, nil, false)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected api login 200, got %d body=%s", resp.StatusCode, string(resp.Body))
+	}
+
+	var login apiResponse
+	decodeJSON(t, resp.Body, &login)
+	var tokenPayload map[string]string
+	decodeJSON(t, login.Body, &tokenPayload)
+	token := tokenPayload["access_token"]
+	if token == "" {
+		t.Fatal("expected access token in login response")
+	}
+
+	authHeader := map[string]string{"Authorization": "Bearer " + token}
+
+	resp = mustJSON(t, http.MethodPost, baseURL()+"/api/v1/widgets", map[string]any{
+		"name":        "detached-tag-widget",
+		"description": "created for detached relation test",
+	}, authHeader, false)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("expected widget create 201, got %d body=%s", resp.StatusCode, string(resp.Body))
+	}
+
+	var createResp apiResponse
+	decodeJSON(t, resp.Body, &createResp)
+	var created map[string]any
+	decodeJSON(t, createResp.Body, &created)
+	createdID, _ := created["id"].(string)
+	if createdID == "" {
+		t.Fatalf("expected created widget id, body=%v", created)
+	}
+
+	resp = mustJSON(t, http.MethodPut, baseURL()+"/api/v1/widgets/"+createdID+"/tags/detached", map[string]any{
+		"tagIds": []string{fixtureRelationTagAID, fixtureRelationTagBID},
+	}, authHeader, false)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected detached widget tag update 200, got %d body=%s", resp.StatusCode, string(resp.Body))
+	}
+
+	var tagsResp apiResponse
+	decodeJSON(t, resp.Body, &tagsResp)
+	var updated map[string]any
+	decodeJSON(t, tagsResp.Body, &updated)
+	tagObjects, _ := updated["tags"].([]any)
+	if len(tagObjects) != 2 {
+		t.Fatalf("expected exactly two tags after detached relation update, got %v", updated["tags"])
+	}
+
+	db := openDB(t)
+	defer db.Close()
+	assertIntQuery(t, db, "SELECT COUNT(*) FROM fixture_tags WHERE id = '"+fixtureRelationTagAID+"'", 1)
+	assertIntQuery(t, db, "SELECT COUNT(*) FROM fixture_tags WHERE id = '"+fixtureRelationTagBID+"'", 1)
+	assertIntQuery(t, db, "SELECT COUNT(*) FROM fixture_widget_tags WHERE widget_id = '"+createdID+"'", 2)
+	assertIntQuery(t, db, "SELECT COUNT(*) FROM fixture_widget_tags WHERE widget_id = '"+createdID+"' AND tag_id = '"+fixtureRelationTagAID+"'", 1)
+	assertIntQuery(t, db, "SELECT COUNT(*) FROM fixture_widget_tags WHERE widget_id = '"+createdID+"' AND tag_id = '"+fixtureRelationTagBID+"'", 1)
+}
+
 func TestValidationAndMultipartParsing(t *testing.T) {
 	waitForServer(t)
 

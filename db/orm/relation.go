@@ -187,9 +187,9 @@ func (o *ORM[T]) SaveRelations(entity T) error {
 					continue
 				}
 
-				// Save the related entity
-				relOrm := New[EntityWithMeta](o.db)
-				if err := relOrm.Save(relEntity); err != nil {
+				// Reuse existing related rows when a PK is already set to avoid
+				// duplicate inserts for many-to-many links.
+				if err := o.saveManyToManyRelatedEntity(relEntity); err != nil {
 					return err
 				}
 
@@ -944,6 +944,76 @@ func setForeignKeyValue(dest reflect.Value, src reflect.Value) {
 	if src.Type().AssignableTo(dest.Type()) {
 		dest.Set(src)
 	}
+}
+
+func (o *ORM[T]) saveManyToManyRelatedEntity(relEntity EntityWithMeta) error {
+	meta := relEntity.GetMeta()
+	if meta == nil {
+		meta = &EntityMeta{
+			LoadedColumns: make(map[string]bool),
+			RelationMeta:  make(map[string]*RelationMeta),
+		}
+		relEntity.SetMeta(meta)
+	}
+
+	schemaCache := &sync.Map{}
+	relSchema, err := schema.Parse(relEntity, schemaCache, schema.NamingStrategy{})
+	if err == nil && len(relSchema.PrimaryFields) > 0 {
+		if meta.TableName == "" {
+			meta.TableName = relSchema.Table
+		}
+		relEntityValue := reflect.ValueOf(relEntity)
+		if relEntityValue.Kind() == reflect.Ptr {
+			relEntityValue = relEntityValue.Elem()
+		}
+
+		if meta.PrimaryKey == "" || !relEntityValue.FieldByName(meta.PrimaryKey).IsValid() {
+			meta.PrimaryKey = relSchema.PrimaryFields[0].Name
+		}
+
+		pkField := relEntityValue.FieldByName(relSchema.PrimaryFields[0].Name)
+		if pkField.IsValid() && !isZeroValue(pkField.Interface()) && !meta.IsLoaded {
+			exists, err := o.relatedEntityExists(relSchema.Table, relSchema.PrimaryFields[0].DBName, pkField.Interface())
+			if err != nil {
+				return err
+			}
+			if exists {
+				meta.IsLoaded = true
+				meta.DataSource = o.db.DataSource()
+				return nil
+			}
+		}
+	}
+
+	relOrm := New[EntityWithMeta](o.db)
+	if err := relOrm.Save(relEntity); err != nil {
+		return err
+	}
+
+	if err == nil && len(relSchema.PrimaryFields) > 0 {
+		meta.PrimaryKey = relSchema.PrimaryFields[0].Name
+	}
+
+	return nil
+}
+
+func (o *ORM[T]) relatedEntityExists(tableName, primaryKey string, primaryKeyValue interface{}) (bool, error) {
+	builder := v2.NewBuilder().
+		Select("COUNT(*)").
+		From(tableName).
+		Where(&dbCore.BinaryCondition{
+			Left:     primaryKey,
+			Operator: "=",
+			Right:    primaryKeyValue,
+		})
+
+	asSql, args := builder.ToSQL()
+	count, err := o.db.Executor().CountRaw(context.Background(), asSql, args...)
+	if err != nil {
+		return false, fmt.Errorf("failed to check existing related entity in %s: %w", tableName, err)
+	}
+
+	return count > 0, nil
 }
 
 // PreloadBuilder provides a fluent interface for building preload queries
