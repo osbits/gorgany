@@ -1,10 +1,10 @@
 package fixtureseeder
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/util"
 
-	fixturedomain "git.qix.sx/gorgany/gorgany.git/e2e/fixture-app/pkg/domain"
+	fixturedomain "github.com/osbits/gorgany/e2e/fixture-app/pkg/domain"
 )
 
 const (

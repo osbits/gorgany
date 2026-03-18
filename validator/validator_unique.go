@@ -2,11 +2,11 @@ package validator
 
 import (
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/db"
-	err2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/service/cache"
-	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/db"
+	err2 "github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/service/cache"
+	"github.com/osbits/gorgany/util"
 	goValidator "github.com/go-playground/validator/v10"
 	"gorm.io/gorm/schema"
 	"reflect"

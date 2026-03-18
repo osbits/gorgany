@@ -1,9 +1,9 @@
 package main
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/app"
+	"github.com/osbits/gorgany/app"
 
-	fixtureprovider "git.qix.sx/gorgany/gorgany.git/e2e/fixture-app/pkg/provider"
+	fixtureprovider "github.com/osbits/gorgany/e2e/fixture-app/pkg/provider"
 )
 
 func main() {

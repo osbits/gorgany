@@ -5,11 +5,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/db/orm"
-	dbcore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/db/orm"
+	dbcore "github.com/osbits/gorgany/db/sql/core"
 
-	fixturedomain "git.qix.sx/gorgany/gorgany.git/e2e/fixture-app/pkg/domain"
+	fixturedomain "github.com/osbits/gorgany/e2e/fixture-app/pkg/domain"
 )
 
 type WidgetService struct {

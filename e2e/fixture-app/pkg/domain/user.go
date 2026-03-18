@@ -3,8 +3,8 @@ package fixturedomain
 import (
 	"time"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/db/orm"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/db/orm"
 )
 
 type User struct {
