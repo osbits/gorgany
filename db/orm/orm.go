@@ -8,9 +8,9 @@ import (
 	"strings"
 	"sync"
 
-	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
-	v2 "git.qix.sx/gorgany/gorgany.git/db/sql/gorm/postgres/v2"
-	"git.qix.sx/gorgany/gorgany.git/util"
+	dbCore "github.com/osbits/gorgany/db/sql/core"
+	v2 "github.com/osbits/gorgany/db/sql/gorm/postgres/v2"
+	"github.com/osbits/gorgany/util"
 	"gorm.io/gorm/schema"
 )
 
