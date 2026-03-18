@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/osbits/gorgany/app/core"
 )
 
 // MockAuthContext for testing and examples

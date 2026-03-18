@@ -15,14 +15,14 @@ Already a pro? Just edit this README.md and make it your own. Want to make it ea
 
 ```
 cd existing_repo
-git remote add origin https://git.qix.sx/gorgany/gorgany.git
+git remote add origin https://github.com/osbits/gorgany
 git branch -M main
 git push -uf origin main
 ```
 
 ## Integrate with your tools
 
-- [ ] [Set up project integrations](https://git.qix.sx/gorgany/gorgany/-/settings/integrations)
+- [ ] [Set up project integrations](https://github.com/osbits/gorgany/-/settings/integrations)
 
 ## Collaborate with your team
 

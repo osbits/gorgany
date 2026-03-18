@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/osbits/gorgany/app/core"
 	"github.com/spf13/viper"
 	"log"
 	"net/http"

@@ -1,4 +1,4 @@
-module git.qix.sx/gorgany/gorgany.git
+module github.com/osbits/gorgany
 
 go 1.24.0
 
