@@ -6,6 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"os"
+	"os/signal"
+	"path"
+	"strings"
+	"syscall"
+	"time"
+
 	"git.qix.sx/gorgany/gorgany.git"
 	"git.qix.sx/gorgany/gorgany.git/app/core"
 	"git.qix.sx/gorgany/gorgany.git/command"
@@ -14,13 +22,6 @@ import (
 	"git.qix.sx/gorgany/gorgany.git/service"
 	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
-	"net/http"
-	"os"
-	"os/signal"
-	"path"
-	"strings"
-	"syscall"
-	"time"
 )
 
 var Application core.IApplication
@@ -171,13 +172,22 @@ func (s *ServerApp) Run() {
 		log.Log().Panicf("Failed to make router on start: %s", err.Error())
 	}
 
+	readTimeout := viper.GetDuration("app.server.timeout.read")
+	if readTimeout == 0 {
+		readTimeout = 60 * time.Second
+	}
+	writeTimeout := viper.GetDuration("app.server.timeout.write")
+	if writeTimeout == 0 {
+		writeTimeout = 60 * time.Second
+	}
+
 	go func() {
 		s.httpServer = &http.Server{
 			Addr:           fmt.Sprintf(":%d", port),
 			Handler:        router,
 			MaxHeaderBytes: 1 << 20,
-			ReadTimeout:    10 * time.Second,
-			WriteTimeout:   10 * time.Second,
+			ReadTimeout:    readTimeout,
+			WriteTimeout:   writeTimeout,
 		}
 
 		log.Log().Infof("Server is running on port\u001B[0;32m :%d \u001B[0m", port)
