@@ -1,7 +1,7 @@
 package job
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/osbits/gorgany/app/core"
 	"github.com/jasonlvhit/gocron"
 )
 

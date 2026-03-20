@@ -1,9 +1,9 @@
 package dto
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/model"
-	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/model"
+	"github.com/osbits/gorgany/util"
 	"reflect"
 )
 

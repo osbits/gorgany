@@ -3,11 +3,11 @@ package http
 import (
 	"errors"
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/db"
-	error2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/service/cache"
-	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/db"
+	error2 "github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/service/cache"
+	"github.com/osbits/gorgany/util"
 	"github.com/gorilla/schema"
 	"reflect"
 )

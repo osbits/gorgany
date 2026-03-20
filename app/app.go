@@ -14,12 +14,12 @@ import (
 	"syscall"
 	"time"
 
-	"git.qix.sx/gorgany/gorgany.git"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/command"
-	"git.qix.sx/gorgany/gorgany.git/config"
-	"git.qix.sx/gorgany/gorgany.git/log"
-	"git.qix.sx/gorgany/gorgany.git/service"
+	"github.com/osbits/gorgany"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/command"
+	"github.com/osbits/gorgany/config"
+	"github.com/osbits/gorgany/log"
+	"github.com/osbits/gorgany/service"
 	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 )
