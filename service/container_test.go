@@ -1,9 +1,12 @@
 package service
 
 import (
+	"bytes"
 	"errors"
+	stdlog "log"
 	"testing"
 
+	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -53,6 +56,26 @@ type InitService struct {
 
 func (i *InitService) Init() {
 	i.initialized = true
+}
+
+type CountedDependency struct {
+	InitCalls int
+}
+
+func (d *CountedDependency) Init() {
+	d.InitCalls++
+}
+
+type CountedService struct {
+	Dependency *CountedDependency `container:"inject"`
+}
+
+type CircularA struct {
+	B *CircularB `container:"inject"`
+}
+
+type CircularB struct {
+	A *CircularA `container:"inject"`
 }
 
 var instance = NewContainer()
@@ -597,4 +620,85 @@ func TestContainer_Init_Interface_With_Named_Binding(t *testing.T) {
 	err = instance.Make(initService)
 	assert.NoError(t, err)
 	assert.True(t, initService.initialized)
+}
+
+func TestContainer_Singleton_Dependencies_Are_Injected_Once(t *testing.T) {
+	var instance = NewContainer()
+
+	err := instance.SingletonLazy(func() *CountedDependency {
+		return &CountedDependency{}
+	})
+	assert.NoError(t, err)
+
+	err = instance.SingletonLazy(func() *CountedService {
+		return &CountedService{}
+	})
+	assert.NoError(t, err)
+
+	var first *CountedService
+	err = instance.Resolve(&first)
+	assert.NoError(t, err)
+	assert.NotNil(t, first)
+	assert.NotNil(t, first.Dependency)
+	assert.Equal(t, 1, first.Dependency.InitCalls)
+
+	var second *CountedService
+	err = instance.Resolve(&second)
+	assert.NoError(t, err)
+	assert.Same(t, first, second)
+	assert.Same(t, first.Dependency, second.Dependency)
+	assert.Equal(t, 1, second.Dependency.InitCalls)
+}
+
+func TestContainer_CircularDependenciesMode_Error(t *testing.T) {
+	var instance = NewContainer()
+
+	t.Cleanup(func() {
+		viper.Set("app.ioc.circularDependenciesMode", "")
+	})
+	viper.Set("app.ioc.circularDependenciesMode", "error")
+
+	var a *CircularA
+	err := instance.Resolve(&a)
+	assert.EqualError(t, err, "container: circular dependency detected: *service.CircularA -> *service.CircularB -> *service.CircularA")
+}
+
+func TestContainer_CircularDependenciesMode_Warning(t *testing.T) {
+	var instance = NewContainer()
+
+	t.Cleanup(func() {
+		viper.Set("app.ioc.circularDependenciesMode", "")
+	})
+	viper.Set("app.ioc.circularDependenciesMode", "warning")
+
+	var logBuffer bytes.Buffer
+	prevWriter := stdlog.Writer()
+	stdlog.SetOutput(&logBuffer)
+	t.Cleanup(func() {
+		stdlog.SetOutput(prevWriter)
+	})
+
+	var a *CircularA
+	err := instance.Resolve(&a)
+	assert.NoError(t, err)
+	assert.NotNil(t, a)
+	assert.NotNil(t, a.B)
+	assert.Same(t, a, a.B.A)
+	assert.Contains(t, logBuffer.String(), "circular dependency detected")
+}
+
+func TestContainer_CircularDependenciesMode_Skip(t *testing.T) {
+	var instance = NewContainer()
+
+	t.Cleanup(func() {
+		viper.Set("app.ioc.circularDependenciesMode", "")
+	})
+	viper.Set("app.ioc.circularDependenciesMode", "skip")
+
+	var a *CircularA
+	err := instance.Resolve(&a)
+	assert.NoError(t, err)
+	assert.NotNil(t, a)
+	assert.NotNil(t, a.B)
+	assert.Same(t, a, a.B.A)
 }
