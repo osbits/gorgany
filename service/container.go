@@ -9,6 +9,8 @@ import (
 	"unsafe"
 
 	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"git.qix.sx/gorgany/gorgany.git/log"
+	"github.com/spf13/viper"
 )
 
 var emergencyContainerFactory func() core.IEmergencyContainer
@@ -23,11 +25,12 @@ func EmergencyContainer() core.IEmergencyContainer {
 
 // binding holds resolver and cached instance for singletons
 type binding struct {
-	resolver    interface{}
-	concrete    interface{}
-	isSingleton bool
-
-	initOnce *sync.Once
+	resolver     interface{}
+	concrete     interface{}
+	isSingleton  bool
+	mu           sync.Mutex
+	cond         *sync.Cond
+	constructing bool
 }
 
 // Container is the IoC container implementation
@@ -36,6 +39,24 @@ type Container struct {
 	bindings    map[reflect.Type]map[string]*binding
 	initMu      sync.Mutex
 	initOnceMap map[interface{}]*sync.Once
+}
+
+type dependencyKey struct {
+	t    reflect.Type
+	name string
+}
+
+type circularDependencyError struct {
+	path string
+}
+
+func (e *circularDependencyError) Error() string {
+	return e.path
+}
+
+type resolutionState struct {
+	active map[dependencyKey]struct{}
+	stack  []dependencyKey
 }
 
 // NewContainer creates a new Container
@@ -96,7 +117,7 @@ func (c *Container) bind(resolver interface{}, name string, isSingleton, isLazy 
 	}
 	var preInst interface{}
 	if !isLazy {
-		inst, err := c.invoke(resolver, make(map[reflect.Type]interface{}))
+		inst, err := c.invoke(resolver, newResolutionState())
 		if err != nil {
 			return err
 		}
@@ -140,7 +161,7 @@ func (c *Container) Make(target interface{}, overrides ...map[string]interface{}
 				}
 			}
 		}
-		return c.fill(v.Interface(), make(map[reflect.Type]interface{}))
+		return c.fill(v.Interface(), newResolutionState())
 	}
 	// interface pointer: map to resolveInternal
 	return c.namedResolveInternal(target, "")
@@ -158,7 +179,7 @@ func (c *Container) Invoke(fn interface{}) error {
 	if reflect.TypeOf(fn).Kind() != reflect.Func {
 		return errors.New("container: invalid function")
 	}
-	_, err := c.invoke(fn, make(map[reflect.Type]interface{}))
+	_, err := c.invoke(fn, newResolutionState())
 	return err
 }
 
@@ -168,9 +189,13 @@ func (c *Container) namedResolveInternal(abstraction interface{}, name string) e
 		return errors.New("container: abstraction must be pointer to interface")
 	}
 	et := rv.Elem().Type()
-	inst, err := c.resolve(et, name, make(map[reflect.Type]interface{}))
+	inst, err := c.resolve(et, name, newResolutionState())
 	if err != nil {
 		return err
+	}
+	if inst == nil {
+		rv.Elem().Set(reflect.Zero(et))
+		return nil
 	}
 	iv := reflect.ValueOf(inst)
 	if !iv.Type().AssignableTo(et) {
@@ -180,17 +205,26 @@ func (c *Container) namedResolveInternal(abstraction interface{}, name string) e
 	return nil
 }
 
-func (c *Container) resolve(t reflect.Type, name string, chain map[reflect.Type]interface{}) (interface{}, error) {
+func (c *Container) resolve(t reflect.Type, name string, state *resolutionState) (interface{}, error) {
+	key := dependencyKey{t: t, name: name}
+	if state != nil {
+		if _, exists := state.active[key]; exists {
+			return c.resolveCircularDependency(key, state)
+		}
+	}
+	c.enterDependency(key, state)
+	defer c.leaveDependency(key, state)
+
 	// First try direct type resolution
 	c.mu.RLock()
 	if m, ok := c.bindings[t]; ok {
 		if b, found := m[name]; found {
 			c.mu.RUnlock()
-			return c.getInstance(b, chain)
+			return c.getInstance(b, state)
 		}
 		if b, found := m[""]; found {
 			c.mu.RUnlock()
-			return c.getInstance(b, chain)
+			return c.getInstance(b, state)
 		}
 	}
 	c.mu.RUnlock()
@@ -214,7 +248,7 @@ func (c *Container) resolve(t reflect.Type, name string, chain map[reflect.Type]
 
 		// Try to get instance from collected bindings
 		for _, b := range bindings {
-			inst, err := c.getInstance(b, chain)
+			inst, err := c.getInstance(b, state)
 			if err == nil {
 				return inst, nil
 			}
@@ -223,6 +257,7 @@ func (c *Container) resolve(t reflect.Type, name string, chain map[reflect.Type]
 
 	// pointer-to-struct auto-register
 	if t.Kind() == reflect.Ptr && t.Elem().Kind() == reflect.Struct {
+		var autoBinding *binding
 		c.mu.Lock()
 		if _, ok := c.bindings[t]; !ok {
 			defaultResolver := func() (interface{}, error) {
@@ -230,47 +265,90 @@ func (c *Container) resolve(t reflect.Type, name string, chain map[reflect.Type]
 			}
 			c.bindings[t] = map[string]*binding{"": {resolver: defaultResolver, isSingleton: true}}
 		}
+		autoBinding = c.bindings[t][""]
+		if autoBinding.cond == nil {
+			autoBinding.cond = sync.NewCond(&autoBinding.mu)
+		}
 		c.mu.Unlock()
-		return c.resolve(t, name, chain)
+		return c.getInstance(autoBinding, state)
 	}
 	return nil, fmt.Errorf("container: no binding for type %s", t)
 }
 
-func (c *Container) getInstance(b *binding, chain map[reflect.Type]interface{}) (interface{}, error) {
+func (c *Container) getInstance(b *binding, state *resolutionState) (interface{}, error) {
 	if b.isSingleton && b.concrete != nil {
 		return b.concrete, nil
 	}
 
 	if !b.isSingleton {
-		return c.invoke(b.resolver, chain)
+		return c.invoke(b.resolver, state)
 	}
 
-	c.mu.RLock()
+	b.mu.Lock()
+	if b.cond == nil {
+		b.cond = sync.NewCond(&b.mu)
+	}
+
+	for b.constructing {
+		b.cond.Wait()
+		if b.concrete != nil {
+			inst := b.concrete
+			b.mu.Unlock()
+			return inst, nil
+		}
+	}
 	if b.concrete != nil {
-		instance := b.concrete
-		c.mu.RUnlock()
-		return instance, nil
+		inst := b.concrete
+		b.mu.Unlock()
+		return inst, nil
 	}
-	c.mu.RUnlock()
+	b.constructing = true
+	b.mu.Unlock()
 
-	inst, err := c.invoke(b.resolver, chain)
+	inst, err := c.callResolver(b.resolver, state)
 	if err != nil {
+		b.mu.Lock()
+		b.constructing = false
+		b.cond.Broadcast()
+		b.mu.Unlock()
 		return nil, err
 	}
 
-	c.mu.Lock()
-	if b.concrete == nil {
-		b.concrete = inst
-	} else {
-		inst = b.concrete
+	b.mu.Lock()
+	b.concrete = inst
+	b.mu.Unlock()
+
+	if err := c.fill(inst, state); err != nil {
+		b.mu.Lock()
+		b.concrete = nil
+		b.constructing = false
+		b.cond.Broadcast()
+		b.mu.Unlock()
+		return inst, err
 	}
-	c.mu.Unlock()
+
+	b.mu.Lock()
+	b.constructing = false
+	b.cond.Broadcast()
+	b.mu.Unlock()
 
 	return inst, nil
 }
 
-func (c *Container) invoke(fn interface{}, chain map[reflect.Type]interface{}) (interface{}, error) {
-	args, err := c.buildArgs(fn, chain)
+func (c *Container) invoke(fn interface{}, state *resolutionState) (interface{}, error) {
+	inst, err := c.callResolver(fn, state)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := c.fill(inst, state); err != nil {
+		return inst, err
+	}
+	return inst, nil
+}
+
+func (c *Container) callResolver(fn interface{}, state *resolutionState) (interface{}, error) {
+	args, err := c.buildArgs(fn, state)
 	if err != nil {
 		return nil, err
 	}
@@ -290,13 +368,10 @@ func (c *Container) invoke(fn interface{}, chain map[reflect.Type]interface{}) (
 		}
 	}
 
-	if err := c.fill(inst, chain); err != nil {
-		return inst, err
-	}
 	return inst, nil
 }
 
-func (c *Container) buildArgs(fn interface{}, chain map[reflect.Type]interface{}) ([]reflect.Value, error) {
+func (c *Container) buildArgs(fn interface{}, state *resolutionState) ([]reflect.Value, error) {
 	fnType := reflect.TypeOf(fn)
 	args := make([]reflect.Value, fnType.NumIn())
 	for i := 0; i < fnType.NumIn(); i++ {
@@ -306,26 +381,29 @@ func (c *Container) buildArgs(fn interface{}, chain map[reflect.Type]interface{}
 				dep = reflect.PtrTo(dep)
 			}
 		}
-		inst, err := c.resolve(dep, "", chain)
+		inst, err := c.resolve(dep, "", state)
 		if err != nil {
+			var circularErr *circularDependencyError
+			if errors.As(err, &circularErr) && c.circularDependenciesMode() != "error" {
+				args[i] = reflect.Zero(fnType.In(i))
+				continue
+			}
 			return nil, err
+		}
+		if inst == nil {
+			args[i] = reflect.Zero(fnType.In(i))
+			continue
 		}
 		args[i] = reflect.ValueOf(inst)
 	}
 	return args, nil
 }
 
-func (c *Container) fill(target interface{}, chain map[reflect.Type]interface{}) error {
+func (c *Container) fill(target interface{}, state *resolutionState) error {
 	v := reflect.ValueOf(target)
 	if v.Kind() != reflect.Ptr || v.Elem().Kind() != reflect.Struct {
 		return nil
 	}
-	tptr := reflect.TypeOf(target)
-	if _, seen := chain[tptr]; seen {
-		return nil
-	}
-	chain[tptr] = target
-	defer delete(chain, tptr)
 
 	s := v.Elem()
 	rt := s.Type()
@@ -334,12 +412,12 @@ func (c *Container) fill(target interface{}, chain map[reflect.Type]interface{})
 		if field.Anonymous {
 			fType := field.Type
 			if fType.Kind() == reflect.Ptr {
-				if err := c.fill(s.Field(i).Interface(), chain); err != nil {
+				if err := c.fill(s.Field(i).Interface(), state); err != nil {
 					return err
 				}
 			} else if fType.Kind() == reflect.Struct {
 				ptr := reflect.NewAt(fType, unsafe.Pointer(s.Field(i).UnsafeAddr()))
-				if err := c.fill(ptr.Interface(), chain); err != nil {
+				if err := c.fill(ptr.Interface(), state); err != nil {
 					return err
 				}
 			}
@@ -377,13 +455,16 @@ func (c *Container) fill(target interface{}, chain map[reflect.Type]interface{})
 			continue
 		}
 
-		inst, err := c.resolve(keyType, injectName, chain)
+		inst, err := c.resolve(keyType, injectName, state)
 		if err != nil {
+			var circularErr *circularDependencyError
+			if errors.As(err, &circularErr) && c.circularDependenciesMode() != "error" {
+				continue
+			}
 			return err
 		}
-
-		if err := c.fill(inst, chain); err != nil {
-			return err
+		if inst == nil {
+			continue
 		}
 
 		val := reflect.ValueOf(inst)
@@ -426,4 +507,109 @@ func (c *Container) fill(target interface{}, chain map[reflect.Type]interface{})
 	}
 
 	return nil
+}
+
+func newResolutionState() *resolutionState {
+	return &resolutionState{
+		active: make(map[dependencyKey]struct{}),
+	}
+}
+
+func (c *Container) enterDependency(key dependencyKey, state *resolutionState) {
+	if state == nil {
+		return
+	}
+	state.active[key] = struct{}{}
+	state.stack = append(state.stack, key)
+}
+
+func (c *Container) leaveDependency(key dependencyKey, state *resolutionState) {
+	if state == nil || len(state.stack) == 0 {
+		return
+	}
+	delete(state.active, key)
+	state.stack = state.stack[:len(state.stack)-1]
+}
+
+func (c *Container) circularDependenciesMode() string {
+	switch strings.ToLower(viper.GetString("app.ioc.circularDependenciesMode")) {
+	case "skip", "ignore":
+		return "skip"
+	case "warn", "warning":
+		return "warning"
+	default:
+		return "error"
+	}
+}
+
+func (c *Container) handleCircularDependency(path string) error {
+	err := &circularDependencyError{
+		path: fmt.Sprintf("container: circular dependency detected: %s", path),
+	}
+	switch c.circularDependenciesMode() {
+	case "warning":
+		log.Log().Warn(err.Error())
+		return err
+	default:
+		return err
+	}
+}
+
+func (c *Container) resolveCircularDependency(key dependencyKey, state *resolutionState) (interface{}, error) {
+	path := c.circularDependencyPath(state.stack, key)
+	mode := c.circularDependenciesMode()
+	if mode == "error" {
+		return nil, c.handleCircularDependency(path)
+	}
+
+	if mode == "warning" {
+		log.Log().Warn(fmt.Sprintf("container: circular dependency detected: %s", path))
+	}
+
+	b := c.findBinding(key.t, key.name)
+	if b != nil && b.isSingleton && b.concrete != nil {
+		return b.concrete, nil
+	}
+
+	return nil, nil
+}
+
+func (c *Container) findBinding(t reflect.Type, name string) *binding {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if m, ok := c.bindings[t]; ok {
+		if b, found := m[name]; found {
+			return b
+		}
+		if b, found := m[""]; found {
+			return b
+		}
+	}
+
+	return nil
+}
+
+func (c *Container) circularDependencyPath(stack []dependencyKey, repeated dependencyKey) string {
+	start := 0
+	for i, key := range stack {
+		if key == repeated {
+			start = i
+			break
+		}
+	}
+
+	path := make([]string, 0, len(stack)-start+1)
+	for i := start; i < len(stack); i++ {
+		path = append(path, dependencyLabel(stack[i]))
+	}
+	path = append(path, dependencyLabel(repeated))
+	return strings.Join(path, " -> ")
+}
+
+func dependencyLabel(key dependencyKey) string {
+	if key.name == "" {
+		return key.t.String()
+	}
+	return fmt.Sprintf("%s[%s]", key.t.String(), key.name)
 }
