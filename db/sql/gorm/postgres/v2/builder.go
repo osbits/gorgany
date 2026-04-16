@@ -1,7 +1,7 @@
 package v2
 
 import (
-	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
+	dbCore "github.com/osbits/gorgany/db/sql/core"
 )
 
 // Builder implements the QueryBuilder interface

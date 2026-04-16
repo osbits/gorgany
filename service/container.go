@@ -8,8 +8,8 @@ import (
 	"sync"
 	"unsafe"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/log"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/log"
 	"github.com/spf13/viper"
 )
 

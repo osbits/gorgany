@@ -6,17 +6,17 @@ import (
 	"net/http"
 	"strings"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	error2 "git.qix.sx/gorgany/gorgany.git/err"
-	grghttp "git.qix.sx/gorgany/gorgany.git/http"
-	"git.qix.sx/gorgany/gorgany.git/http/middleware"
-	"git.qix.sx/gorgany/gorgany.git/provider"
-	"git.qix.sx/gorgany/gorgany.git/service/dto"
+	"github.com/osbits/gorgany/app/core"
+	error2 "github.com/osbits/gorgany/err"
+	grghttp "github.com/osbits/gorgany/http"
+	"github.com/osbits/gorgany/http/middleware"
+	"github.com/osbits/gorgany/provider"
+	"github.com/osbits/gorgany/service/dto"
 
-	fixturemigration "git.qix.sx/gorgany/gorgany.git/e2e/fixture-app/db/migration"
-	fixtureseeder "git.qix.sx/gorgany/gorgany.git/e2e/fixture-app/db/seeder"
-	fixturehttp "git.qix.sx/gorgany/gorgany.git/e2e/fixture-app/pkg/http"
-	fixtureservice "git.qix.sx/gorgany/gorgany.git/e2e/fixture-app/pkg/service"
+	fixturemigration "github.com/osbits/gorgany/e2e/fixture-app/db/migration"
+	fixtureseeder "github.com/osbits/gorgany/e2e/fixture-app/db/seeder"
+	fixturehttp "github.com/osbits/gorgany/e2e/fixture-app/pkg/http"
+	fixtureservice "github.com/osbits/gorgany/e2e/fixture-app/pkg/service"
 )
 
 func NewBootstrapper() *provider.Bootstrapper {

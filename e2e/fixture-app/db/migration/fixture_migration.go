@@ -1,10 +1,10 @@
 package fixturemigration
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/osbits/gorgany/app/core"
 	"gorm.io/gorm"
 
-	fixturedomain "git.qix.sx/gorgany/gorgany.git/e2e/fixture-app/pkg/domain"
+	fixturedomain "github.com/osbits/gorgany/e2e/fixture-app/pkg/domain"
 )
 
 type FixtureMigration struct{}

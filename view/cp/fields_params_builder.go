@@ -2,10 +2,10 @@ package cp
 
 import (
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/db"
-	"git.qix.sx/gorgany/gorgany.git/service/cache"
-	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/db"
+	"github.com/osbits/gorgany/service/cache"
+	"github.com/osbits/gorgany/util"
 	"gorm.io/gorm/schema"
 	"reflect"
 	"sort"
