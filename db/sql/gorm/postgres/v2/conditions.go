@@ -27,7 +27,12 @@ func (c *CompositeCondition) ToSQL() (string, []interface{}) {
 		args = append(args, conditionArgs...)
 	}
 
-	return strings.Join(conditions, fmt.Sprintf(" %s ", c.Operator)), args
+	joined := strings.Join(conditions, fmt.Sprintf(" %s ", c.Operator))
+	if len(c.Conditions) == 1 {
+		return joined, args
+	}
+
+	return fmt.Sprintf("(%s)", joined), args
 }
 
 // SimpleCondition represents a simple condition (field operator value)
