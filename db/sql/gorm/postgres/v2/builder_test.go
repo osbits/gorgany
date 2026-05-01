@@ -479,6 +479,36 @@ func TestBuilder_RawSQL(t *testing.T) {
 	assert.Nil(t, args)
 }
 
+func TestBuilder_ToSQL_PreservesNestedConditionGrouping(t *testing.T) {
+	builder := NewBuilder().
+		Select("id").
+		From("users").
+		Where(And(
+			&dbCore.BinaryCondition{
+				Left:     "user_id",
+				Operator: "=",
+				Right:    1,
+			},
+			Or(
+				&dbCore.BinaryCondition{
+					Left:     "status",
+					Operator: "=",
+					Right:    "confirmed",
+				},
+				&dbCore.BinaryCondition{
+					Left:     "date",
+					Operator: ">",
+					Right:    "2026-01-01",
+				},
+			),
+		))
+
+	sql, args := builder.ToSQL()
+
+	assert.Equal(t, "SELECT id FROM users WHERE (user_id = ? AND (status = ? OR date > ?))", sql)
+	assert.Equal(t, []interface{}{1, "confirmed", "2026-01-01"}, args)
+}
+
 func TestBuilder_ComplexSubquery(t *testing.T) {
 	// Create a subquery for users with active orders
 	subquery := &dbCore.Query{
