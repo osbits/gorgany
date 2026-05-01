@@ -1,7 +1,7 @@
 package v2
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/db/sql/core"
+	"github.com/osbits/gorgany/db/sql/core"
 )
 
 // transactionImpl implements the IDBTransaction interface

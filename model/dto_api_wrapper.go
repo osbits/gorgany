@@ -5,10 +5,10 @@ import (
 	"reflect"
 	"strings"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/log"
-	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/log"
+	"github.com/osbits/gorgany/util"
 )
 
 type ApiReturnObject struct {

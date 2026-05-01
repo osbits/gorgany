@@ -1,8 +1,8 @@
 package provider
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	logpkg "git.qix.sx/gorgany/gorgany.git/log"
+	"github.com/osbits/gorgany/app/core"
+	logpkg "github.com/osbits/gorgany/log"
 )
 
 type LoggerProvider struct{}

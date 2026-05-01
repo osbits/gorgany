@@ -2,7 +2,7 @@ package view
 
 import (
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/osbits/gorgany/app/core"
 	"github.com/eknkc/amber"
 	template2 "html/template"
 	"io"
