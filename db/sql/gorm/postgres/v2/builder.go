@@ -340,7 +340,10 @@ func (b *Builder) Join(join *dbCore.JoinClause) dbCore.IQueryBuilder {
 	return newBuilder
 }
 
-// OrderBy adds an ORDER BY clause
+// OrderBy adds an ORDER BY clause. field is treated as untrusted data: a simple
+// or dotted identifier is emitted quoted, and any other value is bound as a
+// placeholder rather than interpolated (so request-derived input cannot inject).
+// For a trusted SQL expression, use OrderByRaw.
 func (b *Builder) OrderBy(field string, direction string) dbCore.IQueryBuilder {
 	newBuilder := b.Clone()
 	if newBuilder.query.OrderBy == nil {
@@ -349,6 +352,23 @@ func (b *Builder) OrderBy(field string, direction string) dbCore.IQueryBuilder {
 	newBuilder.query.OrderBy.Fields = append(newBuilder.query.OrderBy.Fields, dbCore.OrderByField{
 		Field:     field,
 		Direction: direction,
+	})
+	return newBuilder
+}
+
+// OrderByRaw adds an ORDER BY clause whose expression is emitted verbatim
+// (not quoted, not parameterized). Use only with a trusted, caller-supplied
+// expression such as "first_name || ' ' || last_name" — never with
+// request-derived input.
+func (b *Builder) OrderByRaw(expression string, direction string) dbCore.IQueryBuilder {
+	newBuilder := b.Clone()
+	if newBuilder.query.OrderBy == nil {
+		newBuilder.query.OrderBy = &dbCore.OrderByClause{}
+	}
+	newBuilder.query.OrderBy.Fields = append(newBuilder.query.OrderBy.Fields, dbCore.OrderByField{
+		Field:     expression,
+		Direction: direction,
+		Raw:       true,
 	})
 	return newBuilder
 }

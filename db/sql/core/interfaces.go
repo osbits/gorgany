@@ -118,6 +118,7 @@ type IQueryBuilder interface {
 	Where(condition Condition) IQueryBuilder
 	Join(join *JoinClause) IQueryBuilder
 	OrderBy(field string, direction string) IQueryBuilder
+	OrderByRaw(expression string, direction string) IQueryBuilder
 	GroupBy(fields ...string) IQueryBuilder
 	Having(condition Condition) IQueryBuilder
 	Limit(limit int) IQueryBuilder

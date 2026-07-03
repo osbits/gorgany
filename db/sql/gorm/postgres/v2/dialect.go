@@ -2,6 +2,7 @@ package v2
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
@@ -86,9 +87,59 @@ func (d *PostgresDialect) FormatWhere(where *dbCore.WhereClause) (string, []inte
 	return fmt.Sprintf("WHERE %s", strings.Join(conditions, fmt.Sprintf(" %s ", where.Operator))), allArgs
 }
 
-// FormatOrderBy formats the ORDER BY clause
+// simpleIdentifier matches a bare column or a dotted table.column reference,
+// e.g. "created_at" or "members.created_at".
+var simpleIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*)*$`)
+
+// quoteIdentifier renders a simple or dotted identifier as a quoted Postgres
+// identifier ("tbl"."col"), doubling any embedded quote.
+func quoteIdentifier(field string) string {
+	parts := strings.Split(field, ".")
+	for i, p := range parts {
+		parts[i] = `"` + strings.ReplaceAll(p, `"`, `""`) + `"`
+	}
+	return strings.Join(parts, ".")
+}
+
+// normalizeOrderDirection whitelists the sort direction to ASC or DESC, defaulting
+// to ASC for anything unrecognized so a caller cannot inject via the direction slot.
+func normalizeOrderDirection(direction string) string {
+	if strings.EqualFold(strings.TrimSpace(direction), "desc") {
+		return "DESC"
+	}
+	return "ASC"
+}
+
+// orderByField renders one ORDER BY entry, returning any bound args.
+//
+// The direction is always whitelisted to ASC/DESC. The field is handled per the
+// hybrid hardening the framework uses everywhere else (see FormatHaving, which
+// binds values as placeholders):
+//   - Raw expressions from trusted callers are emitted verbatim.
+//   - A simple/dotted identifier is emitted as a quoted identifier ("tbl"."col").
+//   - Anything else is treated as untrusted data and BOUND as a placeholder
+//     (ORDER BY ? ...) rather than interpolated, so a sub-select / boolean- or
+//     time-based payload cannot break out of the ORDER BY position. (Binding a
+//     non-identifier degrades to a constant sort key, i.e. a harmless no-op sort —
+//     the point is that it can never be executed as SQL.)
+func (d *PostgresDialect) orderByField(f dbCore.OrderByField) (string, []interface{}) {
+	direction := normalizeOrderDirection(f.Direction)
+
+	if f.Raw {
+		return fmt.Sprintf("%s %s", f.Field, direction), nil
+	}
+	if simpleIdentifier.MatchString(f.Field) {
+		return fmt.Sprintf("%s %s", quoteIdentifier(f.Field), direction), nil
+	}
+	return fmt.Sprintf("? %s", direction), []interface{}{f.Field}
+}
+
+// FormatOrderBy formats the ORDER BY clause for a single field. It is the
+// interface entry point; it delegates to orderByField and applies the same
+// hardening (untrusted, non-identifier fields are bound, not interpolated).
 func (d *PostgresDialect) FormatOrderBy(field string, direction string) (string, []interface{}) {
-	return fmt.Sprintf("ORDER BY %s %s", field, direction), nil
+	sql, args := d.orderByField(dbCore.OrderByField{Field: field, Direction: direction})
+	return "ORDER BY " + sql, args
 }
 
 // FormatGroupBy formats the GROUP BY clause
@@ -382,13 +433,17 @@ func (d *PostgresDialect) formatSelect(query *dbCore.Query) (string, []interface
 		}
 	}
 
-	// Add ORDER BY clause
-	if query.OrderBy != nil {
+	// Add ORDER BY clause. Each field is hardened (quoted identifier, bound
+	// non-identifier, or trusted raw) and the entries are comma-joined into a
+	// single ORDER BY.
+	if query.OrderBy != nil && len(query.OrderBy.Fields) > 0 {
+		orderParts := make([]string, 0, len(query.OrderBy.Fields))
 		for _, field := range query.OrderBy.Fields {
-			orderBySQL, orderByArgs := d.FormatOrderBy(field.Field, field.Direction)
-			parts = append(parts, orderBySQL)
-			allArgs = append(allArgs, orderByArgs...)
+			fieldSQL, fieldArgs := d.orderByField(field)
+			orderParts = append(orderParts, fieldSQL)
+			allArgs = append(allArgs, fieldArgs...)
 		}
+		parts = append(parts, "ORDER BY "+strings.Join(orderParts, ", "))
 	}
 
 	// Add LIMIT clause

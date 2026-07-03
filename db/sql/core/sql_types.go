@@ -107,10 +107,20 @@ type OrderByClause struct {
 	Fields []OrderByField
 }
 
-// OrderByField represents a field in an ORDER BY clause
+// OrderByField represents a field in an ORDER BY clause.
+//
+// Field carries a column name (bare "col" or dotted "table.col"). By default the
+// dialect treats Field as untrusted data: a simple identifier is emitted as a
+// quoted identifier, and anything else is bound as a placeholder rather than
+// interpolated, so a request-supplied value cannot inject through the ORDER BY
+// position. Set Raw when the caller is trusted and Field is a deliberate SQL
+// expression (e.g. "first_name || ' ' || last_name") that must be emitted verbatim.
 type OrderByField struct {
 	Field     string
 	Direction string
+	// Raw marks Field as a trusted SQL expression to emit verbatim (not quoted,
+	// not parameterized). Never set this from request-derived input.
+	Raw bool
 }
 
 // GroupByClause represents the GROUP BY part of a query
