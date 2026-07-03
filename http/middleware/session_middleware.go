@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"time"
 
-	"git.qix.sx/gorgany/gorgany.git/auth"
+	"github.com/osbits/gorgany/auth"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	err2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/model"
+	"github.com/osbits/gorgany/app/core"
+	err2 "github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/model"
 )
 
 // SessionKey is the context key for storing the session

@@ -7,13 +7,13 @@ import (
 	"reflect"
 	"sync"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	"git.qix.sx/gorgany/gorgany.git/db"
-	"git.qix.sx/gorgany/gorgany.git/decoder"
-	mpart "git.qix.sx/gorgany/gorgany.git/decoder/multipart"
-	error2 "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/service/cache"
-	"git.qix.sx/gorgany/gorgany.git/util"
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/db"
+	"github.com/osbits/gorgany/decoder"
+	mpart "github.com/osbits/gorgany/decoder/multipart"
+	error2 "github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/service/cache"
+	"github.com/osbits/gorgany/util"
 	"github.com/gorilla/schema"
 )
 

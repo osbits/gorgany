@@ -1,10 +1,10 @@
 package provider
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/app/core"
-	grgerr "git.qix.sx/gorgany/gorgany.git/err"
-	"git.qix.sx/gorgany/gorgany.git/log"
-	"git.qix.sx/gorgany/gorgany.git/view"
+	"github.com/osbits/gorgany/app/core"
+	grgerr "github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/log"
+	"github.com/osbits/gorgany/view"
 )
 
 type ViewProvider struct {

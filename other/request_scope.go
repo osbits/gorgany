@@ -3,7 +3,7 @@ package http
 import (
 	"bytes"
 	"fmt"
-	"git.qix.sx/gorgany/gorgany.git/decoder"
+	"github.com/osbits/gorgany/decoder"
 	"github.com/spf13/viper"
 	"io"
 	"mime/multipart"

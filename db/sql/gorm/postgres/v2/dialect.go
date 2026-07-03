@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
+	dbCore "github.com/osbits/gorgany/db/sql/core"
 )
 
 // PostgresDialect implements the SQLDialect interface for PostgreSQL

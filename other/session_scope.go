@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"git.qix.sx/gorgany/gorgany.git/app/core"
+	"github.com/osbits/gorgany/app/core"
 )
 
 // HTTPSessionScope manages session lifecycle and one-time values.

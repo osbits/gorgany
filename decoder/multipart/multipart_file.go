@@ -1,7 +1,7 @@
 package multipart
 
 import (
-	"git.qix.sx/gorgany/gorgany.git/model"
+	"github.com/osbits/gorgany/model"
 	"io"
 	"mime/multipart"
 	"reflect"
