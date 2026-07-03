@@ -294,14 +294,6 @@ type Config struct {
 	Dialect dbCore.SQLDialect
 }
 
-// NewBuilderWithConfig creates a new query builder with v2.Config
-func NewBuilderWithConfig(config Config) *Builder {
-	return &Builder{
-		query:   &dbCore.Query{},
-		dialect: config.Dialect,
-	}
-}
-
 // Select adds fields to the SELECT clause
 func (b *Builder) Select(fields ...string) dbCore.IQueryBuilder {
 	newBuilder := b.Clone()
