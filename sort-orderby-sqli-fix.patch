@@ -87,7 +87,7 @@ index dc14d89..9c12f6f 100644
 +	"regexp"
  	"strings"
  
- 	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
+ 	dbCore "github.com/osbits/gorgany/db/sql/core"
 @@ -86,9 +87,59 @@ func (d *PostgresDialect) FormatWhere(where *dbCore.WhereClause) (string, []inte
  	return fmt.Sprintf("WHERE %s", strings.Join(conditions, fmt.Sprintf(" %s ", where.Operator))), allArgs
  }
@@ -181,7 +181,7 @@ index 11e1ac2..75f90af 100644
  import (
  	"testing"
  
-+	dbCore "git.qix.sx/gorgany/gorgany.git/db/sql/core"
++	dbCore "github.com/osbits/gorgany/db/sql/core"
  	"github.com/stretchr/testify/assert"
  )
  
