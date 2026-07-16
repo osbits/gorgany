@@ -8,6 +8,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"reflect"
 	"testing"
 
 	"github.com/osbits/gorgany/app/core"
@@ -27,6 +28,16 @@ type JSONTestStruct struct {
 type JSONTestNested struct {
 	Value string `json:"value"`
 	Count int    `json:"count"`
+}
+
+// JSONTestInterfaceStruct represents interface-valued JSON command fields.
+type JSONTestInterfaceStruct struct {
+	Data  map[string]any `json:"data"`
+	Items []any          `json:"items"`
+}
+
+type JSONTestNonEmptyInterfaceStruct struct {
+	Value fmt.Stringer `json:"value"`
 }
 
 // JSONTestDomainStruct represents a domain struct for testing JSON domain parsing
@@ -174,6 +185,66 @@ func TestJsonParser_Parse_Basic(t *testing.T) {
 				t.Errorf("Data.Count = %v, want %v", got.Data.Count, tt.want.Data.Count)
 			}
 		})
+	}
+}
+
+func TestJsonParser_Parse_InterfaceValues(t *testing.T) {
+	body := map[string]any{
+		"data": map[string]any{
+			"arr":  []any{map[string]any{"a": 1}},
+			"n":    181750,
+			"b":    false,
+			"null": nil,
+		},
+		"items": []any{
+			map[string]any{"a": 1},
+			[]any{"nested"},
+			181750,
+			false,
+			nil,
+		},
+	}
+	req := createJSONRequest(t, body)
+	parser := &JsonParser{message: &jsonMockHttpMessage{req: req}}
+
+	var got JSONTestInterfaceStruct
+	if err := parser.Parse(&got); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	wantData := map[string]any{
+		"arr":  []any{map[string]any{"a": float64(1)}},
+		"n":    float64(181750),
+		"b":    false,
+		"null": nil,
+	}
+	if !reflect.DeepEqual(got.Data, wantData) {
+		t.Errorf("Data = %#v, want %#v", got.Data, wantData)
+	}
+
+	wantItems := []any{
+		map[string]any{"a": float64(1)},
+		[]any{"nested"},
+		float64(181750),
+		false,
+		nil,
+	}
+	if !reflect.DeepEqual(got.Items, wantItems) {
+		t.Errorf("Items = %#v, want %#v", got.Items, wantItems)
+	}
+}
+
+func TestJsonParser_Parse_UnassignableInterfaceValue(t *testing.T) {
+	req := createJSONRequest(t, map[string]any{"value": "not a stringer"})
+	parser := &JsonParser{message: &jsonMockHttpMessage{req: req}}
+
+	var got JSONTestNonEmptyInterfaceStruct
+	err := parser.Parse(&got)
+	if err == nil {
+		t.Fatal("expected an error for a value that does not implement fmt.Stringer")
+	}
+	if _, ok := err.(*error2.ValidationErrors); !ok {
+		t.Fatalf("expected ValidationErrors, got %T", err)
 	}
 }
 
