@@ -23,17 +23,21 @@ If that finds nothing, stop and say so — this prompt does not apply to this re
 
 ## Ground rules
 
-1. Work through the phases in order. Phases 1–4 are behaviour changes that compile
+1. Work through the phases in order. Phases 1–4d are behaviour changes that compile
    cleanly; Phases 5–8 are signature changes the compiler will find for you. Doing
    the behaviour work first means you are not making judgement calls while chasing
    build errors.
-2. **Do not `go get` the new version until Phase 5.** Phases 1–4 are audits of the
+2. **Do not `go get` the new version until Phase 5.** Phases 1–4d are audits of the
    existing code, and you want it building while you do them.
 3. Commit per phase, so a mistake is easy to isolate.
 4. If a grep in this document returns nothing, say so and move on — several of
    these changes affect no app at all.
 5. Do not "fix" anything this document does not ask you to. If you find an
    unrelated bug, note it and leave it.
+6. Three of these changes are things that **never worked**, so a green build and a
+   passing suite prove nothing about them. You have to watch them run: a scheduled
+   job firing (5d), `orm.Create` inserting a row if you use MySQL (Phase 6), and a
+   CSRF-protected request succeeding with a token obtained from `/csrf` (4b).
 
 ---
 
@@ -322,6 +326,214 @@ Commit: `Assert OPTIONS has no side effects for gorgany v2`.
 
 ---
 
+---
+
+## Phase 4a — Validation error shape (behaviour, no compiler error)
+
+`err.ValidationError` used to carry the Go struct field name and go-playground's raw
+sentence:
+
+```json
+{"field": "MobilePhone", "err": "Key: 'Dto.MobilePhone' Error:Field validation for 'MobilePhone' failed on the 'required' tag"}
+```
+
+It now carries the wire name, a readable message, and three new `omitempty` keys:
+
+```json
+{"field": "mobile_phone", "err": "mobile_phone is required", "rule": "required", "path": "mobile_phone"}
+```
+
+Find what depends on the old shape:
+
+```bash
+# Client code matching on a Go field name or parsing the raw message
+grep -rn "Error:Field validation\|Key: '" \
+  --include="*.js" --include="*.ts" --include="*.jsx" --include="*.tsx" \
+  --include="*.vue" --include="*.svelte" --include="*.html" . || echo "no client-side matches"
+
+# A custom validator that exists only to rename fields and translate messages
+grep -rn "core.IValidator" --include="*.go" . | grep -v "_test"
+
+# Templates rendering a validation error's Field directly
+grep -rn "\.Field" --include="*.gohtml" --include="*.amber" --include="*.tmpl" . || echo "no template matches"
+```
+
+For each client-side match, key off `rule` instead of parsing `err`:
+
+```js
+// BEFORE
+if (e.field === 'MobilePhone' && e.err.includes('required')) { ... }
+// AFTER
+if (e.field === 'mobile_phone' && e.rule === 'required') { ... }
+```
+
+If you replaced `core.IValidator` **only** to rename fields or translate messages, delete
+it and move your wording into translation files instead:
+
+```yaml
+# resource/i18n/en.yaml
+validation:
+  required: "Please provide {:field}"
+  email: "{:field} does not look like an email address"
+  min: "{:field} must be at least {:param}"
+```
+
+Then check for a DTO with two fields on one wire name, which is now an error rather than
+half-working:
+
+```bash
+# Two json tags with the same name inside one struct. Review the hits by hand;
+# `go vet` also reports this as a structtag error.
+go vet ./... 2>&1 | grep "repeats json tag" || echo "no duplicate wire names"
+```
+
+---
+
+## Phase 4b — CSRF token delivery (behaviour, security)
+
+Two things changed, and together they close a gap that made the hardened CSRF middleware
+reject every mutating request from a client that had not caught one particular header:
+
+- `X-CSRF-Token` is now set on **every** response to a request carrying a session, not
+  only on the response that created it.
+- `GET /csrf` is registered automatically.
+
+First check for a collision, because a route already at `/csrf` fails the duplicate-route
+check at boot:
+
+```bash
+grep -rn '"/csrf"' --include="*.go" . || echo "no collision"
+```
+
+If there is one, either move the framework's endpoint or drop it:
+
+```go
+// Move it
+csrf := controller.NewCsrfController()
+csrf.Path = "/api/v1/csrf"
+routeProvider.DisableCsrfController()
+routeProvider.AddController(csrf)
+
+// Or keep your own only
+routeProvider.DisableCsrfController()
+```
+
+Then audit the client side. This is the work that matters: an app that never had a working
+CSRF story now needs one.
+
+```bash
+grep -rn "X-CSRF-Token\|csrf" \
+  --include="*.js" --include="*.ts" --include="*.jsx" --include="*.tsx" \
+  --include="*.vue" --include="*.svelte" . || echo "no client-side CSRF handling at all"
+```
+
+The contract is three lines — fetch on boot, re-read the header from every response, send
+on every mutating request:
+
+```js
+const { body } = await (await fetch('/csrf', { credentials: 'include' })).json()
+let csrfToken = body.csrf_token
+
+async function api(url, options = {}) {
+  const res = await fetch(url, { ...options, credentials: 'include',
+    headers: { ...options.headers,
+      ...(options.method && !['GET','HEAD'].includes(options.method)
+        ? { 'X-CSRF-Token': csrfToken } : {}) } })
+  const fresh = res.headers.get('X-CSRF-Token')
+  if (fresh) csrfToken = fresh
+  return res
+}
+```
+
+For a server-rendered form, put the token in a hidden `csrf_token` field, sourced from
+`CsrfService.GetCSRFToken`.
+
+If your SPA is on a different origin, expose the header or it cannot read it:
+
+```bash
+grep -rn "ExposedHeaders" --include="*.go" .
+```
+
+```go
+ExposedHeaders: []string{core.CSRFTokenHeader},
+```
+
+---
+
+## Phase 4c — Malformed bodies are 400, not a 301 (behaviour)
+
+A body that could not be parsed used to produce an empty `ValidationErrors`, which the
+validation handler answered with a **301 redirect to the `Referer`**. It is now a `400`
+carrying `err.InputBodyParseError`.
+
+```bash
+# A registered handler for this error now actually fires — it never did before
+grep -rn "InputBodyParseError" --include="*.go" . || echo "no handler registered"
+
+# Anything treating a 301 from a POST as meaningful
+grep -rn "301\|StatusMovedPermanently" \
+  --include="*.js" --include="*.ts" --include="*.go" . | grep -vi redirect || echo "no matches"
+```
+
+If you have a handler, make sure it reports the *reason* and not `err.Error()`:
+`InputBodyParseError.Error()` includes the raw body for the log's benefit, and a body that
+failed to parse is exactly the kind that might carry a password halfway through.
+
+```go
+func inputErrorHandler(err error, message core.HttpMessage) {
+    reason := err.Error()
+    if parseError, ok := err.(*error2.InputBodyParseError); ok {
+        reason = "the request body could not be parsed"
+        if parseError.RawError != nil {
+            reason = parseError.RawError.Error()
+        }
+    }
+    message.Response().JSON(dto.ReturnObject(nil, core.BadRequestHttpStatus, reason), 400)
+}
+```
+
+Note the 400-vs-422 split: a body that *parses* but holds a value a field rejects is still
+`422` with `ValidationErrors`. Only unparseable bodies are `400`.
+
+---
+
+## Phase 4d — Check every `${VAR}` is actually set
+
+This is a fix rather than a break, but the old behaviour was the opposite of what the
+config sample implies, and it was security-relevant.
+
+`${VAR}` substitution used `os.Getenv`, which cannot tell an unset variable from an empty
+one, and wrote the result into viper's highest-precedence layer. So a placeholder for a
+**missing** variable produced a key that was present, empty, and unbeatable by any default.
+With the documented `secure: ${SESSION_COOKIE_SECURE}` and the variable unset, the session
+cookie shipped **without** `Secure` and nothing said so.
+
+```bash
+# Every placeholder in your config
+grep -rn '\${' config/
+```
+
+**For each one, confirm the variable is set in every environment the app runs in** — local,
+CI, staging, production. Until now a missing one silently degraded rather than failing.
+
+The two security-relevant keys now stop the boot when unresolved:
+
+- `auth.jwt.secret`
+- `auth.session.cookie.secure`
+
+```
+config: security-relevant key(s) reference environment variables that are not set:
+auth.session.cookie.secure (${SESSION_COOKIE_SECURE}). Set them, or remove the
+placeholder so the framework's secure default applies — an unset placeholder must
+never silently weaken security
+```
+
+Removing the placeholder is a valid fix: the framework's default is `secure: true`.
+
+Any other unresolved placeholder is left as the literal `${VAR}` with a warning, so a
+connection error naming `${DB_HOST}` is now diagnosable where an empty host gave no clue.
+
+
 ## Phase 5 — Bump the dependency and let the compiler drive
 
 ```bash
@@ -399,6 +611,155 @@ grep -rn 'SQLDialect\|FormatQuery\|FormatGroupBy' --include='*.go' .
 Almost certainly nothing. Before v2 there was no way to inject a dialect, so you
 could not have used one without forking the builder. If you *did* fork it, read
 `docs/DIALECTS.md` in the framework repo — the fork is now unnecessary.
+
+### 5d. `CleanupJob does not implement core.IJob`
+
+Scheduled jobs never ran, on any version: `JobProvider.Boot` field-injected a zero-value
+scheduler instead of resolving the registered one, so every job was registered against one
+object and a different, empty one was started. Fixing that required a scheduler the
+framework controls, and `gocron` is now out of the module entirely.
+
+```bash
+grep -rn "gocron\|GetInterval()\|GetUnit()\|GetJob()" --include="*.go" . || echo "no jobs"
+```
+
+Convert each job:
+
+```go
+// BEFORE
+func (j CleanupJob) GetInterval() uint64   { return 1 }
+func (j CleanupJob) GetUnit() gocron.Unit  { return gocron.Hours }
+func (j CleanupJob) GetJob() (any, []any)  { return func() { j.do() }, nil }
+
+// AFTER — note the pointer receiver
+func (j *CleanupJob) Schedule() core.JobSchedule {
+    return core.JobSchedule{
+        Every:        time.Hour,
+        RunAtStartup: true,   // decide per job; not expressible before
+        AllowOverlap: false,  // decide per job; not expressible before
+    }
+}
+
+func (j *CleanupJob) Run(ctx context.Context) error {
+    j.do()
+    return nil
+}
+```
+
+Unit conversion:
+
+| Before | After |
+|--------|-------|
+| `30, gocron.Seconds` | `Every: 30 * time.Second` |
+| `5, gocron.Minutes` | `Every: 5 * time.Minute` |
+| `1, gocron.Hours` | `Every: time.Hour` |
+| `1, gocron.Days` | `Every: 24 * time.Hour` |
+
+Register jobs as **pointers**. A job registered by value that carries
+`container:"inject"` tags is now a loud error rather than a silently unfilled struct.
+
+```bash
+grep -rn "AddJob(" --include="*.go" .
+```
+
+```go
+jobProvider.AddJob(&CleanupJob{})   // not CleanupJob{}
+```
+
+Then remove the dependency:
+
+```bash
+go mod tidy && grep -n gocron go.mod || echo "gocron gone"
+```
+
+Cron expressions are not supported. If you had one, schedule at the finest interval you
+care about and check the clock inside `Run`.
+
+**Then actually watch a job fire.** Nothing in the framework's own repo noticed that jobs
+never ran, so a green build proves nothing here. Set one to `Every: 5 * time.Second`
+temporarily and confirm it logs.
+
+### 5e. `Make(...)` now returns an error where it used to return nil
+
+`Container.Make` on a pointer-to-struct fills its `container:"inject"` fields; it does not
+hand back the registered singleton. Both used to return `nil`, so a caller expecting the
+singleton got a zero value and no error — which is how the framework's own job scheduler
+came to tick empty.
+
+```bash
+grep -rn "\.Make(&" --include="*.go" .
+```
+
+For each hit, decide which you meant:
+
+```go
+// You wanted the registered instance
+var scheduler *job.Scheduler
+if err := c.Resolve(&scheduler); err != nil { return err }
+
+// You wanted this struct's dependencies filled — keep Make
+resolver := &MyThing{}
+if err := c.Make(resolver); err != nil { return err }
+```
+
+This is a **runtime** error, not a compile error, and it only fires when a binding exists
+for that type. The message names the method you wanted. Boot the app and read the log.
+
+### 5f. `NewCorsMiddleware` panics on wildcard-plus-credentials
+
+Browsers reject `Access-Control-Allow-Origin: *` together with
+`Access-Control-Allow-Credentials: true`, so that pair was a silent failure with no
+diagnostic. It is now refused at construction.
+
+```bash
+grep -rn "AllowCredentials" --include="*.go" . -B 5 -A 2
+```
+
+Any hit where `AllowCredentials: true` sits with `AllowedOrigins: []string{"*"}` — **or
+with no `AllowedOrigins` at all**, which also means "all origins":
+
+```go
+// BEFORE — constructed fine, failed in every browser
+AllowedOrigins: []string{"*"}, AllowCredentials: true
+
+// AFTER
+AllowedOrigins: []string{"https://app.example.com"}, AllowCredentials: true
+// A wildcard *within* an origin is still fine:
+AllowedOrigins: []string{"https://*.example.com"}, AllowCredentials: true
+```
+
+For a policy built from configuration you do not control, use
+`NewCorsMiddlewareChecked(options) (*Cors, error)`.
+
+Nothing that worked stops working: if the pair was configured, the credentialed requests
+were already failing.
+
+### 5g. `core.MongoDb` is gone
+
+```bash
+grep -rn "core.MongoDb\|MongoDb\b" --include="*.go" . || echo "not used"
+```
+
+It was a `DbType` constant with no driver behind it, so `driver: mongo` failed at boot
+while the exported constant advertised support. If you referenced it, you were not
+connecting to Mongo through this framework.
+
+### 5h. MySQL only: `ON CONFLICT … DO UPDATE` now errors
+
+```bash
+grep -rn "DoUpdate(" --include="*.go" .
+```
+
+Postgres is unaffected. On MySQL the translation to `ON DUPLICATE KEY UPDATE` silently
+dropped the conflict-target columns, and MySQL keys off *any* unique index — so on a table
+with more than one, the row that got updated was not yours to control. Either opt in, having
+confirmed the table has exactly one unique index:
+
+```go
+dialect := mysqlv2.MySQLDialect{AllowUnfaithfulUpsert: true}
+```
+
+or use `DoNothing()` (unaffected) or an explicit read-then-write in a transaction.
 
 Then:
 
@@ -572,7 +933,35 @@ core interface is rebound, because only the last registration wins. Move any
 override provider to the end of your `AddProvider` sequence, and watch the boot
 log for the warning.
 
-### 7f. Route middleware no longer leaks across methods
+### 7f. A route whose DTO has no body parser now fails at boot
+
+A handler taking a DTO whose `ContentType()` returns something no parser handles used to
+reach the request path and panic there. It is now rejected at route registration, with the
+route name and the offending type in the message. If the app stops booting with
+
+```
+route POST /widgets (widgets.create): DTO app.BrokenDto returns an empty ContentType(),
+so no body parser can be selected; return one of application/json, multipart/form-data, query
+```
+
+fix the DTO's `ContentType()`. This is a bug the framework was previously serving 500s for.
+
+### 7g. 404, 405 and error handlers now negotiate
+
+An unknown route used to return an empty body; `405` was chi's bare default with nothing
+registered. Both now return the standard envelope to an API client and plain text to a
+browser, and `405` names the method it rejected. `processInputParsingError` and
+`processJwtAuthError` used to write literally empty bodies and now say what happened.
+
+```bash
+# Tests asserting on an empty 404/405/401 body
+grep -rn "StatusNotFound\|StatusMethodNotAllowed\|StatusUnauthorized" --include="*_test.go" .
+```
+
+Status codes are unchanged. Your own `SetNotFound` handler still wins, so if you registered
+one, nothing changes for 404.
+
+### 7h. Route middleware no longer leaks across methods
 
 Route-scoped middleware used to be re-attached to any later route with a matching
 pattern, so registering `GET /x` then `PUT /x` fired a side-effecting middleware
@@ -624,6 +1013,58 @@ Only if useful to you.
   `GROUP BY `, which is a syntax error. If you worked around that with raw SQL,
   you can drop the workaround.
 
+- **`testsupport`** — a database test harness. If you hand-rolled one (connect, wait for
+  the engine, migrate, truncate between tests, skip when nothing is running), you can
+  probably delete it:
+
+  ```go
+  func TestMain(m *testing.M) {
+      testsupport.AddMigration(migrations.All()...)
+      testsupport.Main(m)
+  }
+
+  func TestSavingAWidget(t *testing.T) {
+      db := testsupport.RequireDatabase(t)
+      // ... db.Session(), db.CountRows(t, "widgets"), db.Exec(t, ...)
+  }
+  ```
+
+  `EachDatabase` runs the same test against Postgres and MySQL as subtests. Read
+  `docs/TESTING.md` in the framework repo — in particular the note that
+  `IsolateByRollback` only works if the code under test uses the harness's session.
+
+- **Rate limiting.** There was none, anywhere, on any version — including on login and
+  OTP endpoints. If you wrote your own, compare:
+
+  ```go
+  routeProvider.AddMiddleware(
+      http.NewMiddlewareConfigBuilder().
+          WithPattern("/session/login").
+          AsFilter().
+          WithMiddleware(middleware.NewRateLimitMiddleware(middleware.PerMinute(5))).
+          Build(),
+  )
+  ```
+
+  Note the two things worth knowing before relying on it: limits are **per-instance**
+  (the default store is in process memory, so N replicas allow N times the rate), and
+  `X-Forwarded-For` is **ignored** unless you set `TrustForwardedFor` — trusting it when
+  the app is not behind a proxy lets any client pick its own bucket. `docs/RATE_LIMITING.md`.
+
+- **Serving a built SPA.** `PublicController` serves `/public/*` and returns 400 for
+  anything else, so a deep link could not work at all. `controller.NewSpaController("web/dist")`
+  serves real files with an `index.html` fallback, `no-store` on the entry document and
+  immutable caching on hashed assets. Mount it **last** — it claims a catch-all.
+  `docs/SPA.md`.
+
+- **A `role` claim on generated JWTs**, readable with `auth.RoleFromClaims`. It is
+  informational: `JwtMiddleware` still resolves the user, because a signed token is frozen
+  for its lifetime and a role baked into one would outlive a demotion. Use the claim for UI,
+  not for authorisation.
+
+- **Localised validation messages** under `validation.<rule>` in your translation files,
+  and `validator.DefaultMessages()` to see what you are overriding. `docs/VALIDATION.md`.
+
 ---
 
 ## Verification
@@ -657,6 +1098,40 @@ curl -i http://localhost:8080/api/<a-role-guarded-route>
 
 # 7. Every response shape a client parses still matches — diff against a
 #    v1.5.1 capture if you have one.
+
+# 8. A scheduled job actually fires. Set one to Every: 5 * time.Second and watch
+#    the log. Jobs never ran on any prior version and nothing noticed, so a green
+#    build proves nothing here.
+
+# 9. A CSRF token can be obtained and is then accepted.
+TOKEN=$(curl -s -c /tmp/gj http://localhost:8080/csrf \
+  | sed 's/.*"csrf_token":"\([^"]*\)".*/\1/')
+curl -i -b /tmp/gj -X POST -H "X-CSRF-Token: $TOKEN" \
+  http://localhost:8080/<a-mutating-route>
+
+# 10. A malformed body is a 400 envelope, not a 301 to the Referer.
+curl -i -X POST -H 'Content-Type: application/json' --data '{"a":' \
+  http://localhost:8080/api/<a-body-route>
+
+# 11. An unknown route returns the envelope to an API client.
+curl -i -H 'Accept: application/json' \
+  http://localhost:8080/api/definitely-not-a-route
+
+# 12. Validation errors carry the wire field name and a readable message.
+curl -s -X POST -H 'Content-Type: application/json' --data '{}' \
+  http://localhost:8080/api/<a-validated-route>
+
+# 13. Every ${VAR} in config/ is set in this environment.
+grep -rn '\${' config/
+```
+
+If you use MySQL:
+
+```bash
+# 14. orm.Create inserts a row and the entity comes back with its id.
+#     The ORM ignored the session's dialect entirely before this release, so every
+#     ORM query against MySQL emitted Postgres SQL. This one needs a real insert
+#     against a real server — no unit test in the framework caught it.
 ```
 
 If you run more than one database:
@@ -679,3 +1154,9 @@ When you finish, report:
 3. Anything you could not resolve, with the exact error.
 4. Any test you added.
 5. Anything you deliberately left alone, and why.
+6. For each of the three things that never worked — a job firing (5d), `orm.Create`
+   on MySQL (Phase 6), a CSRF-protected request with a token from `/csrf` (4b) —
+   state whether you actually observed it working, or say plainly that you did not.
+   A green build is not evidence for any of them.
+7. Every `${VAR}` in `config/` that you could not confirm is set, and in which
+   environment.
