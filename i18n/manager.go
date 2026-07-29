@@ -26,8 +26,39 @@ func GetManager() core.Ii18nManager {
 
 type Manager struct {
 	Configs map[string]core.Ii18nConfig
+
+	// FallbackTag names the locale to use when the requested one has no config.
+	// I18nProvider sets it to i18n.lang.default.
+	FallbackTag string
 }
 
+// GetConfig returns the config for locale, falling back to FallbackTag when the
+// requested locale has none.
+//
+// It used to return the raw map lookup, so an unconfigured locale yielded a nil
+// core.Ii18nConfig and the very next call — cfg.GetString(code) in Translation —
+// dereferenced it. That was survivable only because I18nProvider panicked at boot
+// if any configured locale's file was missing; now that a missing file degrades
+// instead of taking the app down, GetConfig has to hold up the other end.
 func (thiz Manager) GetConfig(locale string) core.Ii18nConfig {
-	return thiz.Configs[locale]
+	if cfg, ok := thiz.Configs[locale]; ok && cfg != nil {
+		return cfg
+	}
+
+	if thiz.FallbackTag != "" && thiz.FallbackTag != locale {
+		if cfg, ok := thiz.Configs[thiz.FallbackTag]; ok && cfg != nil {
+			return cfg
+		}
+	}
+
+	// Nothing configured at all. An empty config resolves every code to "" rather
+	// than nil-dereferencing inside Translation.
+	return emptyConfig{}
 }
+
+// emptyConfig is the null object GetConfig returns when no locale resolves.
+type emptyConfig struct{}
+
+func (emptyConfig) GetString(string) string { return "" }
+
+var _ core.Ii18nConfig = emptyConfig{}

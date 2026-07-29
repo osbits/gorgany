@@ -128,8 +128,49 @@ func (c *Container) bind(resolver interface{}, name string, isSingleton, isLazy 
 	if _, ok := c.bindings[instType]; !ok {
 		c.bindings[instType] = make(map[string]*binding)
 	}
+
+	// Rebinding is intentionally still allowed: overwriting is currently the only
+	// mechanism an app has to override a framework service such as
+	// core.IValidator or core.IDataContext, and taking that away would break every
+	// app that does it. But it used to happen with no signal at all, so a provider
+	// registered in the wrong order silently won and the symptom showed up much
+	// later as "my override isn't being used".
+	//
+	// Overriding a core interface now logs at warn. The supported pattern is to
+	// register the override provider LAST.
+	if _, replaced := c.bindings[instType][name]; replaced && isCoreAbstraction(instType) {
+		log.Log().Warnf(
+			"container: rebinding %s%s — the previous binding is discarded. "+
+				"This is supported, but only the last registration wins, so register "+
+				"your override provider last.",
+			instType, namedSuffix(name))
+	}
+
 	c.bindings[instType][name] = &binding{resolver: resolver, concrete: preInst, isSingleton: isSingleton}
 	return nil
+}
+
+// coreAbstractionPkg is the import path whose interfaces are the framework's
+// extension points.
+const coreAbstractionPkg = "github.com/osbits/gorgany/app/core"
+
+// isCoreAbstraction reports whether t is one of the framework's core interfaces.
+//
+// The warning is scoped to those deliberately: an app rebinding its own service is
+// ordinary, whereas replacing a framework contract is the case where registration
+// order decides behaviour and silence costs debugging time.
+func isCoreAbstraction(t reflect.Type) bool {
+	if t.Kind() != reflect.Interface {
+		return false
+	}
+	return t.PkgPath() == coreAbstractionPkg
+}
+
+func namedSuffix(name string) string {
+	if name == "" {
+		return ""
+	}
+	return fmt.Sprintf("[%s]", name)
 }
 
 func (c *Container) validateResolver(fnType reflect.Type) error {

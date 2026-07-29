@@ -66,7 +66,7 @@ func (thiz *StandardAuthStrategy) NewSessionWithoutUser(ctx context.Context) (co
 		Value:    session.GetId(),
 		Path:     "/",
 		MaxAge:   int(thiz.sessionManager.GetSessionLifetime().Seconds()), // Set explicit MaxAge to match session lifetime
-		Secure:   true,
+		Secure:   SessionCookieSecure(),
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode, // Use StrictMode for better CSRF protection
 		Domain:   viper.GetString("auth.session.cookie.domain"),
@@ -182,7 +182,7 @@ func (thiz *StandardAuthStrategy) Logout(ctx context.Context) {
 		Value:    "",
 		Path:     "/",
 		MaxAge:   -1, // Negative value means delete cookie immediately
-		Secure:   true,
+		Secure:   SessionCookieSecure(),
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode, // Use StrictMode for better CSRF protection
 		Domain:   viper.GetString("auth.session.cookie.domain"),

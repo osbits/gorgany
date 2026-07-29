@@ -15,16 +15,62 @@ import (
 	error2 "github.com/osbits/gorgany/err"
 	"github.com/osbits/gorgany/service/cache"
 	"github.com/osbits/gorgany/util"
+	"github.com/spf13/viper"
 )
 
+// Upload limit defaults. These were compile-time constants, so an app that needed
+// an 11 MB upload had to read Request().BodyReader by hand. They are now the
+// defaults behind the config keys below.
 const (
-	// Maximum allowed size for multipart form data in bytes
-	maxMultipartSize = 32 * 1024 * 1024 // 32MB
-	// Maximum number of files allowed in a single request
-	maxFiles = 100
-	// Maximum size of a single file in bytes
-	maxFileSize = 10 * 1024 * 1024 // 10MB
+	// DefaultMaxMultipartSize is the default cap on total multipart form size.
+	DefaultMaxMultipartSize int64 = 32 * 1024 * 1024 // 32MB
+	// DefaultMaxFiles is the default cap on files in a single request.
+	DefaultMaxFiles = 100
+	// DefaultMaxFileSize is the default cap on one file.
+	DefaultMaxFileSize int64 = 10 * 1024 * 1024 // 10MB
 )
+
+// Config keys for the upload limits. All three are in bytes except maxFiles.
+const (
+	// ConfigMaxMultipartSize caps total multipart form size, in bytes.
+	ConfigMaxMultipartSize = "http.upload.maxMultipartSize"
+	// ConfigMaxFiles caps the number of files in a single request.
+	ConfigMaxFiles = "http.upload.maxFiles"
+	// ConfigMaxFileSize caps the size of one file, in bytes.
+	ConfigMaxFileSize = "http.upload.maxFileSize"
+)
+
+// uploadLimits resolves the effective upload limits from config.
+//
+// A value of 0 or less means "unset", so the default applies; that keeps the
+// pre-v2 numbers in force for every app that configures nothing. To lift a limit
+// entirely, set it to a deliberately large number rather than to zero — an
+// accidentally empty config value must not silently disable a limit.
+type uploadLimits struct {
+	MaxMultipartSize int64
+	MaxFiles         int
+	MaxFileSize      int64
+}
+
+func resolveUploadLimits() uploadLimits {
+	limits := uploadLimits{
+		MaxMultipartSize: DefaultMaxMultipartSize,
+		MaxFiles:         DefaultMaxFiles,
+		MaxFileSize:      DefaultMaxFileSize,
+	}
+
+	if configured := viper.GetInt64(ConfigMaxMultipartSize); configured > 0 {
+		limits.MaxMultipartSize = configured
+	}
+	if configured := viper.GetInt(ConfigMaxFiles); configured > 0 {
+		limits.MaxFiles = configured
+	}
+	if configured := viper.GetInt64(ConfigMaxFileSize); configured > 0 {
+		limits.MaxFileSize = configured
+	}
+
+	return limits
+}
 
 // multipartTypeCache stores reflection information for types to avoid repeated lookups
 var multipartTypeCache = struct {
@@ -44,23 +90,25 @@ type MultipartParser struct {
 func (p *MultipartParser) Parse(arg interface{}) error {
 	multipartForm := p.message.Request().GetMultipartFormValues()
 
+	limits := resolveUploadLimits()
+
 	// Validate total form size
-	if err := p.validateFormSize(multipartForm); err != nil {
+	if err := p.validateFormSize(multipartForm, limits); err != nil {
 		return err
 	}
 
 	// Validate number of files
-	if len(multipartForm.File) > maxFiles {
+	if len(multipartForm.File) > limits.MaxFiles {
 		return &error2.ValidationErrors{
 			error2.ValidationError{
 				Field: "files",
-				Err:   fmt.Sprintf("Too many files. Maximum allowed is %d", maxFiles),
+				Err:   fmt.Sprintf("Too many files. Maximum allowed is %d", limits.MaxFiles),
 			},
 		}
 	}
 
 	// Validate individual file sizes
-	if err := p.validateFileSizes(multipartForm.File); err != nil {
+	if err := p.validateFileSizes(multipartForm.File, limits); err != nil {
 		return err
 	}
 
@@ -111,19 +159,19 @@ func (p *MultipartParser) Parse(arg interface{}) error {
 }
 
 // validateFormSize checks if the total form size is within limits
-func (p *MultipartParser) validateFormSize(form *multipart.Form) error {
-	totalSize := 0
+func (p *MultipartParser) validateFormSize(form *multipart.Form, limits uploadLimits) error {
+	var totalSize int64
 	for _, files := range form.File {
 		for _, file := range files {
-			totalSize += int(file.Size)
+			totalSize += file.Size
 		}
 	}
 
-	if totalSize > maxMultipartSize {
+	if totalSize > limits.MaxMultipartSize {
 		return &error2.ValidationErrors{
 			error2.ValidationError{
 				Field: "form",
-				Err:   fmt.Sprintf("Total form size exceeds maximum allowed size of %d bytes", maxMultipartSize),
+				Err:   fmt.Sprintf("Total form size exceeds maximum allowed size of %d bytes", limits.MaxMultipartSize),
 			},
 		}
 	}
@@ -131,14 +179,14 @@ func (p *MultipartParser) validateFormSize(form *multipart.Form) error {
 }
 
 // validateFileSizes checks if individual file sizes are within limits
-func (p *MultipartParser) validateFileSizes(files map[string][]*multipart.FileHeader) error {
+func (p *MultipartParser) validateFileSizes(files map[string][]*multipart.FileHeader, limits uploadLimits) error {
 	for fieldName, fileList := range files {
 		for _, file := range fileList {
-			if file.Size > maxFileSize {
+			if file.Size > limits.MaxFileSize {
 				return &error2.ValidationErrors{
 					error2.ValidationError{
 						Field: sanitizeFieldName(fieldName),
-						Err:   fmt.Sprintf("File size exceeds maximum allowed size of %d bytes", maxFileSize),
+						Err:   fmt.Sprintf("File size exceeds maximum allowed size of %d bytes", limits.MaxFileSize),
 					},
 				}
 			}
