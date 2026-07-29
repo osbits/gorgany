@@ -10,6 +10,7 @@ import (
 	"github.com/osbits/gorgany/app/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -779,4 +780,78 @@ func (m *MockUser) GetPassword() string {
 
 func (m *MockUser) GetRole() core.UserRole {
 	return m.role
+}
+
+// TestSessionCookieCarriesTheConfiguredSecureFlag closes the T3.6 assertion gap.
+// The earlier work tested SessionCookieSecure() in isolation, which proved the
+// config helper worked but not that the cookie actually written by
+// NewSessionWithoutUser carries its value — and the emitted cookie is the whole
+// point of the fix, since a hard-coded Secure:true is what broke plain-HTTP login.
+func TestSessionCookieCarriesTheConfiguredSecureFlag(t *testing.T) {
+	tests := []struct {
+		name       string
+		configure  func(t *testing.T)
+		wantSecure bool
+	}{
+		{
+			name:       "unset defaults to Secure",
+			configure:  func(t *testing.T) { withCookieSecureConfig(t, false, false) },
+			wantSecure: true,
+		},
+		{
+			name:       "explicitly disabled for local http dev",
+			configure:  func(t *testing.T) { withCookieSecureConfig(t, true, false) },
+			wantSecure: false,
+		},
+		{
+			name:       "explicitly enabled",
+			configure:  func(t *testing.T) { withCookieSecureConfig(t, true, true) },
+			wantSecure: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.configure(t)
+
+			mockStorage := new(MockSessionStorage)
+			mockSessionFactory := new(MockSessionFactory)
+			mockMsgCtx := new(MockMessageContext)
+			mockCookieManager := new(MockCookieManager)
+
+			strategy := &StandardAuthStrategy{
+				sessionManager: mockStorage,
+				sessionFactory: mockSessionFactory,
+			}
+			ctx := context.WithValue(context.Background(), core.MessageContextKey, mockMsgCtx)
+
+			mockStorage.On("GetSessionLifetime").Return(time.Duration(3600))
+			mockStorage.On("GetSessionById", mock.Anything).Return(nil)
+			mockStorage.On("AddSession", mock.Anything).Return()
+			mockSessionFactory.On("CreateSession", mock.Anything, mock.Anything).Return(&Session{
+				id:         "test-session-id",
+				expiry:     time.Now().Add(time.Hour),
+				attributes: make(map[string]string),
+			})
+			mockMsgCtx.On("GetCookieManager").Return(mockCookieManager)
+
+			// Capture the cookie the strategy actually emits.
+			var emitted *http.Cookie
+			mockCookieManager.On("SetCookie", mock.Anything).
+				Run(func(args mock.Arguments) { emitted = args.Get(0).(*http.Cookie) }).
+				Return()
+
+			_, err := strategy.NewSessionWithoutUser(ctx)
+			require.NoError(t, err)
+
+			require.NotNil(t, emitted, "a session cookie must be written")
+			assert.Equal(t, core.SessionCookieName, emitted.Name)
+			assert.Equal(t, tt.wantSecure, emitted.Secure,
+				"the Secure attribute must follow auth.session.cookie.secure")
+
+			// The other hardening attributes must not have regressed.
+			assert.True(t, emitted.HttpOnly, "HttpOnly must stay on regardless")
+			assert.Equal(t, "/", emitted.Path)
+		})
+	}
 }

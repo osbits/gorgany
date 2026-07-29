@@ -43,6 +43,19 @@ func (m *routerTestMessage) Request() core.IRequestScope {
 	return &routerTestRequest{raw: m.r}
 }
 
+func (m *routerTestMessage) Response() core.IResponseScope {
+	return &routerTestResponse{w: m.w}
+}
+
+type routerTestResponse struct {
+	core.IResponseScope
+	w http.ResponseWriter
+}
+
+func (r *routerTestResponse) Header() http.Header            { return r.w.Header() }
+func (r *routerTestResponse) SetHeader(key, value string)    { r.w.Header().Set(key, value) }
+func (r *routerTestResponse) RawWriter() http.ResponseWriter { return r.w }
+
 type routerTestRequest struct {
 	core.IRequestScope
 	raw *http.Request
@@ -342,4 +355,49 @@ func TestNamedRoutesAreStillRegistered(t *testing.T) {
 
 	require.NotNil(t, r.RouteByName("widgets.show"))
 	assert.Equal(t, "/widgets/1", r.UrlByName("widgets.show", map[string]any{"id": 1}))
+}
+
+// corsHeaderMiddleware stands in for CorsMiddleware: it sets a header and calls
+// through, which is what a preflight handler has to cooperate with.
+type corsHeaderMiddleware struct{ ran *bool }
+
+func (m corsHeaderMiddleware) Handle(next func(core.HttpMessage)) func(core.HttpMessage) {
+	return func(message core.HttpMessage) {
+		*m.ran = true
+		message.Response().SetHeader("Access-Control-Allow-Origin", "*")
+		next(message)
+	}
+}
+
+// TestGlobalFilterStillRunsOnOptions pins the claim MIGRATION_v2.md and
+// docs/DIALECTS.md both make to app authors: now that OPTIONS is answered by a
+// generic 204 responder rather than the route handler, CORS headers must be set by
+// a /** *filter*, which still runs. If chi ordered the preflight responder ahead of
+// the filter chain, that advice would be wrong and every migrated app's preflight
+// would lose its CORS headers.
+func TestGlobalFilterStillRunsOnOptions(t *testing.T) {
+	r := newTestRouter(t)
+
+	ran := false
+	r.RegisterMiddleware(grghttp.NewMiddlewareConfigBuilder().
+		WithPattern("/**").
+		AsFilter().
+		WithMiddleware(corsHeaderMiddleware{ran: &ran}).
+		Build())
+
+	r.RegisterRoute(handlerRoute{
+		pattern: "/widgets/{id}",
+		method:  core.Method(http.MethodDelete),
+		name:    "widgets.delete",
+		handler: func(core.HttpMessage) { t.Fatal("the route handler must not run on OPTIONS") },
+	})
+
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, httptest.NewRequest(http.MethodOptions, "/widgets/1", nil))
+
+	assert.True(t, ran, "a /** filter must still run on an OPTIONS request")
+	assert.Equal(t, "*", rec.Header().Get("Access-Control-Allow-Origin"),
+		"headers set by the filter must survive onto the 204")
+	assert.Equal(t, http.StatusNoContent, rec.Code)
+	assert.NotEmpty(t, rec.Header().Get("Allow"))
 }
