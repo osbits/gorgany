@@ -10,8 +10,12 @@ import (
 // DbType represents the type of database connection
 type DbType string
 
+// Driver names as written under `databases.<name>.driver`. They are the keys of
+// the driver registry in db/sql/driver; the framework's own drivers are registered
+// by db/sql/driver/builtin.
 const (
 	GormPostgreSQL DbType = "postgres_gorm"
+	GormMySQL      DbType = "mysql_gorm"
 	MongoDb        DbType = "mongo"
 )
 

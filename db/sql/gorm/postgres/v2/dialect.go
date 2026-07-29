@@ -43,6 +43,27 @@ func (d *PostgresDialect) FormatFrom(table string, alias string) (string, []inte
 	return fmt.Sprintf("FROM %s", table), nil, nil
 }
 
+// formatFromClause renders a FROM clause, including the subquery form that
+// FormatFrom's (table, alias) signature cannot express.
+func (d *PostgresDialect) formatFromClause(from *dbCore.FromClause) (string, []interface{}, error) {
+	if from == nil {
+		return "", nil, nil
+	}
+
+	if from.IsSubquery {
+		if from.Subquery == nil {
+			return "", nil, fmt.Errorf("postgres: FROM is marked as a subquery but carries no query")
+		}
+		sql, args, err := d.FormatSubquery(from.Subquery, from.Alias)
+		if err != nil {
+			return "", nil, err
+		}
+		return "FROM " + sql, args, nil
+	}
+
+	return d.FormatFrom(from.Table, from.Alias)
+}
+
 // FormatJoin formats a JOIN clause
 func (d *PostgresDialect) FormatJoin(join *dbCore.JoinClause) (string, []interface{}, error) {
 	var parts []string
@@ -472,9 +493,14 @@ func (d *PostgresDialect) formatSelect(query *dbCore.Query) (string, []interface
 		parts = append(parts, "SELECT *")
 	}
 
-	// Add FROM clause
+	// Add FROM clause.
+	//
+	// The subquery branch was missing before v2: formatSelect passed only
+	// From.Table and From.Alias to FormatFrom and never looked at
+	// From.IsSubquery, so a query built with Builder.Subquery() rendered
+	// "FROM  AS alias" — the subquery silently dropped, leaving invalid SQL.
 	if query.From != nil {
-		fromSQL, fromArgs, err := d.FormatFrom(query.From.Table, query.From.Alias)
+		fromSQL, fromArgs, err := d.formatFromClause(query.From)
 		if err != nil {
 			return "", nil, err
 		}
