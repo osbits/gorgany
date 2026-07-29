@@ -499,23 +499,54 @@ func TestMySQLQueriesRoundTripThroughTheDialect(t *testing.T) {
 	require.NoError(t, err)
 	defer session.Close()
 
-	// INSERT with ON DUPLICATE KEY UPDATE (translated from ON CONFLICT).
-	insert := session.Query().
+	// ON CONFLICT ... DO UPDATE is refused by the default dialect (item D): the
+	// translation to ON DUPLICATE KEY UPDATE drops the conflict target, and MySQL keys
+	// off any unique index instead. Asserted here as well as in the unit tests, because
+	// a refusal that only exists as an expected string is a refusal nobody has seen.
+	refused := session.Query().
 		Insert("dialect_probe").
 		Columns("id", "region", "name", "amount").
 		Values(1, "north", "ann", 10).
 		OnConflict("id").
 		DoUpdate(map[string]interface{}{"amount": 20})
 
-	result := session.Executor().Exec(ctxBackground(), insert)
-	require.NoError(t, result.Error, "the translated upsert must be valid MySQL")
+	_, _, refusedErr := refused.ToSQL()
+	require.Error(t, refusedErr, "the default MySQL dialect must refuse DO UPDATE")
+	assert.True(t, dbCore.IsUnsupported(refusedErr))
+
+	// With the opt-in, the SQL it produces has to be accepted by a real MySQL 8 — which
+	// is the half a string assertion cannot prove.
+	optedIn := mysqlv2.NewBuilderWithDialect(&mysqlv2.MySQLDialect{AllowUnfaithfulUpsert: true}).
+		Insert("dialect_probe").
+		Columns("id", "region", "name", "amount").
+		Values(1, "north", "ann", 10).
+		OnConflict("id").
+		DoUpdate(map[string]interface{}{"amount": 20})
+
+	result := session.Executor().Exec(ctxBackground(), optedIn)
+	require.NoError(t, result.Error, "the opted-in upsert must be valid MySQL")
 
 	// The same statement again exercises the ON DUPLICATE KEY branch.
-	require.NoError(t, session.Executor().Exec(ctxBackground(), insert).Error)
+	require.NoError(t, session.Executor().Exec(ctxBackground(), optedIn).Error)
 
 	var amount int
 	require.NoError(t, gormDb.Raw(`SELECT amount FROM dialect_probe WHERE id = 1`).Scan(&amount).Error)
 	assert.Equal(t, 20, amount, "the second insert must have taken the UPDATE branch")
+
+	// DO NOTHING is faithful and needs no opt-in, so it must still work through the
+	// session's own dialect.
+	doNothing := session.Query().
+		Insert("dialect_probe").
+		Columns("id", "region", "name", "amount").
+		Values(1, "north", "ann", 99).
+		OnConflict("id").
+		DoNothing()
+
+	require.NoError(t, session.Executor().Exec(ctxBackground(), doNothing).Error,
+		"ON CONFLICT DO NOTHING is unaffected by the DO UPDATE refusal")
+
+	require.NoError(t, gormDb.Raw(`SELECT amount FROM dialect_probe WHERE id = 1`).Scan(&amount).Error)
+	assert.Equal(t, 20, amount, "DO NOTHING must not have overwritten the row")
 
 	// ROLLUP in its MySQL position, under ONLY_FULL_GROUP_BY.
 	rollup := session.Query().
