@@ -401,3 +401,60 @@ func TestGlobalFilterStillRunsOnOptions(t *testing.T) {
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 	assert.NotEmpty(t, rec.Header().Get("Allow"))
 }
+
+// brokenDto forgets to declare a ContentType, so no body parser can be built for it.
+type brokenDto struct{ Name string }
+
+func (brokenDto) ContentType() core.ContentType { return "" }
+
+// TestAMisdeclaredDtoFailsAtRouteRegistration is the A3 requirement at the boundary
+// the brief specified: "A misdeclared DTO should stop the server starting, not serve
+// 500s."
+//
+// Previously such a route registered happily and then panicked per request — on a nil
+// parser dereference inside the resolver, and again via reflect.Call with too few
+// arguments once `continue` had skipped the argument append. v2's RecoveryMiddleware
+// turned both into a 500, which is better than a dropped connection and also why they
+// were easy to miss.
+func TestAMisdeclaredDtoFailsAtRouteRegistration(t *testing.T) {
+	recovered := func() (r any) {
+		defer func() { r = recover() }()
+		newTestRouter(t).RegisterRoute(handlerRoute{
+			pattern: "/widgets",
+			method:  core.Method(http.MethodPost),
+			name:    "widgets.create",
+			handler: func(msg core.HttpMessage, dto brokenDto) {},
+		})
+		return nil
+	}()
+
+	require.NotNil(t, recovered,
+		"a route whose DTO has no parser must fail at registration")
+
+	err, ok := recovered.(error)
+	require.Truef(t, ok, "expected an error, got %T", recovered)
+
+	// The message must locate the route AND name the DTO and the fix.
+	assert.Contains(t, err.Error(), "route POST /widgets")
+	assert.Contains(t, err.Error(), "widgets.create")
+	assert.Contains(t, err.Error(), "brokenDto")
+	assert.Contains(t, err.Error(), "empty ContentType()")
+	assert.Contains(t, err.Error(), string(core.ApplicationJson))
+	t.Logf("registration refused with: %v", err)
+}
+
+// TestAWellFormedRouteStillRegisters guards against the new check rejecting valid
+// handlers.
+func TestAWellFormedRouteStillRegisters(t *testing.T) {
+	r := newTestRouter(t)
+
+	require.NotPanics(t, func() {
+		r.RegisterRoute(handlerRoute{
+			pattern: "/widgets/{id}",
+			method:  core.Method(http.MethodGet),
+			name:    "widgets.show",
+			handler: func(msg core.HttpMessage, id string) {},
+		})
+	})
+	require.NotNil(t, r.RouteByName("widgets.show"))
+}

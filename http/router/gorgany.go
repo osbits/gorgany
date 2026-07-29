@@ -103,6 +103,16 @@ func (r *ChiRouterAdapter) RegisterRoute(rc core.IRouteConfig) {
 	pattern := rc.Pattern()
 	method := string(rc.GetMethod())
 
+	// Reject a handler whose parameters cannot be resolved, at boot, rather than
+	// serving 500s for it. A DTO that does not implement core.HttpCommand, or whose
+	// ContentType() has no body parser, used to reach the request path and panic
+	// there — once on a nil parser dereference, once through reflect.Call with too
+	// few arguments. Both were developer errors in a type declaration, discoverable
+	// only in production.
+	if err := grghttp.ValidateHandlerParameters(rc.GetHandler()); err != nil {
+		panic(fmt.Errorf("route %s %s (%s): %w", method, pattern, rc.GetName(), err))
+	}
+
 	var mws []func(http.Handler) http.Handler
 
 	for _, cfg := range r.webCtx.GetMiddlewares() {

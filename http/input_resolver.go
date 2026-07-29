@@ -2,12 +2,13 @@ package http
 
 import (
 	"errors"
+	"fmt"
+	"github.com/go-chi/chi"
 	"github.com/osbits/gorgany/app/core"
 	error2 "github.com/osbits/gorgany/err"
-	"github.com/osbits/gorgany/log"
 	"github.com/osbits/gorgany/util"
-	"github.com/go-chi/chi"
 	"reflect"
+	"strings"
 )
 
 type InputResolver struct {
@@ -49,15 +50,28 @@ func (thiz *InputResolver) Resolve() ([]reflect.Value, error) {
 			}
 			indexOfPrimitiveArguemnt++
 		default:
+			// Both of the checks below used to log a warning and carry on, and both
+			// then panicked a line or two later.
+			//
+			// `continue` skipped the args append at the bottom of the loop, so the
+			// handler was later invoked through reflect.Call with too few arguments —
+			// a panic whose message points at reflection rather than at the DTO that
+			// is missing ContentType().
 			httpCommand, ok := arg.(core.HttpCommand)
 			if !ok {
-				log.Log().Warnf("Argument of %s handler is not core.HttpCommand instance", thiz.ReflectedHandler.Type().String())
-				continue
+				return nil, fmt.Errorf(
+					"handler %s takes parameter %d of type %s, which does not implement "+
+						"core.HttpCommand; a handler parameter must be core.HttpMessage, a "+
+						"primitive bound from a path parameter, or a DTO implementing "+
+						"core.HttpCommand",
+					thiz.ReflectedHandler.Type(), i, in)
 			}
-			parser := resolveBodyParser(httpCommand, thiz.Message)
 
+			// And this one warned about an unresolvable parser, did not return, and
+			// dereferenced nil on the very next line.
+			parser := resolveBodyParser(httpCommand, thiz.Message)
 			if parser == nil {
-				log.Log().Warnf("Body parser could not be resolved!")
+				return nil, unsupportedContentTypeError(in, httpCommand.ContentType())
 			}
 
 			err := parser.Parse(arg)
@@ -121,4 +135,109 @@ func checkAndAddIfValidationError(err error, validationErrors *error2.Validation
 		Field: core.GeneralError,
 		Err:   err.Error(),
 	})
+}
+
+// unsupportedContentTypeError describes a DTO whose ContentType has no parser.
+//
+// resolveBodyParser returns nil for anything that is not ApplicationJson,
+// MultipartFormData or Query — including the zero value, if a DTO simply forgets to
+// declare ContentType(). That is a developer error in a type declaration, and it
+// should never have been discoverable only as a runtime 500.
+func unsupportedContentTypeError(dto reflect.Type, contentType core.ContentType) error {
+	if contentType == "" {
+		return fmt.Errorf(
+			"DTO %s returns an empty ContentType(), so no body parser can be selected; "+
+				"return one of %s", dto, strings.Join(SupportedContentTypeNames(), ", "))
+	}
+	return fmt.Errorf(
+		"DTO %s returns ContentType %q, which has no body parser; supported: %s",
+		dto, contentType, strings.Join(SupportedContentTypeNames(), ", "))
+}
+
+// SupportedContentTypes are the content types a DTO may declare, i.e. the ones
+// resolveBodyParser can build a parser for.
+//
+// Kept beside resolveBodyParser deliberately: the two must not drift, or the
+// boot-time check would pass a DTO the request path then rejects.
+func SupportedContentTypes() []core.ContentType {
+	return []core.ContentType{
+		core.ApplicationJson,
+		core.MultipartFormData,
+		core.Query,
+	}
+}
+
+// SupportedContentTypeNames is SupportedContentTypes as strings, for error messages.
+func SupportedContentTypeNames() []string {
+	types := SupportedContentTypes()
+	names := make([]string, 0, len(types))
+	for _, t := range types {
+		names = append(names, string(t))
+	}
+	return names
+}
+
+// IsSupportedContentType reports whether a parser exists for contentType.
+func IsSupportedContentType(contentType core.ContentType) bool {
+	for _, supported := range SupportedContentTypes() {
+		if supported == contentType {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateHandlerParameters checks, at registration time, that every parameter of a
+// route handler can actually be resolved.
+//
+// A misdeclared DTO should stop the server starting, not serve 500s. The framework
+// previously had no such check, which is why e2e/fixture-app and
+// MIGRATE_TO_V2_PROMPT.md both suggested an app-side
+// `var _ = []core.HttpCommand{…}` compile-time list as a workaround; this replaces it
+// with a framework-side check that also covers ContentType, which no compile-time
+// list can.
+func ValidateHandlerParameters(handler core.HandlerFunc) error {
+	rt := reflect.TypeOf(handler)
+	if rt == nil || rt.Kind() != reflect.Func {
+		return fmt.Errorf("route handler must be a function, got %T", handler)
+	}
+
+	messageType := reflect.TypeOf((*core.HttpMessage)(nil)).Elem()
+
+	for i := 0; i < rt.NumIn(); i++ {
+		in := rt.In(i)
+
+		if in.Implements(messageType) {
+			continue
+		}
+		if isPrimitiveParameter(in) {
+			continue
+		}
+
+		// Anything else must be a DTO with a parseable ContentType.
+		instance, ok := reflect.New(in).Interface().(core.HttpCommand)
+		if !ok {
+			return fmt.Errorf(
+				"handler %s parameter %d of type %s does not implement core.HttpCommand",
+				rt, i, in)
+		}
+		if !IsSupportedContentType(instance.ContentType()) {
+			return unsupportedContentTypeError(in, instance.ContentType())
+		}
+	}
+
+	return nil
+}
+
+// isPrimitiveParameter reports whether in is bound from a path parameter.
+func isPrimitiveParameter(in reflect.Type) bool {
+	switch in.Kind() {
+	case reflect.String, reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return true
+	default:
+		return false
+	}
 }
