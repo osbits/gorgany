@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"reflect"
 	"testing"
 
 	"github.com/osbits/gorgany/app/core"
@@ -22,6 +23,12 @@ type TestStruct struct {
 	File     core.IFile `scheme:"file"`
 	File1    core.IFile `scheme:"file1"`
 	File2    core.IFile `scheme:"file2"`
+}
+
+type MultipartTestInterfaceStruct struct {
+	Data   map[string]any `scheme:"data"`
+	Values []any          `scheme:"values"`
+	Rows   []any          `scheme:"rows"`
 }
 
 // TestDomainStruct represents a domain struct for testing domain parsing
@@ -176,6 +183,54 @@ func TestMultipartParser_Parse_Basic(t *testing.T) {
 				t.Errorf("Optional = %v, want %v", got.Optional, tt.want.Optional)
 			}
 		})
+	}
+}
+
+func TestMultipartParser_Parse_InterfaceValues(t *testing.T) {
+	req := createMultipartForm(t, map[string]any{
+		"values":     []string{"181750", "false"},
+		"rows[0][a]": "1",
+		"rows[1][b]": "false",
+	}, nil)
+	parser := &MultipartParser{message: &mockHttpMessage{req: req}}
+
+	var got MultipartTestInterfaceStruct
+	if err := parser.Parse(&got); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if err := parser.initStruct(&got, map[string]any{
+		"data": map[string]any{
+			"rows": []map[string]string{{"a": "1"}},
+			"n":    "181750",
+			"b":    "false",
+			"null": nil,
+		},
+	}); err != nil {
+		t.Fatalf("unexpected map binding error: %v", err)
+	}
+
+	wantValues := []any{"181750", "false"}
+	if !reflect.DeepEqual(got.Values, wantValues) {
+		t.Errorf("Values = %#v, want %#v", got.Values, wantValues)
+	}
+
+	wantRows := []any{
+		map[string]string{"a": "1"},
+		map[string]string{"b": "false"},
+	}
+	if !reflect.DeepEqual(got.Rows, wantRows) {
+		t.Errorf("Rows = %#v, want %#v", got.Rows, wantRows)
+	}
+
+	wantData := map[string]any{
+		"rows": []map[string]string{{"a": "1"}},
+		"n":    "181750",
+		"b":    "false",
+		"null": nil,
+	}
+	if !reflect.DeepEqual(got.Data, wantData) {
+		t.Errorf("Data = %#v, want %#v", got.Data, wantData)
 	}
 }
 

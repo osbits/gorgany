@@ -6,6 +6,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"reflect"
 	"testing"
 
 	"github.com/osbits/gorgany/app/core"
@@ -26,6 +27,12 @@ type QueryTestStruct struct {
 type QueryTestNested struct {
 	Value string `scheme:"value"`
 	Count int    `scheme:"count"`
+}
+
+type QueryTestInterfaceStruct struct {
+	Data   map[string]any `scheme:"data"`
+	Values []any          `scheme:"values"`
+	Rows   []any          `scheme:"rows"`
 }
 
 // QueryTestDomainStruct represents a domain struct for testing query domain parsing
@@ -158,6 +165,55 @@ func TestQueryParser_Parse_Basic(t *testing.T) {
 	}
 }
 
+func TestQueryParser_Parse_InterfaceValues(t *testing.T) {
+	values := url.Values{
+		"values":     {"181750", "false"},
+		"rows[0][a]": {"1"},
+		"rows[1][b]": {"false"},
+	}
+	req := createQueryRequest(t, values)
+	parser := &QueryParser{message: &queryMockHttpMessage{req: req}}
+
+	var got QueryTestInterfaceStruct
+	if err := parser.Parse(&got); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if err := parser.initStruct(&got, map[string]any{
+		"data": map[string]any{
+			"rows": []map[string]string{{"a": "1"}},
+			"n":    "181750",
+			"b":    "false",
+			"null": nil,
+		},
+	}); err != nil {
+		t.Fatalf("unexpected map binding error: %v", err)
+	}
+
+	wantValues := []any{"181750", "false"}
+	if !reflect.DeepEqual(got.Values, wantValues) {
+		t.Errorf("Values = %#v, want %#v", got.Values, wantValues)
+	}
+
+	wantRows := []any{
+		map[string]string{"a": "1"},
+		map[string]string{"b": "false"},
+	}
+	if !reflect.DeepEqual(got.Rows, wantRows) {
+		t.Errorf("Rows = %#v, want %#v", got.Rows, wantRows)
+	}
+
+	wantData := map[string]any{
+		"rows": []map[string]string{{"a": "1"}},
+		"n":    "181750",
+		"b":    "false",
+		"null": nil,
+	}
+	if !reflect.DeepEqual(got.Data, wantData) {
+		t.Errorf("Data = %#v, want %#v", got.Data, wantData)
+	}
+}
+
 func TestQueryParser_Parse_BindMethod(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -268,16 +324,11 @@ func (r *queryMockHttpRequest) FormFile(key string) (core.IFile, error)       { 
 func (r *queryMockHttpRequest) GetFiles(key string) ([]core.IFile, error)     { return nil, nil }
 func (r *queryMockHttpRequest) IP() string                                    { return "" }
 func (r *queryMockHttpRequest) Query() core.QueryParams {
-	values := r.req.URL.Query()
-	params := make(map[string]any)
-	for k, v := range values {
-		if len(v) == 1 {
-			params[k] = v[0]
-		} else {
-			params[k] = v
-		}
+	params, err := decoder.ParseUrlValues(r.req.URL.Query())
+	if err != nil {
+		return nil
 	}
-	return decoder.QueryParams(params)
+	return params
 }
 func (r *queryMockHttpRequest) RawRequest() *http.Request               { return r.req }
 func (r *queryMockHttpRequest) GetMultipartFormValues() *multipart.Form { return nil }

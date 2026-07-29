@@ -3,13 +3,14 @@ package http
 import (
 	"errors"
 	"fmt"
+	"reflect"
+
+	"github.com/gorilla/schema"
 	"github.com/osbits/gorgany/app/core"
 	"github.com/osbits/gorgany/db"
 	error2 "github.com/osbits/gorgany/err"
 	"github.com/osbits/gorgany/service/cache"
 	"github.com/osbits/gorgany/util"
-	"github.com/gorilla/schema"
-	"reflect"
 )
 
 type QueryParser struct {
@@ -102,9 +103,26 @@ func (p *QueryParser) setFieldValue(field reflect.Value, key string, value inter
 		return p.setStruct(field, key, value)
 	case reflect.Map:
 		return p.setMap(field, key, value)
+	case reflect.Interface:
+		return p.setInterface(field, key, value)
 	default:
 		return p.setPrimitive(field, key, value)
 	}
+}
+
+func (p *QueryParser) setInterface(field reflect.Value, key string, value interface{}) error {
+	if value == nil {
+		field.Set(reflect.Zero(field.Type()))
+		return nil
+	}
+
+	reflectedValue := reflect.ValueOf(value)
+	if !reflectedValue.Type().AssignableTo(field.Type()) {
+		return newValidationError(key, "Cannot assign value of type %s to type %s", reflectedValue.Type(), field.Type())
+	}
+
+	field.Set(reflectedValue)
+	return nil
 }
 
 func (p *QueryParser) setPointer(field reflect.Value, key string, value interface{}) error {
@@ -117,7 +135,7 @@ func (p *QueryParser) setPointer(field reflect.Value, key string, value interfac
 }
 
 func (p *QueryParser) setSlice(field reflect.Value, key string, value interface{}) error {
-	reflectedElement := util.GetReflectedElementOfSlice(field.Interface())
+	elementType := field.Type().Elem()
 
 	reflectedValue := reflect.ValueOf(value)
 	if reflectedValue.Kind() != reflect.Slice {
@@ -130,7 +148,7 @@ func (p *QueryParser) setSlice(field reflect.Value, key string, value interface{
 	newSlice := reflect.MakeSlice(field.Type(), 0, sliceLen)
 
 	for i := 0; i < sliceLen; i++ {
-		rv := reflect.New(reflectedElement.Type()).Elem()
+		rv := reflect.New(elementType).Elem()
 		if err := p.processValue(rv.Addr().Interface(), reflectedValue.Index(i).Interface(), ""); err != nil {
 			return fmt.Errorf("failed to process slice element: %w", err)
 		}

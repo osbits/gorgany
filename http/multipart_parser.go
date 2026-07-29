@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"sync"
 
+	"github.com/gorilla/schema"
 	"github.com/osbits/gorgany/app/core"
 	"github.com/osbits/gorgany/db"
 	"github.com/osbits/gorgany/decoder"
@@ -14,7 +15,6 @@ import (
 	error2 "github.com/osbits/gorgany/err"
 	"github.com/osbits/gorgany/service/cache"
 	"github.com/osbits/gorgany/util"
-	"github.com/gorilla/schema"
 )
 
 const (
@@ -217,9 +217,26 @@ func (p *MultipartParser) setFieldValue(field reflect.Value, key string, value i
 		return p.setStruct(field, key, value)
 	case reflect.Map:
 		return p.setMap(field, key, value)
+	case reflect.Interface:
+		return p.setInterface(field, key, value)
 	default:
 		return p.setPrimitive(field, value)
 	}
+}
+
+func (p *MultipartParser) setInterface(field reflect.Value, key string, value interface{}) error {
+	if value == nil {
+		field.Set(reflect.Zero(field.Type()))
+		return nil
+	}
+
+	reflectedValue := reflect.ValueOf(value)
+	if !reflectedValue.Type().AssignableTo(field.Type()) {
+		return newValidationError(key, "Cannot assign value of type %s to type %s", reflectedValue.Type(), field.Type())
+	}
+
+	field.Set(reflectedValue)
+	return nil
 }
 
 func (p *MultipartParser) setPointer(field reflect.Value, key string, value interface{}) error {
@@ -236,7 +253,7 @@ func (p *MultipartParser) setSlice(field reflect.Value, key string, value interf
 		return fmt.Errorf("invalid or unsettable slice field")
 	}
 
-	reflectedElement := util.GetReflectedElementOfSlice(field.Interface())
+	elementType := field.Type().Elem()
 
 	reflectedValue := reflect.ValueOf(value)
 	if reflectedValue.Kind() != reflect.Slice {
@@ -251,7 +268,7 @@ func (p *MultipartParser) setSlice(field reflect.Value, key string, value interf
 
 	for i := 0; i < sliceLen; i++ {
 		// Create a new element of the correct type
-		rv := reflect.New(reflectedElement.Type()).Elem()
+		rv := reflect.New(elementType).Elem()
 		if err := p.processValue(rv.Addr().Interface(), reflectedValue.Index(i).Interface(), ""); err != nil {
 			return fmt.Errorf("failed to process slice element: %w", err)
 		}
