@@ -18,19 +18,55 @@ type JwtService struct {
 	userService core.IUserService `container:"inject"`
 }
 
+// RoleClaim is the claim GenerateJwt writes the user's role into.
+//
+// It is informational, not authoritative. See RoleFromClaims.
+const RoleClaim = "role"
+
 func (thiz JwtService) GenerateJwt(user core.Authenticable, secret string) (string, error) {
 	token := jwt.New(jwt.SigningMethodHS256)
-	claims := token.Claims.(jwt.MapClaims)
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return "", fmt.Errorf("jwt: unexpected claims type %T on a freshly minted token", token.Claims)
+	}
 
 	jwtLifeTime := viper.GetInt("auth.jwt.lifeTime")
 	claims["exp"] = time.Now().Add(time.Duration(jwtLifeTime) * time.Second).Unix()
 	claims["username"] = user.GetUsername()
+	claims[RoleClaim] = string(user.GetRole())
 
 	tokenString, err := token.SignedString([]byte(secret))
 	if err != nil {
 		return "", err
 	}
 	return tokenString, nil
+}
+
+// RoleFromClaims reads the role claim from an already-verified token.
+//
+// The claim exists so a client can render its own UI — show an admin menu, hide a
+// button — without a round trip, and so a log line can name the role without a lookup.
+//
+// It is deliberately **not** used for authorisation. A signed token is immutable for its
+// whole lifetime, so a role baked into one outlives a role change until the token
+// expires: demote an admin and they stay an admin for up to auth.jwt.lifeTime. The
+// user-service lookup in JwtMiddleware remains the authority precisely because it sees
+// the current role, which is what makes revocation work. That costs a lookup per
+// role-guarded request, and the alternative costs correctness.
+//
+// An app that wants to skip the lookup can read this claim itself and accept the
+// staleness window knowingly. The framework will not make that trade silently.
+func RoleFromClaims(claims jwt.MapClaims) (core.UserRole, bool) {
+	raw, present := claims[RoleClaim]
+	if !present {
+		return "", false
+	}
+
+	role, isString := raw.(string)
+	if !isString || role == "" {
+		return "", false
+	}
+	return core.UserRole(role), true
 }
 
 func (thiz JwtService) ValidateJwt(token string, secret string) bool {

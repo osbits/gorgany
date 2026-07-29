@@ -24,7 +24,7 @@ import (
 // Cron expressions are deliberately not supported. Adding them means either a cron
 // parser dependency or writing one, and shipping a `Cron` field that returns "not
 // implemented" would be exactly the empty promise this codebase already has one of
-// (core.MongoDb). Interval scheduling covers the framework's own job and the common
+// (the removed core.MongoDb). Interval scheduling covers the framework's own job and the common
 // case; cron can be added when something needs it.
 //
 // A Scheduler is safe for concurrent use. Add before Start; adding afterwards is an

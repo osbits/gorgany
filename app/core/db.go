@@ -13,10 +13,18 @@ type DbType string
 // Driver names as written under `databases.<name>.driver`. They are the keys of
 // the driver registry in db/sql/driver; the framework's own drivers are registered
 // by db/sql/driver/builtin.
+//
+// A `MongoDb DbType = "mongo"` constant used to sit here with no driver behind it. It
+// was never registered, so `driver: mongo` failed at boot with "unknown driver" while
+// the exported constant advertised support — and a Mongo driver cannot be added by
+// registering one either, because dbCore.IDataSource is a SQL seam (it hands out a
+// query builder and an executor that speak SQL). Implementing Mongo means a second
+// datasource abstraction, not a registry entry, so the name is gone rather than
+// promising something the seam cannot deliver. Register a driver through
+// db/sql/driver.Register to add a SQL engine.
 const (
 	GormPostgreSQL DbType = "postgres_gorm"
 	GormMySQL      DbType = "mysql_gorm"
-	MongoDb        DbType = "mongo"
 )
 
 // IDBContext defines the interface for database context management

@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"errors"
+
 	"github.com/osbits/gorgany/app/core"
 	"github.com/spf13/viper"
 	"log"
@@ -106,8 +108,63 @@ type Cors struct {
 	optionPassthrough bool
 }
 
+// ErrWildcardOriginWithCredentials is what NewCorsMiddleware refuses with when an app
+// asks for both a wildcard origin and credentials.
+//
+// The pair is not a policy the browser will honour: the Fetch spec forbids
+// `Access-Control-Allow-Origin: *` together with `Access-Control-Allow-Credentials:
+// true`, so every credentialed cross-origin request fails in the browser with no signal
+// on the server side. The middleware emitted both independently — the wildcard from the
+// origins branch, the credentials flag from AllowCredentials — so a developer who
+// configured both got silent failure and no diagnostic.
+var ErrWildcardOriginWithCredentials = errors.New(
+	"cors: AllowCredentials cannot be combined with a wildcard origin — browsers reject " +
+		"Access-Control-Allow-Origin: * together with Access-Control-Allow-Credentials: true; " +
+		"list the origins explicitly (a wildcard *within* an origin, like https://*.example.com, is fine)")
+
 // NewCorsMiddleware creates a new Cors handler with the provided options.
+//
+// It panics on the wildcard-origin-with-credentials combination. That is a
+// misconfiguration with no valid interpretation, it is security-relevant, and it is
+// caught at boot where a developer sees it — rather than at request time, in a browser,
+// as an unexplained failure. Use NewCorsMiddlewareChecked to handle it as an error.
 func NewCorsMiddleware(options Options) *Cors {
+	c, err := NewCorsMiddlewareChecked(options)
+	if err != nil {
+		panic(err)
+	}
+	return c
+}
+
+// NewCorsMiddlewareChecked is NewCorsMiddleware returning an error instead of panicking,
+// for an app building its CORS policy from configuration it does not control.
+func NewCorsMiddlewareChecked(options Options) (*Cors, error) {
+	if options.AllowCredentials && wildcardsEveryOrigin(options) {
+		return nil, ErrWildcardOriginWithCredentials
+	}
+
+	return newCors(options), nil
+}
+
+// wildcardsEveryOrigin reports whether options would make the middleware answer with
+// `Access-Control-Allow-Origin: *`.
+//
+// Two ways in, and the second is the one that surprises: an empty AllowedOrigins with no
+// AllowOriginFunc defaults to allowing everything.
+func wildcardsEveryOrigin(options Options) bool {
+	if len(options.AllowedOrigins) == 0 {
+		return options.AllowOriginFunc == nil
+	}
+
+	for _, origin := range options.AllowedOrigins {
+		if strings.TrimSpace(origin) == "*" {
+			return true
+		}
+	}
+	return false
+}
+
+func newCors(options Options) *Cors {
 	c := &Cors{
 		exposedHeaders:    convert(options.ExposedHeaders, http.CanonicalHeaderKey),
 		allowOriginFunc:   options.AllowOriginFunc,

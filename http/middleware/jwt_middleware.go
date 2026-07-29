@@ -59,6 +59,11 @@ func (thiz JwtMiddleware) Handle(next func(core.HttpMessage)) func(core.HttpMess
 			return
 		}
 
+		// The role check goes through the user service, not the token's `role` claim,
+		// even though GenerateJwt now writes one (C6). A signed token is immutable for
+		// its whole lifetime, so trusting the claim would let a demoted admin stay an
+		// admin for up to auth.jwt.lifeTime. The lookup is what makes a role change take
+		// effect immediately; see auth.RoleFromClaims for the claim's intended use.
 		user, err := jwtService.GetUser(token, secret)
 		if err != nil {
 			panic(error2.NewJwtAuthError())

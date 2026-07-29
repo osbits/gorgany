@@ -9,9 +9,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/osbits/gorgany/app/core"
 	err2 "github.com/osbits/gorgany/err"
-	"github.com/google/uuid"
 	"github.com/spf13/viper"
 )
 
