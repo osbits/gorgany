@@ -260,11 +260,21 @@ func TestT11_TwoDatasourcesBothResolveByNameOnTenBoots(t *testing.T) {
 
 // assertDatabaseName confirms which database the connection actually landed in,
 // which is the observable that made the pre-v2 nondeterminism dangerous.
+//
+// The query itself is per-engine: Postgres spells it current_database(), MySQL
+// spells it DATABASE().
 func assertDatabaseName(t *testing.T, ds dbCore.IDataSource, want string) {
 	t.Helper()
 
+	query := `SELECT current_database()`
+	if aware, ok := ds.(interface{ Dialect() dbCore.SQLDialect }); ok {
+		if aware.Dialect().Name() == "mysql" {
+			query = `SELECT DATABASE()`
+		}
+	}
+
 	var got string
-	require.NoError(t, gormOf(t, ds).Raw(`SELECT current_database()`).Scan(&got).Error)
+	require.NoError(t, gormOf(t, ds).Raw(query).Scan(&got).Error)
 	assert.Equal(t, want, got)
 }
 
