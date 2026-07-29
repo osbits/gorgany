@@ -95,11 +95,26 @@ type fakeMessage struct {
 	res      *fakeResponse
 	ctx      context.Context
 	recorded *recordedResponse
+
+	// session is only consulted by the middlewares that install one. Left nil, a
+	// middleware reaching for it fails loudly rather than being accommodated.
+	session core.ISessionScope
 }
 
 func (m *fakeMessage) Request() core.IRequestScope   { return m.req }
 func (m *fakeMessage) Response() core.IResponseScope { return m.res }
 func (m *fakeMessage) Context() context.Context      { return m.ctx }
+func (m *fakeMessage) Session() core.ISessionScope   { return m.session }
+
+// fakeSessionScope records whichever session a middleware installs.
+type fakeSessionScope struct {
+	core.IEditableSessionScope
+
+	current core.ISession
+}
+
+func (s *fakeSessionScope) Get() core.ISession  { return s.current }
+func (s *fakeSessionScope) Set(v core.ISession) { s.current = v }
 
 // newMessage builds a message around a synthetic request.
 func newMessage(method, target string, headers map[string]string) *fakeMessage {

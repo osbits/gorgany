@@ -27,6 +27,14 @@ type fakeAuthStrategy struct {
 	// the CSRF check entirely.
 	madeWithStrategy bool
 	strategyAsked    bool
+
+	// newSession is what NewSessionWithoutUser hands back, for the SessionMiddleware
+	// tests that exercise the session-creation path.
+	newSession core.ISession
+}
+
+func (s *fakeAuthStrategy) NewSessionWithoutUser(context.Context) (core.ISession, error) {
+	return s.newSession, nil
 }
 
 func (s *fakeAuthStrategy) CurrentSession(context.Context) core.ISession { return s.session }

@@ -175,4 +175,18 @@ const (
 
 const DefaultLoginUrl = "/login"
 
+// CSRFTokenHeader is the response header carrying the current CSRF token, and the
+// request header a client sends it back in.
+//
+// It is set on every response to a request that carries a session, so a client can
+// re-read it after each call. See docs/CSRF.md for the full client contract.
 const CSRFTokenHeader = "X-CSRF-Token"
+
+// CSRFSessionKey is the session item the CSRF token is stored under. It used to be
+// declared twice under the same literal — once in auth, once in http/middleware — so
+// renaming one would have silently disabled the check.
+const CSRFSessionKey = "csrf_token"
+
+// DefaultCSRFTokenPath is where CsrfController exposes the token endpoint a SPA calls
+// on boot.
+const DefaultCSRFTokenPath = "/csrf"

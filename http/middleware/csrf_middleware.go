@@ -10,7 +10,9 @@ import (
 )
 
 // CSRF token key in the session
-const csrfTokenKey = "csrf_token"
+// csrfTokenKey is core.CSRFSessionKey, not a second literal — see the note on the
+// matching constant in auth/csrf_service.go.
+const csrfTokenKey = core.CSRFSessionKey
 
 // CSRFMiddleware provides protection against Cross-Site Request Forgery attacks.
 //

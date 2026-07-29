@@ -3,14 +3,19 @@ package auth
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	b64 "encoding/base64"
 	"fmt"
+
 	"github.com/osbits/gorgany/app/core"
-	str "strings"
 )
 
 const (
-	csrfTokenKey    = "csrf_token"
+	// csrfTokenKey is the session item the token lives in. It is core.CSRFSessionKey
+	// rather than a second literal, because this constant and the identical one in
+	// http/middleware were independent declarations of the same string: changing
+	// either would have left the middleware comparing against a key nothing wrote.
+	csrfTokenKey    = core.CSRFSessionKey
 	csrfTokenLength = 32 // 32 bytes = 256 bits
 )
 
@@ -46,8 +51,12 @@ func (thiz *CsrfService) ValidateCSRFToken(ctx context.Context, session core.ISe
 		return false
 	}
 
-	// Use constant-time comparison to prevent timing attacks
-	return str.Compare(sessionToken, token) == 0
+	// Constant-time comparison, which the comment here has always claimed and
+	// strings.Compare has never provided: it short-circuits on the first differing
+	// byte, so the timing leaked the length of the matching prefix. CSRFMiddleware
+	// does its own comparison and was fixed in v2; this method is the one a caller
+	// reaches directly.
+	return subtle.ConstantTimeCompare([]byte(sessionToken), []byte(token)) == 1
 }
 
 // GetCSRFToken returns the current CSRF token from the session or generates a new one if none exists

@@ -6,6 +6,7 @@ import (
 	"github.com/osbits/gorgany/app/core"
 	err2 "github.com/osbits/gorgany/err"
 	"github.com/osbits/gorgany/http"
+	"github.com/osbits/gorgany/http/controller"
 	"github.com/osbits/gorgany/http/middleware"
 	"github.com/osbits/gorgany/http/router"
 	gohttp "net/http"
@@ -17,6 +18,7 @@ type RouteProvider struct {
 	middlewares  []core.IMiddlewareConfig
 	notFound     core.HandlerFunc
 	skipRecovery bool
+	skipCsrf     bool
 }
 
 func NewRouteProvider() *RouteProvider {
@@ -32,6 +34,18 @@ func NewRouteProvider() *RouteProvider {
 // that). Only disable it if the app installs its own recovery filter first.
 func (p *RouteProvider) DisableRecoveryMiddleware() {
 	p.skipRecovery = true
+}
+
+// DisableCsrfController stops this provider from registering
+// controller.CsrfController at core.DefaultCSRFTokenPath.
+//
+// The endpoint is on by default because before v2.0 a client had no way to obtain a
+// CSRF token: the token header was published on the one response that created a
+// session and nowhere else, so any client that missed it was permanently unable to
+// make a mutating request. Disable this only if the app mounts its own token endpoint,
+// or mounts CsrfController itself with a different Path.
+func (p *RouteProvider) DisableCsrfController() {
+	p.skipCsrf = true
 }
 
 func (p *RouteProvider) AddController(ctrl core.IController) {
@@ -77,6 +91,17 @@ func (p *RouteProvider) standardMiddlewares() []core.IMiddlewareConfig {
 	return append([]core.IMiddlewareConfig{recovery}, p.middlewares...)
 }
 
+// standardControllers returns the app's controllers with the framework defaults
+// appended, so an app that mounts its own path at core.DefaultCSRFTokenPath wins the
+// duplicate-route check rather than losing to a framework default.
+func (p *RouteProvider) standardControllers() []core.IController {
+	if p.skipCsrf {
+		return p.controllers
+	}
+
+	return append(append([]core.IController{}, p.controllers...), controller.NewCsrfController())
+}
+
 func (p *RouteProvider) Boot(c core.IContainer) {
 	_ = c.Invoke(func(wc core.IWebContext, grgRouter core.Router) {
 		for _, mw := range p.standardMiddlewares() {
@@ -104,7 +129,7 @@ func (p *RouteProvider) Boot(c core.IContainer) {
 		})
 
 		chiAdapter := grgRouter.(*router.ChiRouterAdapter)
-		for _, ctrl := range p.controllers {
+		for _, ctrl := range p.standardControllers() {
 			if err := c.Make(ctrl); err != nil {
 				err2.HandleError(err)
 			}

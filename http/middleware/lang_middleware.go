@@ -1,8 +1,8 @@
 package middleware
 
 import (
-	"github.com/osbits/gorgany/app/core"
 	"github.com/go-chi/chi"
+	"github.com/osbits/gorgany/app/core"
 	"github.com/spf13/viper"
 )
 
