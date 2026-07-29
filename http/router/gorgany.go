@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi"
 	"github.com/osbits/gorgany/app/core"
 	grghttp "github.com/osbits/gorgany/http"
+	"github.com/osbits/gorgany/service/dto"
 )
 
 var (
@@ -79,13 +80,50 @@ func (r *ChiRouterAdapter) Init() {
 	})
 
 	r.engine.NotFound(func(w http.ResponseWriter, req *http.Request) {
-		msg, _ := r.webCtx.GetNewMessage()(w, req)
+		msg, err := r.webCtx.GetNewMessage()(w, req)
+		if err != nil || msg == nil {
+			// No message means no way to negotiate or to reach an app handler. The
+			// status is still the honest one.
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+
 		if nf := r.webCtx.GetNotFound(); nf != nil {
 			reflect.ValueOf(nf).Call([]reflect.Value{reflect.ValueOf(msg)})
-		} else {
-			msg.Response().Bytes(nil, 404)
+			return
 		}
+
+		// This used to be Bytes(nil, 404): an empty body with no content type. An API
+		// client hitting an unknown route got nothing it could parse and never the
+		// standard envelope (C2).
+		writeNegotiatedError(msg, core.NotFoundHttpStatus, "No route matches this request")
 	})
+
+	// chi answers an unmatched method with a bare 405 and no body. The router registers
+	// every route under OPTIONS as well as its declared method, so a 405 here means a
+	// real method mismatch, and an API client deserves to be told which one.
+	r.engine.MethodNotAllowed(func(w http.ResponseWriter, req *http.Request) {
+		msg, err := r.webCtx.GetNewMessage()(w, req)
+		if err != nil || msg == nil {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		writeNegotiatedError(msg, core.MethodNotAllowedHttpStatus,
+			fmt.Sprintf("Method %s is not allowed for this route", req.Method))
+	})
+}
+
+// writeNegotiatedError answers with the standard envelope for an API client and plain
+// text for everyone else, using the same Accept / api-namespace / Content-Type rule
+// T3.4 introduced for the auth middleware.
+func writeNegotiatedError(message core.HttpMessage, status core.HttpStatus, reason string) {
+	if grghttp.WantsJSON(message) {
+		message.Response().JSON(dto.ReturnObject(nil, status, reason), status.Status)
+		return
+	}
+
+	message.Response().Text(reason, status.Status)
 }
 
 func (r *ChiRouterAdapter) ServeHTTP(w http.ResponseWriter, req *http.Request) {

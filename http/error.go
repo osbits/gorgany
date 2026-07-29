@@ -55,14 +55,28 @@ func Catch(err error, message core.HttpMessage) {
 	errorHandler(err, message)
 }
 
+// processDefaultError is the catch-all 500.
+//
+// It used to answer every caller with text/plain, so an API client got an HTML-shaped
+// body it could not parse (C2). The dev-mode detail — the error and a stacktrace — is
+// unchanged and still only in dev; prod stays generic, because an unclassified error
+// message can carry anything.
 func processDefaultError(err error, message core.HttpMessage) {
 	error2.PrintError(err)
+
+	reason := "Oops... Internal error."
 	if app.GetRunMode() == gorgany.Dev {
-		message.Response().Text(fmt.Sprintf("Oops... 500 error.\n %v \n%s", err, error2.GetStacktrace()), 500)
+		reason = fmt.Sprintf("Oops... 500 error.\n %v \n%s", err, error2.GetStacktrace())
+	}
+
+	if WantsJSON(message) {
+		message.Response().JSON(
+			dto.ReturnObject(nil, core.InternalErrorHttpStatus, reason),
+			core.InternalErrorHttpStatus.Status)
 		return
 	}
 
-	message.Response().Text("Oops... Internal error.", 500)
+	message.Response().Text(reason, core.InternalErrorHttpStatus.Status)
 }
 
 func processValidationErrors(error error, message core.HttpMessage) {
@@ -79,10 +93,29 @@ func processValidationError(error error, message core.HttpMessage) {
 	processValidationErrors(validationErrors, message)
 }
 
-func processInputParsingError(error error, message core.HttpMessage) {
-	error2.PrintError(error)
-	message.Response().Text("", 404)
-	return
+// processInputParsingError answers a path or query parameter that could not be
+// converted to the handler's parameter type.
+//
+// It used to write Text("", 404) — an empty body, and a 404 for what is a malformed
+// request rather than a missing resource. The status is unchanged to keep the break
+// behaviour-only where it is observable, but the body is now negotiated and says what
+// went wrong (C2).
+func processInputParsingError(err error, message core.HttpMessage) {
+	error2.PrintError(err)
+
+	reason := "A request parameter could not be parsed"
+	if parseError, ok := err.(*error2.InputParamParseError); ok {
+		reason = parseError.Error()
+	}
+
+	if WantsJSON(message) {
+		message.Response().JSON(
+			dto.ReturnObject(nil, core.NotFoundHttpStatus, reason),
+			core.NotFoundHttpStatus.Status)
+		return
+	}
+
+	message.Response().Text(reason, core.NotFoundHttpStatus.Status)
 }
 
 // processBodyParsingError answers a body the framework could not parse with 400.
@@ -113,7 +146,22 @@ func processBodyParsingError(err error, message core.HttpMessage) {
 	message.Response().Text(reason, core.BadRequestHttpStatus.Status)
 }
 
+// processJwtAuthError answers an invalid or expired Bearer token.
+//
+// It used to write Text("", 401) — an empty body, which is the one case where that was
+// almost defensible, since a JWT client rarely reads it. Negotiated anyway, so an API
+// client gets the same envelope shape from every error path (C2).
 func processJwtAuthError(err error, message core.HttpMessage) {
-	message.Response().Text("", 401)
-	return
+	error2.PrintError(err)
+
+	const reason = "Unauthenticated. JWT is invalid or expired"
+
+	if WantsJSON(message) {
+		message.Response().JSON(
+			dto.ReturnObject(nil, core.NotAuthorizedHttpStatus, reason),
+			core.NotAuthorizedHttpStatus.Status)
+		return
+	}
+
+	message.Response().Text(reason, core.NotAuthorizedHttpStatus.Status)
 }

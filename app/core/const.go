@@ -66,8 +66,11 @@ var (
 	NotAuthorizedHttpStatus = HttpStatus{Status: 401, Code: "NOT_AUTHORIZED"}
 	ForbiddenHttpStatus     = HttpStatus{Status: 403, Code: "FORBIDDEN"}
 	NotFoundHttpStatus      = HttpStatus{Status: 404, Code: "NOT_FOUND"}
-	ValidationHttpStatus    = HttpStatus{Status: 422, Code: "VALIDATION"}
-	InternalErrorHttpStatus = HttpStatus{Status: 500, Code: "INTERNAL_ERROR"}
+	// MethodNotAllowedHttpStatus is what the router answers a method mismatch with.
+	// chi's default was a bare 405 with no body (C2).
+	MethodNotAllowedHttpStatus = HttpStatus{Status: 405, Code: "METHOD_NOT_ALLOWED"}
+	ValidationHttpStatus       = HttpStatus{Status: 422, Code: "VALIDATION"}
+	InternalErrorHttpStatus    = HttpStatus{Status: 500, Code: "INTERNAL_ERROR"}
 )
 
 type ContentType string

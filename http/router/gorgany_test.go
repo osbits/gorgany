@@ -1,11 +1,13 @@
 package router
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
 	"testing"
 
+	"github.com/go-chi/chi"
 	"github.com/osbits/gorgany/app/core"
 	grghttp "github.com/osbits/gorgany/http"
 	"github.com/stretchr/testify/assert"
@@ -56,12 +58,42 @@ func (r *routerTestResponse) Header() http.Header            { return r.w.Header
 func (r *routerTestResponse) SetHeader(key, value string)    { r.w.Header().Set(key, value) }
 func (r *routerTestResponse) RawWriter() http.ResponseWriter { return r.w }
 
+// Text, JSON and Bytes write through to the recorder, because the router's negotiated
+// 404 and 405 (C2) produce real bodies now and a test has to be able to read them.
+func (r *routerTestResponse) Text(body string, code int) {
+	r.w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	r.w.WriteHeader(code)
+	_, _ = r.w.Write([]byte(body))
+}
+
+func (r *routerTestResponse) JSON(v any, code int) {
+	r.w.Header().Set("Content-Type", "application/json")
+	r.w.WriteHeader(code)
+	encoded, err := json.Marshal(v)
+	if err != nil {
+		return
+	}
+	_, _ = r.w.Write(encoded)
+}
+
+func (r *routerTestResponse) Bytes(b []byte, code int) {
+	r.w.WriteHeader(code)
+	_, _ = r.w.Write(b)
+}
+
 type routerTestRequest struct {
 	core.IRequestScope
 	raw *http.Request
 }
 
 func (r *routerTestRequest) RawRequest() *http.Request { return r.raw }
+func (r *routerTestRequest) Header() http.Header       { return r.raw.Header }
+
+// PathParam reads chi's route context, which is how the real request scope resolves the
+// `namespace` parameter that grghttp.WantsJSON consults.
+func (r *routerTestRequest) PathParam(name string) string {
+	return chi.URLParamFromCtx(r.raw.Context(), name)
+}
 
 // handlerRoute is a route whose handler records that it ran.
 type handlerRoute struct {
