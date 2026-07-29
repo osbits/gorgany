@@ -454,11 +454,37 @@ func TestFormatQueryInsertFromSelect(t *testing.T) {
 	assert.Equal(t, "INSERT INTO users (id, name) SELECT id, name FROM staging_users", sql)
 }
 
-// TestOnConflictBecomesOnDuplicateKeyUpdate: Postgres' ON CONFLICT (cols) DO
-// UPDATE has no MySQL spelling; ON DUPLICATE KEY UPDATE keys off any unique
-// index, so the conflict-target column list is dropped.
-func TestOnConflictBecomesOnDuplicateKeyUpdate(t *testing.T) {
-	sql, args, err := NewBuilder().
+// TestOnConflictDoUpdateIsRefusedByDefault is the Tier-D fix, and the one v2 rule
+// that had been answered with documentation instead of an error.
+//
+// Translating ON CONFLICT (cols) DO UPDATE into ON DUPLICATE KEY UPDATE produces
+// *valid but wrong* SQL: MySQL fires on a duplicate in any unique index rather than
+// the conflict target named, so the target list is dropped. That is worse than
+// invalid SQL, because the server accepts it and a doc warning does not stop it
+// executing.
+func TestOnConflictDoUpdateIsRefusedByDefault(t *testing.T) {
+	sql, _, err := NewBuilder().
+		Insert("users").
+		Columns("id", "name").
+		Values(1, "ann").
+		OnConflict("id").
+		DoUpdate(map[string]interface{}{"name": "ann"}).
+		ToSQL()
+
+	requireUnsupported(t, err, "ON CONFLICT ... DO UPDATE")
+	assert.Empty(t, sql, "no unfaithful SQL may escape")
+	assert.Contains(t, err.Error(), "AllowUnfaithfulUpsert",
+		"the error must name the opt-in")
+	assert.Contains(t, err.Error(), "exactly one unique constraint",
+		"and the condition under which opting in is safe")
+}
+
+// TestOnConflictDoUpdateWithTheOptIn: a caller who has read the caveat gets the
+// translation, unchanged from before.
+func TestOnConflictDoUpdateWithTheOptIn(t *testing.T) {
+	permissive := NewBuilderWithDialect(&MySQLDialect{AllowUnfaithfulUpsert: true})
+
+	sql, args, err := permissive.
 		Insert("users").
 		Columns("id", "name").
 		Values(1, "ann").
@@ -471,11 +497,13 @@ func TestOnConflictBecomesOnDuplicateKeyUpdate(t *testing.T) {
 		"INSERT INTO users (id, name) VALUES (?, ?) ON DUPLICATE KEY UPDATE name = ?, seen_at = ?",
 		sql)
 	assert.Equal(t, []any{1, "ann", "ann", "now"}, args)
-	assert.NotContains(t, sql, "ON CONFLICT")
+	assert.NotContains(t, sql, "ON CONFLICT",
+		"the conflict target has nowhere to go in MySQL and is dropped")
 }
 
 // TestDoNothingBecomesSelfAssignment: MySQL has no DO NOTHING, so the idiomatic
-// no-op is assigning a column to itself.
+// no-op is assigning a column to itself. This translation IS faithful, so it needs
+// no opt-in — unlike DO UPDATE above.
 func TestDoNothingBecomesSelfAssignment(t *testing.T) {
 	sql, args, err := NewBuilder().
 		Insert("users").

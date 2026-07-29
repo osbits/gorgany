@@ -21,7 +21,25 @@ import (
 const DialectName = "mysql"
 
 // MySQLDialect implements dbCore.SQLDialect for MySQL 8.0+.
-type MySQLDialect struct{}
+type MySQLDialect struct {
+	// AllowUnfaithfulUpsert permits translating Postgres' ON CONFLICT (cols) DO
+	// UPDATE into MySQL's ON DUPLICATE KEY UPDATE.
+	//
+	// It is off by default because the translation is *valid but wrong* SQL, which is
+	// the failure mode the dialect's governing rule exists to prevent — and a worse
+	// one than invalid SQL, because the server accepts it. ON DUPLICATE KEY UPDATE
+	// fires on a duplicate in ANY unique index or the primary key, not the conflict
+	// target the caller named, so the target column list has nowhere to go and is
+	// dropped. On a table with more than one unique index MySQL's own manual advises
+	// against the clause entirely, because it behaves like
+	// `UPDATE ... WHERE a=1 OR b=2 LIMIT 1` and which row is updated is not the
+	// caller's to control.
+	//
+	// Set it only for a table you know has exactly one unique constraint, having read
+	// the caveat in docs/DIALECTS.md. ON CONFLICT DO NOTHING is unaffected: its
+	// self-assignment translation is faithful.
+	AllowUnfaithfulUpsert bool
+}
 
 var _ dbCore.SQLDialect = (*MySQLDialect)(nil)
 
@@ -416,6 +434,13 @@ func (d *MySQLDialect) formatInsert(q *dbCore.Query) (string, []any, error) {
 			sqlBuilder.WriteString(quoted + " = " + quoted)
 
 		case "DO UPDATE":
+			if !d.AllowUnfaithfulUpsert {
+				return "", nil, unsupported("ON CONFLICT ... DO UPDATE",
+					"MySQL's ON DUPLICATE KEY UPDATE fires on any unique index rather than the "+
+						"conflict target you named, so the translation is not faithful; set "+
+						"MySQLDialect.AllowUnfaithfulUpsert if the table has exactly one unique "+
+						"constraint, or do the read-then-write explicitly in a transaction")
+			}
 			if len(q.Insert.OnConflict.SetValues) == 0 {
 				return "", nil, fmt.Errorf("mysql: ON DUPLICATE KEY UPDATE requires at least one assignment")
 			}

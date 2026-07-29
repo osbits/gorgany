@@ -123,8 +123,11 @@ func TestFormatFromClauseErrors(t *testing.T) {
 }
 
 func TestInsertGuards(t *testing.T) {
-	// DO UPDATE with no assignments cannot render valid SQL.
-	_, _, err := d().FormatQuery(&dbCore.Query{
+	// DO UPDATE with no assignments cannot render valid SQL. Checked through a
+	// dialect that has opted in, so the refusal under test is the empty-assignment
+	// one rather than the unfaithful-upsert refusal.
+	permissive := &MySQLDialect{AllowUnfaithfulUpsert: true}
+	_, _, err := permissive.FormatQuery(&dbCore.Query{
 		Insert: &dbCore.InsertClause{
 			Table:      "t",
 			Columns:    []string{"a"},

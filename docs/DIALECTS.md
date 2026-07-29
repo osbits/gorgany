@@ -292,7 +292,7 @@ default). The dialect never emits SQL that relies on loose grouping.
 | Identifier quoting | `"tbl"."col"` | `` `tbl`.`col` `` — MySQL only accepts double quotes under `ANSI_QUOTES`, which is off by default and would break string literals. |
 | `ROLLUP` | `GROUP BY ROLLUP (a, b)` | `GROUP BY a, b WITH ROLLUP` — a trailing modifier, not a prefix function. Because it modifies the whole grouping list it cannot be combined with a separate plain field list the way Postgres allows. |
 | `ILIKE` | `ILIKE` | Rewritten to `LIKE`, which is case-insensitive under `utf8mb4_unicode_ci`. **On a `_bin` or `_cs` collation the comparison becomes case-sensitive** — that is a property of the column's collation, not of the rewrite. |
-| `ON CONFLICT (cols) DO UPDATE` | `ON CONFLICT (cols) DO UPDATE SET …` | `ON DUPLICATE KEY UPDATE …`. **Not equivalent** — see the warning below. |
+| `ON CONFLICT (cols) DO UPDATE` | `ON CONFLICT (cols) DO UPDATE SET …` | **Refused by default.** Opt in with `MySQLDialect{AllowUnfaithfulUpsert: true}` — see the warning below. |
 | `ON CONFLICT DO NOTHING` | `ON CONFLICT DO NOTHING` | `ON DUPLICATE KEY UPDATE \`col\` = \`col\`` — the idiomatic MySQL no-op, self-assigning the first insert column. |
 | Bare `OFFSET` | `OFFSET 20` is legal on its own | MySQL rejects `OFFSET` without `LIMIT`, so `LIMIT 18446744073709551615` is synthesised — the sentinel MySQL's own documentation prescribes. |
 | Booleans | native `boolean` | `TINYINT(1)`; GORM handles the mapping. |
@@ -306,10 +306,37 @@ default). The dialect never emits SQL that relies on loose grouping.
 | `LATERAL` | MySQL 8.0.14+ |
 | `?` placeholders | No change needed. The builder and conditions already emit `?`, not Postgres' `$n`, so placeholder style needed no work — which is why the MySQL port was as small as it was. |
 
-### Warning: `ON CONFLICT` → `ON DUPLICATE KEY UPDATE` is not a faithful translation
+### `ON CONFLICT … DO UPDATE` is refused by default
 
-The dialect performs this translation because there is no closer MySQL construct,
-but the semantics genuinely differ and no amount of rewriting fixes it:
+The dialect's governing rule is that a construct MySQL cannot express returns an
+error rather than emitting SQL the server will reject. This translation was
+originally the one exception: it emitted *valid but wrong* SQL and documented why.
+That is the worse failure mode — the server accepts it, so a doc warning does not
+stop it executing — so it now errors:
+
+```
+mysql does not support ON CONFLICT ... DO UPDATE; MySQL's ON DUPLICATE KEY UPDATE
+fires on any unique index rather than the conflict target you named, so the
+translation is not faithful; set MySQLDialect.AllowUnfaithfulUpsert if the table has
+exactly one unique constraint, or do the read-then-write explicitly in a transaction
+```
+
+A caller who has read the rest of this section and knows their table has exactly one
+unique constraint can opt in:
+
+```go
+dialect := &mysql.MySQLDialect{AllowUnfaithfulUpsert: true}
+b := builder.New(dialect)
+// or, per datasource, by constructing the session's builder with it
+```
+
+`ON CONFLICT DO NOTHING` is unaffected. Its self-assignment translation
+(``ON DUPLICATE KEY UPDATE `col` = `col` ``) is faithful, so it needs no opt-in —
+which is what lets the ORM's many-to-many path work on both engines unchanged.
+
+### Why the translation is not faithful
+
+The semantics genuinely differ and no amount of rewriting fixes it:
 
 - Postgres' `ON CONFLICT (a) DO UPDATE` fires **only** on a conflict in the named
   columns. MySQL's `ON DUPLICATE KEY UPDATE` fires on a duplicate in **any**
