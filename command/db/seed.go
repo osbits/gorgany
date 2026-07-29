@@ -2,11 +2,12 @@ package db
 
 import (
 	"context"
+	"fmt"
+	"time"
+
 	"github.com/osbits/gorgany/app/core"
 	"github.com/osbits/gorgany/db"
 	"github.com/osbits/gorgany/log"
-	"gorm.io/gorm"
-	"time"
 )
 
 type SeedCommand struct {
@@ -18,25 +19,45 @@ func (thiz SeedCommand) GetName() string {
 	return "db:seed"
 }
 
+// Execute seeds the selected datasource.
+//
+// It used to hard-code core.DefaultKeyInRegistrar, so in a two-datasource app a
+// seeder written for the second database silently ran against the first. The
+// datasource now comes from --datasource (defaulting to `default`), and a seeder
+// can declare its own target via DatasourceScoped so it is skipped rather than
+// misapplied.
 func (thiz SeedCommand) Execute(ctx context.Context) {
-	driver, err := thiz.dbContext.GetDataSource(core.DefaultKeyInRegistrar).GetDriver()
+	datasource := SelectedDatasource()
+
+	gormInstance, err := ResolveGorm(thiz.dbContext, datasource)
 	if err != nil {
 		panic(err)
 	}
 
-	gormInstance, ok := driver.(*gorm.DB)
-	if !ok {
-		panic("Diff command can`t be executed, because driver is not gorm.DB")
-	}
-
 	err = gormInstance.AutoMigrate(&db.Seeder{})
 	if err != nil {
-		panic("Unable to migrate table `migrations`")
+		panic(fmt.Errorf("unable to migrate table `seeders` on datasource %q: %w", datasource, err))
 	}
+
+	seeders, skipped, err := PartitionByDatasource(
+		thiz.dataContext.Seeders(),
+		datasource,
+		IsConfigured(thiz.dbContext),
+		func(s core.ISeeder) string { return fmt.Sprintf("seeder %q", s.Name()) },
+	)
+	if err != nil {
+		panic(err)
+	}
+	for _, s := range skipped {
+		log.Log().Infof("Skipping seeder %s: it targets datasource %q, not %q",
+			s.Name(), TargetDatasourceOf(s), datasource)
+	}
+
+	log.Log().Infof("Seeding datasource %q", datasource)
 
 	total := 0
 	tx := gormInstance.Begin()
-	for _, seeder := range thiz.dataContext.Seeders() {
+	for _, seeder := range seeders {
 		var seederDomain db.Seeder
 		gormInstance.First(&seederDomain, "name = ?", seeder.Name())
 

@@ -39,19 +39,23 @@ func (thiz DiffCommand) GetName() string {
 	return "db:diff"
 }
 
+// Execute diffs the registered domains against the selected datasource.
+//
+// It used to hard-code core.DefaultKeyInRegistrar, so in a two-datasource app it
+// always diffed against the first database no matter which one the models belonged
+// to. The datasource now comes from --datasource, defaulting to `default`.
 func (thiz DiffCommand) Execute(ctx context.Context) {
 	thiz.modelStructAlreadyAdded = make(map[string]bool)
 	thiz.pivotTables = make(map[string]bool)
 
-	driver, err := thiz.dbContext.GetDataSource(core.DefaultKeyInRegistrar).GetDriver()
+	datasource := SelectedDatasource()
+
+	gormDb, err := ResolveGorm(thiz.dbContext, datasource)
 	if err != nil {
 		panic(err)
 	}
 
-	gormDb, ok := driver.(*gorm.DB)
-	if !ok {
-		panic("Diff command can`t be executed, because driver is not gorm.DB")
-	}
+	fmt.Printf("Diffing against datasource %q\n", datasource)
 
 	tx := gormDb.Begin()
 	defer tx.Rollback()
