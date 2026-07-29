@@ -292,7 +292,7 @@ default). The dialect never emits SQL that relies on loose grouping.
 | Identifier quoting | `"tbl"."col"` | `` `tbl`.`col` `` — MySQL only accepts double quotes under `ANSI_QUOTES`, which is off by default and would break string literals. |
 | `ROLLUP` | `GROUP BY ROLLUP (a, b)` | `GROUP BY a, b WITH ROLLUP` — a trailing modifier, not a prefix function. Because it modifies the whole grouping list it cannot be combined with a separate plain field list the way Postgres allows. |
 | `ILIKE` | `ILIKE` | Rewritten to `LIKE`, which is case-insensitive under `utf8mb4_unicode_ci`. **On a `_bin` or `_cs` collation the comparison becomes case-sensitive** — that is a property of the column's collation, not of the rewrite. |
-| `ON CONFLICT (cols) DO UPDATE` | `ON CONFLICT (cols) DO UPDATE SET …` | `ON DUPLICATE KEY UPDATE …`. **Not equivalent**: MySQL keys off *any* unique index rather than the named conflict target, so the column list is dropped. |
+| `ON CONFLICT (cols) DO UPDATE` | `ON CONFLICT (cols) DO UPDATE SET …` | `ON DUPLICATE KEY UPDATE …`. **Not equivalent** — see the warning below. |
 | `ON CONFLICT DO NOTHING` | `ON CONFLICT DO NOTHING` | `ON DUPLICATE KEY UPDATE \`col\` = \`col\`` — the idiomatic MySQL no-op, self-assigning the first insert column. |
 | Bare `OFFSET` | `OFFSET 20` is legal on its own | MySQL rejects `OFFSET` without `LIMIT`, so `LIMIT 18446744073709551615` is synthesised — the sentinel MySQL's own documentation prescribes. |
 | Booleans | native `boolean` | `TINYINT(1)`; GORM handles the mapping. |
@@ -305,6 +305,26 @@ default). The dialect never emits SQL that relies on loose grouping.
 | Window functions | MySQL 8.0+ |
 | `LATERAL` | MySQL 8.0.14+ |
 | `?` placeholders | No change needed. The builder and conditions already emit `?`, not Postgres' `$n`, so placeholder style needed no work — which is why the MySQL port was as small as it was. |
+
+### Warning: `ON CONFLICT` → `ON DUPLICATE KEY UPDATE` is not a faithful translation
+
+The dialect performs this translation because there is no closer MySQL construct,
+but the semantics genuinely differ and no amount of rewriting fixes it:
+
+- Postgres' `ON CONFLICT (a) DO UPDATE` fires **only** on a conflict in the named
+  columns. MySQL's `ON DUPLICATE KEY UPDATE` fires on a duplicate in **any**
+  `UNIQUE` index or the `PRIMARY KEY`. The conflict-target column list therefore
+  has nowhere to go and is dropped.
+- On a table with **more than one** unique index this is worse than imprecise.
+  MySQL's own documentation says an `INSERT ... ON DUPLICATE KEY UPDATE` against
+  such a table behaves like `UPDATE … WHERE a=1 OR b=2 LIMIT 1`, and advises: "In
+  general, you should try to avoid using an `ON DUPLICATE KEY UPDATE` clause on
+  tables with multiple unique indexes." Which row gets updated is not something you
+  control.
+
+If you are writing an upsert that must be portable, either keep the target table
+to a single unique constraint, or write the read-then-write explicitly inside a
+transaction rather than relying on the translation.
 
 ### One thing MySQL 8 *does* accept
 
