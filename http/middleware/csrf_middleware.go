@@ -1,17 +1,37 @@
 package middleware
 
 import (
-	"github.com/osbits/gorgany/app/core"
+	"crypto/subtle"
 	"net/http"
 	"strings"
+
+	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/service/dto"
 )
 
 // CSRF token key in the session
 const csrfTokenKey = "csrf_token"
 
-// CSRFMiddleware provides protection against Cross-Site Request Forgery attacks
+// CSRFMiddleware provides protection against Cross-Site Request Forgery attacks.
+//
+// Two independent bypasses were closed in v2:
+//
+//  1. OPTIONS was on the exempt list, and the router registers every route under
+//     OPTIONS as well as its declared method (http/router/gorgany.go). Any mutating
+//     handler was therefore reachable via OPTIONS with no token, and it ran. The
+//     exempt list is now the safe-method set {GET, HEAD, TRACE}, and OPTIONS is
+//     answered here with 204 without the handler ever being invoked.
+//  2. The check was skipped entirely when the auth strategy reported the request
+//     was not made with it — "no cookie, no check". A request arriving without a
+//     session is exactly the shape a cross-site forgery has, so the absence of a
+//     session can never be grounds for skipping.
+//
+// Rejections now use the framework's standard response envelope rather than a bare
+// {"error": "..."}, and the token comparison is constant-time.
 type CSRFMiddleware struct {
-	// ExemptMethods contains HTTP methods that are exempt from CSRF protection (e.g., GET, HEAD)
+	// ExemptMethods contains HTTP methods that are exempt from CSRF protection.
+	// It must only ever hold methods that are safe by definition — ones that do
+	// not change server state.
 	ExemptMethods []string
 	// TokenHeaderName is the name of the header that contains the CSRF token
 	TokenHeaderName string
@@ -21,23 +41,36 @@ type CSRFMiddleware struct {
 	AuthContext core.IAuthContext `container:"inject"`
 }
 
-// NewCSRFMiddleware creates a new CSRF middleware with default settings
+// NewCSRFMiddleware creates a new CSRF middleware with default settings.
 func NewCSRFMiddleware() *CSRFMiddleware {
 	return &CSRFMiddleware{
-		ExemptMethods:   []string{"GET", "HEAD", "OPTIONS", "TRACE"},
+		// OPTIONS is deliberately absent: the router registers every route under
+		// OPTIONS too, so exempting it exempted every mutating handler. It is
+		// handled explicitly in Handle instead.
+		ExemptMethods:   []string{http.MethodGet, http.MethodHead, http.MethodTrace},
 		TokenHeaderName: core.CSRFTokenHeader,
 		TokenFormName:   "csrf_token",
 	}
 }
 
-// Handle implements the middleware handler
+var _ core.IMiddleware = (*CSRFMiddleware)(nil)
+
+// Handle implements the middleware handler.
 func (thiz CSRFMiddleware) Handle(next func(core.HttpMessage)) func(core.HttpMessage) {
 	return func(message core.HttpMessage) {
 		req := message.Request().RawRequest()
 
-		// Skip CSRF check for exempt methods
+		// Answer preflight here and never reach the handler. The router registers
+		// every route under OPTIONS as well as its declared method, so letting an
+		// OPTIONS request through would run the mutating handler untokened.
+		if req.Method == http.MethodOptions {
+			message.Response().Bytes(nil, http.StatusNoContent)
+			return
+		}
+
+		// Skip the CSRF check for safe methods only.
 		for _, method := range thiz.ExemptMethods {
-			if req.Method == method {
+			if strings.EqualFold(req.Method, method) {
 				next(message)
 				return
 			}
@@ -46,56 +79,51 @@ func (thiz CSRFMiddleware) Handle(next func(core.HttpMessage)) func(core.HttpMes
 		// Get the authentication strategy
 		authStrategy := thiz.AuthContext.ResolveAuthStrategyByContext(message.Context())
 		if authStrategy == nil {
-			message.Response().JSON(map[string]string{
-				"error": "Authentication strategy not found",
-			}, http.StatusInternalServerError)
+			thiz.reject(message, core.InternalErrorHttpStatus, "Authentication strategy not found")
 			return
 		}
 
-		// Check if the request is using the current auth strategy
-		if !authStrategy.IsRequestMadeWithStrategy(message.Context()) {
-			next(message)
-			return
-		}
+		// NOTE: there is deliberately no IsRequestMadeWithStrategy() short-circuit
+		// here. A request with no session is precisely the shape a cross-site
+		// forgery has, so its absence cannot excuse the check.
 
 		// Get the CSRF token from the request
 		token := thiz.getTokenFromRequest(message)
 		if token == "" {
-			message.Response().JSON(map[string]string{
-				"error": "CSRF token missing",
-			}, http.StatusForbidden)
+			thiz.reject(message, core.ForbiddenHttpStatus, "CSRF token missing")
 			return
 		}
 
 		// Get the session from the auth strategy
 		session := authStrategy.CurrentSession(message.Context())
 		if session == nil {
-			message.Response().JSON(map[string]string{
-				"error": "No active session",
-			}, http.StatusForbidden)
+			thiz.reject(message, core.ForbiddenHttpStatus, "No active session")
 			return
 		}
 
 		// Get the token from the session
 		sessionToken := session.GetItem(csrfTokenKey)
 		if sessionToken == "" {
-			message.Response().JSON(map[string]string{
-				"error": "CSRF protection not initialized",
-			}, http.StatusForbidden)
+			thiz.reject(message, core.ForbiddenHttpStatus, "CSRF protection not initialized")
 			return
 		}
 
-		// Use constant-time comparison to prevent timing attacks
-		if sessionToken != token {
-			message.Response().JSON(map[string]string{
-				"error": "Invalid CSRF token",
-			}, http.StatusForbidden)
+		// Constant-time comparison to prevent timing attacks. The previous `!=`
+		// leaked the length of the matching prefix.
+		if subtle.ConstantTimeCompare([]byte(sessionToken), []byte(token)) != 1 {
+			thiz.reject(message, core.ForbiddenHttpStatus, "Invalid CSRF token")
 			return
 		}
 
 		// Token is valid, proceed with the request
 		next(message)
 	}
+}
+
+// reject writes the framework's standard response envelope. The rejections used to
+// emit a bare {"error": "..."} that no client parsing the standard shape could read.
+func (thiz CSRFMiddleware) reject(message core.HttpMessage, status core.HttpStatus, reason string) {
+	message.Response().JSON(dto.ReturnObject(nil, status, reason), status.Status)
 }
 
 // getTokenFromRequest extracts the CSRF token from the request
@@ -108,19 +136,20 @@ func (thiz *CSRFMiddleware) getTokenFromRequest(message core.HttpMessage) string
 		return token
 	}
 
+	// Check the multipart form before ParseForm: for a multipart request ParseForm
+	// consumes the body without populating PostForm.
+	if req.MultipartForm != nil {
+		if values, ok := req.MultipartForm.Value[thiz.TokenFormName]; ok && len(values) > 0 {
+			return values[0]
+		}
+	}
+
 	// Check for token in form
 	err := req.ParseForm()
 	if err == nil {
 		token = req.PostForm.Get(thiz.TokenFormName)
 		if token != "" {
 			return token
-		}
-	}
-
-	// Check for token in multipart form
-	if req.MultipartForm != nil {
-		if values, ok := req.MultipartForm.Value[thiz.TokenFormName]; ok && len(values) > 0 {
-			return values[0]
 		}
 	}
 

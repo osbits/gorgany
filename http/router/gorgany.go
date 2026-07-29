@@ -7,14 +7,15 @@ import (
 	"net/http"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/osbits/gorgany/err"
 	"github.com/osbits/gorgany/util"
 
+	"github.com/go-chi/chi"
 	"github.com/osbits/gorgany/app/core"
 	grghttp "github.com/osbits/gorgany/http"
-	"github.com/go-chi/chi"
 )
 
 var (
@@ -26,22 +27,44 @@ type ChiRouterAdapter struct {
 	engine      chi.Router
 	webCtx      core.IWebContext `container:"inject"`
 	namedRoutes map[string]core.IRouteConfig
+
+	// allowedMethods tracks the methods registered per pattern, so the OPTIONS
+	// responder can report an accurate Allow header.
+	allowedMethods map[string][]string
+	// preflightRegistered records the patterns that already have an OPTIONS
+	// responder, so it is installed once per pattern rather than once per route.
+	preflightRegistered map[string]bool
 }
 
 func (r *ChiRouterAdapter) Init() {
 	r.engine = chi.NewRouter()
 	r.namedRoutes = make(map[string]core.IRouteConfig)
+	r.allowedMethods = make(map[string][]string)
+	r.preflightRegistered = make(map[string]bool)
 
 	r.engine.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			// These optional interfaces are asserted with the two-value form. The
+			// unchecked form panicked on any ResponseWriter that did not implement
+			// all four — which includes httptest.ResponseRecorder and any writer
+			// wrapped by an upstream middleware, so a compression or metrics
+			// middleware in front of the router took every request down.
 			wrapper := &grghttp.ResponseWriterWrapper{
-				Flusher:        w.(http.Flusher),
-				Hijacker:       w.(http.Hijacker),
-				ReaderFrom:     w.(io.ReaderFrom),
 				ResponseWriter: w,
-				StringWriter:   w.(io.StringWriter),
-				Writer:         w.(io.Writer),
+				Writer:         w,
 				StatusCode:     200,
+			}
+			if flusher, ok := w.(http.Flusher); ok {
+				wrapper.Flusher = flusher
+			}
+			if hijacker, ok := w.(http.Hijacker); ok {
+				wrapper.Hijacker = hijacker
+			}
+			if readerFrom, ok := w.(io.ReaderFrom); ok {
+				wrapper.ReaderFrom = readerFrom
+			}
+			if stringWriter, ok := w.(io.StringWriter); ok {
+				wrapper.StringWriter = stringWriter
 			}
 			msg, err := r.webCtx.GetNewMessage()(wrapper, req)
 			if err != nil {
@@ -96,12 +119,19 @@ func (r *ChiRouterAdapter) RegisterRoute(rc core.IRouteConfig) {
 		}
 	}
 
+	// Route-scoped middlewares are attached to this route and this route only.
+	//
+	// They used to also be published into the shared webCtx list keyed by this
+	// route's pattern, which meant the loop above re-matched them on every
+	// subsequent registration whose method-agnostic pattern was the same. Register
+	// GET /x and then PUT /x and a side-effecting middleware declared on GET fired
+	// on the PUT request as well — twice, if PUT declared it too. Nothing else in
+	// the framework reads webCtx.GetMiddlewares(), so they no longer go in.
 	for _, mw := range rc.GetMiddlewares() {
 		cfg := grghttp.NewMiddlewareConfigBuilder().
 			WithMiddleware(mw).
 			WithPattern(pattern).
 			Build()
-		r.webCtx.AddMiddleware(cfg)
 		mws = append(mws, r.adaptRouteMiddleware(cfg))
 	}
 
@@ -131,10 +161,63 @@ func (r *ChiRouterAdapter) RegisterRoute(rc core.IRouteConfig) {
 	r.engine.
 		With(mws...).
 		MethodFunc(method, pattern, h)
-	r.engine.
-		With(mws...).
-		Options(pattern, h)
+
+	r.registerPreflight(pattern, method)
+
 	r.namedRoutes[rc.GetName()] = rc
+}
+
+// registerPreflight installs a 204 OPTIONS responder for pattern.
+//
+// Every route used to be registered under OPTIONS with its own handler:
+//
+//	r.engine.With(mws...).Options(pattern, h)
+//
+// so any mutating handler was reachable via `OPTIONS /route` and it ran — a DELETE
+// handler would delete. It also made the CSRF middleware's OPTIONS exemption a
+// blanket exemption for every mutating endpoint in the app.
+//
+// OPTIONS now answers 204 with an Allow header and never invokes the route
+// handler. The responder is installed once per pattern and reads the method list
+// at request time, so it reports methods registered after it too.
+//
+// This is a behaviour change: an app that relied on OPTIONS reaching a handler
+// must declare an explicit OPTIONS route for it.
+func (r *ChiRouterAdapter) registerPreflight(pattern string, method string) {
+	if r.allowedMethods == nil {
+		r.allowedMethods = make(map[string][]string)
+	}
+	if r.preflightRegistered == nil {
+		r.preflightRegistered = make(map[string]bool)
+	}
+
+	if !util.InArray(method, r.allowedMethods[pattern]) {
+		r.allowedMethods[pattern] = append(r.allowedMethods[pattern], method)
+	}
+
+	// An app that declares its own OPTIONS route keeps it. Claiming the pattern
+	// here stops the generic responder from being installed later and overwriting
+	// the explicit handler when another method is registered for the same pattern.
+	if strings.EqualFold(method, http.MethodOptions) {
+		r.preflightRegistered[pattern] = true
+		return
+	}
+
+	if r.preflightRegistered[pattern] {
+		return
+	}
+	r.preflightRegistered[pattern] = true
+
+	r.engine.Options(pattern, func(w http.ResponseWriter, req *http.Request) {
+		allowed := append([]string{}, r.allowedMethods[pattern]...)
+		if !util.InArray(http.MethodOptions, allowed) {
+			allowed = append(allowed, http.MethodOptions)
+		}
+		sort.Strings(allowed)
+
+		w.Header().Set("Allow", strings.Join(allowed, ", "))
+		w.WriteHeader(http.StatusNoContent)
+	})
 }
 
 func (r *ChiRouterAdapter) adaptFilter(cfg core.IMiddlewareConfig) func(http.Handler) http.Handler {
