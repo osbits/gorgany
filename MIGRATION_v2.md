@@ -6,14 +6,16 @@ affected, and states whether the fix is mechanical or needs judgement.
 
 > **Read “Behaviour changes the compiler will not catch” first.**
 >
-> Four of these changes compile cleanly and change what your app *does*. They
+> Nine of these changes compile cleanly and change what your app *does*. They
 > matter more than the signature changes, because `go build` will not point at
-> them and a passing test suite may not either. Two of them (`json:"-"`,
-> `OPTIONS`) are security-relevant, and one (`Query()` memoization) can change
-> query results silently.
+> them and a passing test suite may not either. Four of them (`json:"-"`,
+> `OPTIONS`, the CSRF token, the CORS refusal) are security-relevant, and two
+> (`Query()` memoization, validation error shape) can change what a client sees
+> silently.
 
-**Order of work.** Do §1–§4 first — they need judgement and testing. Then run
-`go build ./...` and let the compiler drive §5–§10, which are mechanical.
+**Order of work.** Do §1–§4a and §12/§16/§17 first — they need judgement and
+testing. Then run `go build ./...` and let the compiler drive §5–§10 and
+§11/§13/§14/§15, which are mechanical.
 
 ---
 
@@ -26,6 +28,11 @@ affected, and states whether the fix is mechanical or needs judgement.
 | [§3](#3-a-role-mismatch-returns-403-not-401-behaviour) | Role mismatch is 403, not 401 | Clients branching on 401 stop seeing it for authorised-but-wrong-role users |
 | [§4](#4-options-no-longer-invokes-your-route-handler-behaviour-security) | `OPTIONS` returns 204, never the handler | An `OPTIONS` call that used to reach a handler now does not |
 | [§4a](#4a-connection-pool-limits-now-actually-apply-behaviour) | `properties` pool limits now apply | Connection-pool caps you configured years ago start being enforced |
+| [§12](#12-validation-errors-changed-shape-behaviour) | `ValidationError.Field` is the wire name; `Err` is readable | A client matching on the Go field name or parsing the old message stops working |
+| [§16](#16-x-csrf-token-on-every-response-and-a-csrf-endpoint-behaviour-security) | `X-CSRF-Token` on every session response; `GET /csrf` registered | A route already at `/csrf` collides at boot |
+| [§17](#17-malformed-bodies-are-400-not-a-301-redirect-behaviour) | A malformed body is 400, not a 301 to the Referer | A client relying on the redirect sees a 400 envelope |
+| [§18](#18-404-405-and-error-handlers-are-content-negotiated-behaviour) | 404/405/500/401 negotiate JSON vs text | An API client gets an envelope where it got an empty body |
+| [§19](#19-var-substitution-what-a-missing-variable-now-does) | An unset `${VAR}` no longer becomes `""` | A security-relevant one now fails the boot instead of weakening the cookie |
 
 ---
 
@@ -884,6 +891,662 @@ than disabling the limit.
 
 ---
 
+## 11. `core.IJob` reshaped, and `gocron` is gone
+
+### What broke and why it had to
+
+Scheduled jobs never ran, on any version. `JobProvider.Boot` did this:
+
+```go
+scheduler := &job.Scheduler{}
+_ = c.Make(scheduler)          // field-injects a zero value
+```
+
+`Container.Make` on a pointer-to-struct fills its `container:"inject"` fields; it does
+not hand back the registered singleton. So every job was registered against one
+scheduler object and a *different*, empty one was started. Nothing in the repo noticed.
+
+Fixing that required a scheduler the framework controls, and `core.IJob`'s old shape —
+`GetJob()`, `GetInterval()`, `GetUnit()` — was built around `gocron`'s API, which put a
+third-party dependency in `app/core`, the package every other package imports. `gocron`
+is now removed from the module entirely.
+
+### Before / after
+
+```go
+// BEFORE
+type CleanupJob struct {
+    Storage core.ISessionStorage `container:"inject"`
+}
+
+func (j CleanupJob) GetInterval() uint64 { return 1 }
+func (j CleanupJob) GetUnit() gocron.Unit { return gocron.Hours }
+func (j CleanupJob) GetJob() (any, []any) {
+    return func() { j.Storage.ClearExpiredSessions() }, nil
+}
+```
+
+```go
+// AFTER
+type CleanupJob struct {
+    Storage core.ISessionStorage `container:"inject"`
+}
+
+func (j *CleanupJob) Schedule() core.JobSchedule {
+    return core.JobSchedule{
+        Every:        time.Hour,
+        RunAtStartup: true,   // was not expressible before
+        AllowOverlap: false,  // skip a tick if the previous run is still going
+    }
+}
+
+func (j *CleanupJob) Run(ctx context.Context) error {
+    j.Storage.ClearExpiredSessions()
+    return nil
+}
+```
+
+Registration is unchanged:
+
+```go
+jobProvider := provider.NewJobProvider()
+jobProvider.AddJob(&CleanupJob{})
+```
+
+Note the **pointer** receiver and the pointer at registration. A job registered by
+*value* that carries `container:"inject"` tags is now a loud error rather than a silently
+unfilled struct — the container cannot fill fields of a value it does not own.
+
+`GetUnit()`'s `gocron.Unit` becomes a `time.Duration`:
+
+| Before | After |
+|--------|-------|
+| `GetInterval() 30, GetUnit() gocron.Seconds` | `Every: 30 * time.Second` |
+| `GetInterval() 5, GetUnit() gocron.Minutes` | `Every: 5 * time.Minute` |
+| `GetInterval() 1, GetUnit() gocron.Hours` | `Every: time.Hour` |
+| `GetInterval() 1, GetUnit() gocron.Days` | `Every: 24 * time.Hour` |
+
+### How to detect whether you are affected
+
+```bash
+grep -rn "gocron\|GetInterval()\|GetUnit()\|GetJob()" --include="*.go" .
+```
+
+Every hit is a job to convert. If there are none, you had no jobs — which, given that
+none of them ran, may be why.
+
+Cron expressions are **not** supported. They would need a parser dependency, and shipping
+a non-functional `Cron` field would repeat exactly the `core.MongoDb` problem this release
+fixes. If you need one, schedule at the finest interval you care about and check the clock
+inside `Run`.
+
+### Mechanical or judgement?
+
+**Mechanical**, with one judgement call per job: whether it should run at startup, and
+whether a slow run should be allowed to overlap the next tick. The old scheduler had no
+answer to either, so there is no prior behaviour to preserve.
+
+Also worth knowing: a job that panics no longer takes the scheduler down with it, and
+`Scheduler.Stats()` reports runs, failures and skips per job.
+
+---
+
+## 12. Validation errors changed shape (behaviour)
+
+### What broke and why it had to
+
+`err.ValidationError` carried the Go struct field name and go-playground's raw sentence:
+
+```json
+{
+  "field": "MobilePhone",
+  "err": "Key: 'CreateUserDto.MobilePhone' Error:Field validation for 'MobilePhone' failed on the 'required' tag"
+}
+```
+
+No UI can display that, and no client can map `MobilePhone` to the `mobile_phone` it
+sent. Every serious consumer replaced `core.IValidator` wholesale just to rename fields
+and translate messages, which is a framework gap rather than an app concern.
+
+### Before / after
+
+```json
+// BEFORE
+{"field": "MobilePhone", "err": "Key: 'CreateUserDto.MobilePhone' Error:Field validation for 'MobilePhone' failed on the 'required' tag"}
+```
+
+```json
+// AFTER
+{"field": "mobile_phone", "err": "mobile_phone is required", "rule": "required", "path": "mobile_phone"}
+```
+
+The struct gained three `omitempty` fields, so the JSON is additive:
+
+```go
+type ValidationError struct {
+    Field string `json:"field"`            // now the json/scheme tag, not the Go name
+    Err   string `json:"err"`              // now readable, and localised
+    Rule  string `json:"rule,omitempty"`   // new: "required", "email", "min"
+    Param string `json:"param,omitempty"`  // new: "3" for min=3
+    Path  string `json:"path,omitempty"`   // new: "address.postal_code"
+}
+```
+
+Client-side, key off `rule` rather than parsing `err`:
+
+```js
+// BEFORE — brittle, and the field name did not match what was sent
+if (error.field === 'MobilePhone' && error.err.includes('required')) { ... }
+
+// AFTER
+if (error.field === 'mobile_phone' && error.rule === 'required') { ... }
+```
+
+To keep your own messages, put them in your translation files rather than in code:
+
+```yaml
+# resource/i18n/en.yaml
+validation:
+  required: "Please provide {:field}"
+  email: "{:field} does not look like an email address"
+```
+
+See [`docs/VALIDATION.md`](docs/VALIDATION.md) for the resolution order and the full
+placeholder set.
+
+### How to detect whether you are affected
+
+```bash
+# Client-side: anything matching on a Go field name or the raw message
+grep -rn "Error:Field validation\|Key: '" --include="*.js" --include="*.ts" --include="*.vue" .
+
+# Server-side: a custom IValidator that exists only to rename fields
+grep -rn "core.IValidator" --include="*.go" . | grep -v "_test"
+```
+
+If you replaced `core.IValidator` for this reason, you can now delete it. If you replaced
+it for something else, note that `ValidateStruct` still satisfies the interface —
+`ValidateStructForLocale` is a separate optional interface (`core.ILocalizedValidator`),
+so nothing forces you to implement it.
+
+One more change in the same area: **two fields of one struct sharing a wire name is now
+an error.** The body parser can bind only one of them, so the other silently stayed zero.
+
+```go
+// This now fails validation with a descriptive error rather than half-working
+type Broken struct {
+    Primary   string `json:"email"`
+    Secondary string `json:"email"`
+}
+```
+
+### Mechanical or judgement?
+
+**Judgement** on the client side: you have to decide what to key off. **Mechanical** on
+the server side — usually deleting a custom validator.
+
+---
+
+## 13. `Container.Make` errors on a bound struct pointer
+
+### What broke and why it had to
+
+`Make` dispatches on the target's kind: a pointer-to-struct goes to field injection, a
+pointer-to-interface goes to resolution. Both returned `nil` on success, so a caller who
+passed `&SomeStruct{}` expecting the registered singleton got a zero value and **no
+error**. That is how the job scheduler came to tick empty for however long it had shipped.
+
+### Before / after
+
+```go
+// BEFORE — compiles, returns nil, gives you a zero value
+scheduler := &job.Scheduler{}
+_ = c.Make(scheduler)
+```
+
+```go
+// AFTER — Make returns an error naming the method you wanted
+var scheduler *job.Scheduler
+if err := c.Resolve(&scheduler); err != nil {
+    return err
+}
+```
+
+The error is explicit about the fix:
+
+```
+container: Make(*job.Scheduler) fills a struct's container:"inject" fields, but
+*job.Scheduler has a registered binding and this is not the bound instance — use
+Resolve(**job.Scheduler) to obtain the registered one
+```
+
+`Make` still works for its actual purpose — filling a struct you own — and it still works
+on the bound instance itself, which is a legitimate pattern:
+
+```go
+// Still fine: filling a struct with no binding for its type
+resolver := &http.InputResolver{...}
+_ = c.Make(resolver)
+```
+
+### How to detect whether you are affected
+
+```bash
+grep -rn "\.Make(&" --include="*.go" .
+```
+
+For each hit, ask which you meant: fill this struct's dependencies (keep `Make`), or get
+the registered instance (switch to `Resolve`). The compiler will not tell you; the new
+error will, at runtime, on the first call.
+
+### Mechanical or judgement?
+
+**Judgement per call site**, but the judgement is easy and there are usually only a
+handful.
+
+---
+
+## 14. MySQL `ON CONFLICT … DO UPDATE` is refused by default
+
+### What broke and why it had to
+
+The MySQL dialect translated `ON CONFLICT (cols) DO UPDATE` into `ON DUPLICATE KEY
+UPDATE`, silently dropping the conflict-target column list. MySQL keys off *any* unique
+index, so on a table with more than one the row that gets updated is not the caller's to
+control — MySQL's own manual advises against the clause in that case.
+
+That is *valid but wrong* SQL, which is the failure mode the dialect rule exists to
+prevent: every construct MySQL cannot express returns an explicit error rather than
+emitting SQL the server will accept and misinterpret. A doc warning does not stop it
+executing.
+
+### Before / after
+
+```go
+// BEFORE — silently emitted ON DUPLICATE KEY UPDATE, ignoring the (email) target
+builder.OnConflict([]string{"email"}).DoUpdate(map[string]any{"name": "new"})
+```
+
+```go
+// AFTER, option 1 — opt in, having read the caveat and confirmed one unique index
+dialect := mysqlv2.MySQLDialect{AllowUnfaithfulUpsert: true}
+```
+
+```go
+// AFTER, option 2 — express it in a way MySQL renders faithfully
+builder.OnConflict([]string{"email"}).DoNothing()   // unaffected, always worked
+// or do the read-then-write explicitly in a transaction
+```
+
+`DO NOTHING` is unchanged: its translation is faithful.
+
+### How to detect whether you are affected
+
+```bash
+grep -rn "DoUpdate(" --include="*.go" .
+```
+
+Only MySQL is affected — Postgres renders `ON CONFLICT … DO UPDATE` natively. If you run
+Postgres only, there is nothing to do.
+
+Without the opt-in you get:
+
+```
+mysql: ON CONFLICT ... DO UPDATE is not supported: MySQL's ON DUPLICATE KEY UPDATE
+keys off any unique index rather than the named conflict target, so the translation
+is not faithful; set MySQLDialect{AllowUnfaithfulUpsert: true} if your table has
+exactly one unique index
+```
+
+### Mechanical or judgement?
+
+**Judgement.** The opt-in is one line, but the question it answers — does this table have
+exactly one unique index — is a schema question. See
+[`docs/DIALECTS.md`](docs/DIALECTS.md).
+
+---
+
+## 15. CORS refuses a wildcard origin with credentials
+
+### What broke and why it had to
+
+The middleware emitted `Access-Control-Allow-Origin: *` from its origins branch and
+`Access-Control-Allow-Credentials: true` from `AllowCredentials`, independently. The Fetch
+spec forbids that pair, so every credentialed cross-origin request failed in the browser
+with nothing on the server to explain it.
+
+### Before / after
+
+```go
+// BEFORE — constructed fine, failed silently in every browser
+middleware.NewCorsMiddleware(middleware.Options{
+    AllowedOrigins:   []string{"*"},
+    AllowCredentials: true,
+})
+```
+
+```go
+// AFTER — list the origins
+middleware.NewCorsMiddleware(middleware.Options{
+    AllowedOrigins:   []string{"https://app.example.com", "https://admin.example.com"},
+    AllowCredentials: true,
+})
+
+// A wildcard *within* an origin is still fine with credentials
+AllowedOrigins: []string{"https://*.example.com"}
+```
+
+Watch for the implicit form. An **empty** `AllowedOrigins` with no `AllowOriginFunc` also
+means "all origins", so this is the same misconfiguration written without a `*`:
+
+```go
+// Also refused
+middleware.NewCorsMiddleware(middleware.Options{AllowCredentials: true})
+```
+
+For a policy built from configuration you do not control, use the error-returning
+constructor:
+
+```go
+cors, err := middleware.NewCorsMiddlewareChecked(options)
+if err != nil {
+    return fmt.Errorf("cors policy: %w", err)
+}
+```
+
+### How to detect whether you are affected
+
+```bash
+grep -rn "AllowCredentials" --include="*.go" . -A 3 -B 3
+```
+
+Any hit where `AllowCredentials: true` sits next to `AllowedOrigins: []string{"*"}`, or
+next to no `AllowedOrigins` at all. It panics at boot, so a single `go run` also tells
+you.
+
+### Mechanical or judgement?
+
+**Judgement**: you have to know which origins to list. But if the pair was configured, the
+credentialed requests were already failing, so nothing that worked stops working.
+
+---
+
+## 16. `X-CSRF-Token` on every response, and a CSRF endpoint (behaviour, security)
+
+### What broke and why it had to
+
+There was no way for a client to obtain a CSRF token. `SessionMiddleware` set
+`X-CSRF-Token` on the single response that *created* a session and nowhere else;
+`CsrfService.GetCSRFToken` had zero call sites; no route handed one out. A client that
+missed that one response — a reload, a second tab, a session that already existed — could
+never recover.
+
+That was survivable only because `CSRFMiddleware` had two bypasses (§4 and the
+"no session, no check" shortcut). Closing both, as v2.0 does, made the token-delivery gap
+reliably fatal: the hardened middleware rejects every mutating request from a client
+without a token.
+
+### Before / after
+
+Server side, nothing to do — both halves are automatic:
+
+- `X-CSRF-Token` is set on **every** response to a request carrying a session.
+- `GET /csrf` is registered by default, returning the token in the body *and* the header.
+
+Client side, the contract is three lines:
+
+```js
+// BEFORE — one shot at the header, and no way to recover if you missed it
+// (most apps had no working CSRF story at all)
+
+// AFTER
+// 1. On boot
+const { body } = await (await fetch('/csrf', { credentials: 'include' })).json()
+let csrfToken = body.csrf_token
+
+// 2. Re-read it from every response
+const fresh = res.headers.get('X-CSRF-Token')
+if (fresh) csrfToken = fresh
+
+// 3. Send it on every mutating request
+headers: { 'X-CSRF-Token': csrfToken }
+```
+
+The token does **not** rotate per request, so step 2 is cheap: rotating would invalidate
+the token an in-flight request from another tab is carrying.
+
+See [`docs/CSRF.md`](docs/CSRF.md) for the full contract and a table mapping each
+rejection message to its cause.
+
+### How to detect whether you are affected
+
+```bash
+# A route already at /csrf will collide at boot with the duplicate-route check
+grep -rn '"/csrf"' --include="*.go" .
+
+# Client-side: is anything reading the token header at all?
+grep -rn "X-CSRF-Token\|csrf" --include="*.js" --include="*.ts" --include="*.vue" .
+```
+
+If `/csrf` is taken, either move the framework's endpoint or replace it:
+
+```go
+// Move it
+spa := controller.NewCsrfController()
+spa.Path = "/api/v1/csrf"
+routeProvider.DisableCsrfController()
+routeProvider.AddController(spa)
+
+// Or drop it and mount your own
+routeProvider.DisableCsrfController()
+```
+
+For a cross-origin SPA, expose the header so the client can read it:
+
+```go
+middleware.NewCorsMiddleware(middleware.Options{
+    AllowedOrigins:   []string{"https://app.example.com"},
+    ExposedHeaders:   []string{core.CSRFTokenHeader},
+    AllowCredentials: true,
+})
+```
+
+### Mechanical or judgement?
+
+**Mechanical** server-side. **Judgement** client-side, and it is the work that actually
+matters: an app that never had a working CSRF story now needs one, because the middleware
+no longer has a hole to fall through.
+
+Two smaller changes in the same area: `CsrfService.ValidateCSRFToken` now compares in
+constant time (it used `strings.Compare` under a comment claiming otherwise), and the
+duplicated `csrfTokenKey` literal is `core.CSRFSessionKey` in both places.
+
+---
+
+## 17. Malformed bodies are 400, not a 301 redirect (behaviour)
+
+### What broke and why it had to
+
+`err.NewInputBodyParseError` had **zero call sites** while `http/error.go` registered a
+handler for it, so app authors reasonably believed it was the hook for malformed bodies. It
+was not. Worse, the JSON parser's error classification was dead code:
+
+```go
+case errors.Is(err, &json.SyntaxError{}):   // always false
+```
+
+`errors.Is` compares with `==` for a type implementing no `Is` method, and both operands
+were freshly allocated pointers. Every malformed body fell to the default branch, which
+produced an *empty* `ValidationErrors` — a non-nil error with no entries — and
+`processValidationErrors` answered it with a **301 redirect to the `Referer`**.
+
+### Before / after
+
+| Request body | Before | After |
+|--------------|--------|-------|
+| `{"name": "x"` (truncated) | 301 to `Referer` | 400, `InputBodyParseError` |
+| `[{"name":"x"}]` (top-level array) | 301 to `Referer` | 400, `InputBodyParseError` |
+| over the size limit | 301 to `Referer` | 400, `InputBodyParseError` |
+| over the nesting limit | 301 to `Referer` | 400, `InputBodyParseError` |
+| `{"age": "not-a-number"}` | 422, `ValidationErrors` | 422, `ValidationErrors` (unchanged) |
+| `null` | accepted as no fields | unchanged |
+
+The split is the point: a body that cannot be parsed at all is a 400-class failure, and a
+body that parses but holds a value a field rejects is a 422-class one. Conflating them gave
+a client no way to tell "I sent broken JSON" from "field 3 is out of range".
+
+If you registered a handler for `InputBodyParseError`, it now actually fires. Report the
+*reason*, not `err.Error()`:
+
+```go
+func inputErrorHandler(err error, message core.HttpMessage) {
+    reason := err.Error()
+    if parseError, ok := err.(*error2.InputBodyParseError); ok {
+        // Error() includes the raw body for the log's benefit, and a body that failed
+        // to parse is exactly the kind that might carry a password halfway through.
+        reason = "the request body could not be parsed"
+        if parseError.RawError != nil {
+            reason = parseError.RawError.Error()
+        }
+    }
+    message.Response().JSON(dto.ReturnObject(nil, core.BadRequestHttpStatus, reason), 400)
+}
+```
+
+### How to detect whether you are affected
+
+```bash
+grep -rn "InputBodyParseError" --include="*.go" .
+```
+
+If you registered a handler, check it does not echo the body. If you did not, the
+framework's default now answers with the negotiated envelope instead of an empty
+`text/plain` 400.
+
+Client-side, look for anything that treated a 301 from a POST as meaningful.
+
+### Mechanical or judgement?
+
+**Mechanical.** Nothing sensible depended on the redirect.
+
+---
+
+## 18. 404, 405 and error handlers are content-negotiated (behaviour)
+
+### What broke and why it had to
+
+The router answered an unknown route with `Bytes(nil, 404)` — an empty body with no content
+type — and left chi's bare `405` in place with nothing registered for it. Two of the four
+error handlers wrote a literally empty body: `processInputParsingError` was
+`Text("", 404)`, `processJwtAuthError` was `Text("", 401)`. An API client got nothing it
+could parse and never the standard envelope.
+
+### Before / after
+
+```
+# BEFORE
+$ curl -i -H 'Accept: application/json' http://localhost:8080/api/nope
+HTTP/1.1 404 Not Found
+Content-Length: 0
+
+# AFTER
+HTTP/1.1 404 Not Found
+Content-Type: application/json
+{"status":404,"status_code":"NOT_FOUND","body":null,"errors":["No route matches this request"]}
+```
+
+`405` is answered at all now, and names the offending method. A browser still gets plain
+text: the rule is the api namespace, a JSON `Content-Type`, a *specific* JSON `Accept`, or
+an `/api/` path prefix — a browser's `Accept: text/html,...,*/*` deliberately does not
+match the wildcard, or every 404 would come back as JSON.
+
+An app's own `SetNotFound` handler still wins, so negotiation is a default rather than an
+override.
+
+### How to detect whether you are affected
+
+```bash
+# Anything asserting on an empty 404/405/401 body
+grep -rn "StatusNotFound\|StatusMethodNotAllowed\|404\|405" --include="*_test.go" .
+```
+
+The status codes are unchanged; only the bodies and content types are new. A client that
+ignores the body is unaffected.
+
+### Mechanical or judgement?
+
+**Mechanical**, and usually nothing to do.
+
+---
+
+## 19. `${VAR}` substitution: what a missing variable now does
+
+This is not a break — it is the fix to one — but it changes what a misconfigured
+environment does, and the previous behaviour was the opposite of what the config sample
+implies.
+
+### What it used to do
+
+```go
+envValue := os.Getenv(name)   // "" for both "unset" and "set to empty"
+viper.Set(k, envValue)        // the *override* layer, unbeatable by any default
+```
+
+`os.Getenv` cannot tell an unset variable from an empty one, and the result went into
+viper's highest-precedence layer. So a placeholder for a **missing** variable produced a
+key that was present, empty, and unbeatable — which defeated the secure-cookie default
+this same release added. With the documented `secure: ${SESSION_COOKIE_SECURE}` and the
+variable unset — a fresh checkout, a CI runner, a container missing one env line —
+`IsSet` was true, the secure-by-default branch was skipped, `GetBool("")` returned false,
+and the session cookie shipped **without** `Secure`.
+
+### What it does now
+
+| Case | Behaviour |
+|------|-----------|
+| `FOO=bar` | substituted, as before |
+| `FOO=` (explicitly empty) | substituted with `""` — an empty string is a legitimate value for a blank cookie domain |
+| `FOO` unset, ordinary key | left as the literal `${FOO}`, with a warning; a connection error naming `${DB_HOST}` is instantly diagnosable, where an empty host gave no clue |
+| `FOO` unset, security-relevant key | **the boot fails** |
+
+The security-relevant keys are `auth.jwt.secret` and `auth.session.cookie.secure`.
+
+### **Check your environments**
+
+**An app carrying `secure: ${SESSION_COOKIE_SECURE}` in its config must confirm the
+variable is actually set in every environment**, because until now a missing one silently
+disabled the flag and nothing said so:
+
+```bash
+# For each environment
+grep -rn '\${' config/
+# then, for each placeholder found, confirm it is set where the app runs
+```
+
+If a security-relevant one is missing, the app now refuses to boot with:
+
+```
+config: security-relevant key(s) reference environment variables that are not set:
+auth.session.cookie.secure (${SESSION_COOKIE_SECURE}). Set them, or remove the
+placeholder so the framework's secure default applies — an unset placeholder must
+never silently weaken security
+```
+
+Removing the placeholder entirely is a valid fix: the framework's default is
+`secure: true`.
+
+### One correction to the brief
+
+`IMPROVEMENT_v2.1.md` prescribed "leave the key alone so defaults and `IsSet` behave".
+Leaving the key alone is right, but the stated reason does not hold: a key written in
+`config.yaml` lives in viper's *config* layer, which outranks `SetDefault`. `IsSet` stays
+true and `GetString` returns the literal `${VAR}` no matter what the parser does —
+verified, not assumed. That is why the real safety net is the hardened
+`SessionCookieSecure()`, which treats an unparseable or empty value as `true`, plus the
+boot failure above.
+
+---
+
 ## Verification
 
 ```bash
@@ -913,3 +1576,35 @@ go run cmd/cli.go db:migrate up --datasource=<other>   # the other one only
 Boot the app ten times and confirm every datasource resolves by name on each
 boot. The pre-v2 registration was nondeterministic, so a single successful boot
 proved nothing.
+
+Then the checks for this round:
+
+```bash
+# 5. A job actually fires. Register one at a short interval and watch the log.
+#    Nothing in the repo noticed that jobs never ran, so this needs eyes.
+
+# 6. A malformed body is 400 with a parseable envelope, not a 301
+curl -i -X POST -H 'Content-Type: application/json' --data '{"a":' \
+  http://localhost:8080/api/<a-body-route>
+
+# 7. A CSRF token can be obtained, and the middleware accepts it
+TOKEN=$(curl -s -c /tmp/j http://localhost:8080/csrf | sed 's/.*"csrf_token":"\([^"]*\)".*/\1/')
+curl -i -b /tmp/j -X POST -H "X-CSRF-Token: $TOKEN" http://localhost:8080/<a-mutating-route>
+
+# 8. An unknown route returns the envelope to an API client
+curl -i -H 'Accept: application/json' http://localhost:8080/api/definitely-not-a-route
+
+# 9. Every ${VAR} in config is set where the app runs
+grep -rn '\${' config/
+```
+
+And, if you run MySQL:
+
+```bash
+# 10. orm.Create actually inserts a row and reads its key back. The MySQL driver
+#     shipped in v2 with a green suite while being unable to insert anything,
+#     because every dialect test asserts strings.
+```
+
+The framework's own `testsupport` package is the shortest way to write checks 5 and
+10 as real tests — see [`docs/TESTING.md`](docs/TESTING.md).
