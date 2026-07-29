@@ -135,21 +135,42 @@ func secondaryDataSource(t *testing.T, cfg map[string]any) dbCore.IDataSource {
 	})
 }
 
-// waitForDatasource retries until the engine accepts connections.
+// engineWait is how long to keep retrying a connection. It is short because an
+// engine that is up answers on the first attempt; the retries exist only to absorb
+// a container that is still initialising. Nothing here should sit for a minute
+// discovering that a server is absent.
+const engineWait = 10 * time.Second
+
+// waitForDatasource retries until the engine accepts connections, then skips.
 func waitForDatasource(t *testing.T, build func() (dbCore.IDataSource, error)) dbCore.IDataSource {
 	t.Helper()
 
+	deadline := time.Now().Add(engineWait)
 	var lastErr error
-	for attempt := 0; attempt < 60; attempt++ {
+	for {
 		ds, err := build()
 		if err == nil {
 			return ds
 		}
 		lastErr = err
-		time.Sleep(time.Second)
+		if time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-	t.Skipf("engine not reachable after 60s, skipping live test: %v", lastErr)
+
+	t.Skipf("engine not reachable within %s, skipping live test: %v", engineWait, lastErr)
 	return nil
+}
+
+// requireMySQL skips immediately when MySQL is absent, so a run without it costs
+// one failed dial rather than the full retry window per test.
+func requireMySQL(t *testing.T) {
+	t.Helper()
+
+	if !mysqlAvailable() {
+		t.Skip("MySQL not reachable on 127.0.0.1:3307; start the container from this file's doc comment")
+	}
 }
 
 // --------------------------------------------------------- T1.3: no more panics
@@ -311,6 +332,8 @@ func TestT14_SearchPathConnectsIntoThatSchema(t *testing.T) {
 // MySQL has no syntax for, and passed three statements to one Exec, which
 // go-sql-driver/mysql rejects.
 func TestT15_SessionsMigrationOnMySQL(t *testing.T) {
+	requireMySQL(t)
+
 	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
 		return mysqlv2.NewDataSource(mysqlConfig())
 	})
@@ -448,6 +471,8 @@ func TestT16_MigrateTargetsOnlyTheSelectedDatasource(t *testing.T) {
 // TestMySQLQueriesRoundTripThroughTheDialect proves the MySQL dialect's SQL is
 // accepted by a real MySQL 8, not merely the string the unit tests expect.
 func TestMySQLQueriesRoundTripThroughTheDialect(t *testing.T) {
+	requireMySQL(t)
+
 	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
 		return mysqlv2.NewDataSource(mysqlConfig())
 	})
@@ -519,6 +544,8 @@ func TestMySQLQueriesRoundTripThroughTheDialect(t *testing.T) {
 // TestUtf8mb4RoundTrip proves the charset default actually holds: a 4-byte
 // character survives, which it would not under MySQL's `utf8` (3-byte) alias.
 func TestUtf8mb4RoundTrip(t *testing.T) {
+	requireMySQL(t)
+
 	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
 		return mysqlv2.NewDataSource(mysqlConfig())
 	})

@@ -23,13 +23,14 @@ import (
 )
 
 type DbProvider struct {
+	// connCtors holds only the connections added programmatically through
+	// AddConnection/AddConnectionE. The connections described by config are built
+	// during Register — see configuredConnections for why that timing matters.
 	connCtors []func() (string, dbCore.IDataSource, error)
 }
 
 func NewDbProvider() *DbProvider {
-	p := &DbProvider{}
-	p.connCtors = configuredConnections()
-	return p
+	return &DbProvider{}
 }
 
 // configuredConnections turns every entry under the `databases` config key into a
@@ -44,6 +45,12 @@ func NewDbProvider() *DbProvider {
 // Sorting the names makes registration order deterministic too, which matters
 // because it decides warning order and, before the `default`-only rule below, used
 // to decide which connection won the unnamed transient bindings.
+//
+// This must be called from Register, never from NewDbProvider. An app builds its
+// bootstrapper — and so this provider — as the argument to app.NewServerApp(...),
+// which is evaluated before ServerApp.Run() parses config/config. Reading viper in
+// the constructor would see an empty config and silently register no connections
+// at all.
 func configuredConnections() []func() (string, dbCore.IDataSource, error) {
 	databases := viper.GetStringMap("databases")
 
@@ -114,11 +121,17 @@ func (p *DbProvider) Register(c core.IContainer) {
 		return &dbCmd.DataContext{}
 	})
 
-	// Build and register every configured connection. A connection that fails to
-	// build is fatal: booting with a database silently missing turns every query
-	// against it into a nil dereference much later.
-	connections := make(map[string]dbCore.IDataSource, len(p.connCtors))
-	for _, ctor := range p.connCtors {
+	// Config-described connections are resolved here, not in the constructor,
+	// because the config file is parsed after the provider is built. They come
+	// first so a programmatic AddConnection can be reasoned about as an addition to
+	// what config declares.
+	ctors := append(configuredConnections(), p.connCtors...)
+
+	// Build and register every connection. One that fails to build is fatal:
+	// booting with a database silently missing turns every query against it into a
+	// nil dereference much later.
+	connections := make(map[string]dbCore.IDataSource, len(ctors))
+	for _, ctor := range ctors {
 		name, conn, err := ctor()
 		if err != nil {
 			panic(err)

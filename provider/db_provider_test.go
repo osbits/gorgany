@@ -193,6 +193,39 @@ func TestNoDefaultConnectionSkipsTransientRegistration(t *testing.T) {
 	require.Error(t, c.Make(&session))
 }
 
+// TestConfigIsReadAtRegisterNotAtConstruction pins the ordering trap.
+//
+// An app builds its bootstrapper — and therefore this provider — as the argument
+// to app.NewServerApp(...), which is evaluated *before* ServerApp.Run() calls
+// config.Parse("config/config"). A provider that read viper in its constructor
+// would see an empty config and silently register no connections at all, which
+// looks exactly like a misconfigured app.
+func TestConfigIsReadAtRegisterNotAtConstruction(t *testing.T) {
+	registerStubDriver(t, "stub_gorm")
+
+	// Construct the provider with NO config present, mimicking
+	// app.NewServerApp(NewBootstrapper()).
+	withDatabasesConfig(t, map[string]any{})
+	p := NewDbProvider()
+
+	// Config arrives afterwards, as ServerApp.Run() does it.
+	withDatabasesConfig(t, map[string]any{
+		"default": stubDbConfig("primary"),
+		"creatio": stubDbConfig("creatio"),
+	})
+
+	c := service.NewContainer()
+	p.Register(c)
+
+	var dbContext core.IDBContext
+	require.NoError(t, c.Make(&dbContext))
+
+	require.NotNil(t, dbContext.GetDataSource("default"),
+		"config parsed after construction must still be honoured")
+	require.NotNil(t, dbContext.GetDataSource("creatio"))
+	assert.Equal(t, "primary", dbContext.GetDataSource("default").(*stubDataSource).name)
+}
+
 // TestAddConnectionStillWorks pins the escape hatch apps use for connections the
 // config loop cannot express.
 func TestAddConnectionStillWorks(t *testing.T) {
