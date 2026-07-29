@@ -10,6 +10,7 @@ import (
 
 	dbCore "github.com/osbits/gorgany/db/sql/core"
 	v2 "github.com/osbits/gorgany/db/sql/gorm/postgres/v2"
+	"github.com/stretchr/testify/require"
 )
 
 // TestEntity is a test domain that implements EntityWithMeta
@@ -575,7 +576,8 @@ func TestSaveRelationsManyToManyUsesExistingRelatedEntity(t *testing.T) {
 	executedSQL := make([]string, 0)
 
 	mockDS.session.executor.queryOneFunc = func(ctx context.Context, q dbCore.IQueryBuilder, dest interface{}) dbCore.QueryResult {
-		sql, _ := q.ToSQL()
+		sql, _, err := q.ToSQL()
+		require.NoError(t, err)
 		if strings.HasPrefix(sql, "INSERT INTO test_many_to_many_roles") {
 			return dbCore.QueryResult{
 				Error: errors.New("duplicate key value violates unique constraint"),
@@ -595,7 +597,8 @@ func TestSaveRelationsManyToManyUsesExistingRelatedEntity(t *testing.T) {
 	}
 
 	mockDS.session.executor.execFunc = func(ctx context.Context, q dbCore.IQueryBuilder) dbCore.QueryResult {
-		sql, _ := q.ToSQL()
+		sql, _, err := q.ToSQL()
+		require.NoError(t, err)
 		executedSQL = append(executedSQL, sql)
 		return dbCore.QueryResult{RowsAffected: 1}
 	}

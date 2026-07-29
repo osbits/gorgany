@@ -74,40 +74,60 @@ type IDBTransaction interface {
 	Query() IQueryBuilder
 }
 
-// SQLDialect handles SQL formatting for a specific database
+// SQLDialect handles SQL formatting for a specific database.
+//
+// Every method returns an error so a dialect can refuse a construct its engine
+// cannot express (see UnsupportedError) instead of emitting SQL the server will
+// reject. Implementations must be stateless and safe for concurrent use: one
+// dialect value is shared by every builder created from a datasource.
+//
+// See docs/DIALECTS.md for a walkthrough of implementing a new dialect.
 type SQLDialect interface {
-	// FormatSelect formats the SELECT clause
-	FormatSelect(fields []string, distinct bool, distinctOn []string) (string, []any)
-	// FormatFrom formats the FROM clause
-	FormatFrom(table string, alias string) (string, []any)
-	// FormatJoin formats a JOIN clause
-	FormatJoin(join *JoinClause) (string, []any)
-	// FormatWhere formats the WHERE clause
-	FormatWhere(condition *WhereClause) (string, []any)
-	// FormatOrderBy formats the ORDER BY clause
-	FormatOrderBy(field string, direction string) (string, []any)
-	// FormatGroupBy formats the GROUP BY clause
-	FormatGroupBy(fields []string) (string, []any)
-	// FormatHaving formats the HAVING clause
-	FormatHaving(condition *HavingClause) (string, []any)
-	// FormatLimit formats the LIMIT clause
-	FormatLimit(limit int) (string, []any)
-	// FormatOffset formats the OFFSET clause
-	FormatOffset(offset int) (string, []any)
-	// FormatCTE formats a Common Table Expression
-	FormatCTE(name string, query *Query) (string, []any)
-	// FormatUnion formats a UNION clause
-	FormatUnion(query *Query, all bool) (string, []any)
-	// FormatWindow formats a window function definition
-	FormatWindow(name string, definition *WindowDefinition) (string, []any)
-	// FormatSubquery formats a subquery
-	FormatSubquery(query *Query, alias string) (string, []any)
-	// FormatDistinctOn formats a DISTINCT ON clause
-	FormatDistinctOn(fields []string) (string, []any)
-	// FormatReturning formats a RETURNING clause
-	FormatReturning(fields []string) (string, []any)
+	// Name identifies the dialect, e.g. "postgres" or "mysql". It appears in
+	// UnsupportedError messages.
+	Name() string
 
-	FormatQuery(query *Query) (string, []interface{})
+	// QuoteIdentifier renders a simple or dotted identifier using the engine's
+	// quoting rules — "tbl"."col" on Postgres, `tbl`.`col` on MySQL — escaping
+	// any embedded quote character.
+	QuoteIdentifier(identifier string) string
+
+	// FormatSelect formats the SELECT clause
+	FormatSelect(fields []string, distinct bool, distinctOn []string) (string, []any, error)
+	// FormatFrom formats the FROM clause
+	FormatFrom(table string, alias string) (string, []any, error)
+	// FormatJoin formats a JOIN clause
+	FormatJoin(join *JoinClause) (string, []any, error)
+	// FormatWhere formats the WHERE clause
+	FormatWhere(condition *WhereClause) (string, []any, error)
+	// FormatOrderBy formats the ORDER BY clause
+	FormatOrderBy(field string, direction string) (string, []any, error)
+	// FormatGroupBy formats the GROUP BY clause, including ROLLUP, CUBE and
+	// GROUPING SETS. It takes the whole clause because engines place those
+	// modifiers differently: Postgres writes GROUP BY ROLLUP (a, b) while MySQL
+	// writes GROUP BY a, b WITH ROLLUP.
+	FormatGroupBy(groupBy *GroupByClause) (string, []any, error)
+	// FormatHaving formats the HAVING clause
+	FormatHaving(condition *HavingClause) (string, []any, error)
+	// FormatLimit formats the LIMIT clause
+	FormatLimit(limit int) (string, []any, error)
+	// FormatOffset formats the OFFSET clause
+	FormatOffset(offset int) (string, []any, error)
+	// FormatCTE formats a Common Table Expression
+	FormatCTE(name string, query *Query) (string, []any, error)
+	// FormatUnion formats a UNION clause
+	FormatUnion(query *Query, all bool) (string, []any, error)
+	// FormatWindow formats a window function definition
+	FormatWindow(name string, definition *WindowDefinition) (string, []any, error)
+	// FormatSubquery formats a subquery
+	FormatSubquery(query *Query, alias string) (string, []any, error)
+	// FormatDistinctOn formats a DISTINCT ON clause
+	FormatDistinctOn(fields []string) (string, []any, error)
+	// FormatReturning formats a RETURNING clause
+	FormatReturning(fields []string) (string, []any, error)
+
+	// FormatQuery renders a complete query.
+	FormatQuery(query *Query) (string, []any, error)
 }
 
 // IQueryBuilder defines the interface for building database queries
@@ -195,5 +215,14 @@ type IQueryBuilder interface {
 	Delete(table string) IQueryBuilder
 
 	Build() *Query
-	ToSQL() (string, []any)
+
+	// ToSQL renders the accumulated query through the builder's dialect.
+	//
+	// The error is non-nil when the dialect cannot express the query — for
+	// example RETURNING or DISTINCT ON against MySQL. Callers must check it:
+	// on error the returned SQL is empty rather than invalid.
+	ToSQL() (string, []any, error)
+
+	// Dialect returns the dialect this builder renders through.
+	Dialect() SQLDialect
 }

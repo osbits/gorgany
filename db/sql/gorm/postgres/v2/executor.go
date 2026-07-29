@@ -21,7 +21,10 @@ func NewExecutor(db *gorm.DB) *Executor {
 
 // Exec executes a query without returning results
 func (e *Executor) Exec(ctx context.Context, query core.IQueryBuilder) core.QueryResult {
-	sql, args := query.ToSQL()
+	sql, args, err := query.ToSQL()
+	if err != nil {
+		return core.QueryResult{Error: err}
+	}
 
 	res := e.db.Exec(sql, args...)
 
@@ -35,7 +38,10 @@ func (e *Executor) Exec(ctx context.Context, query core.IQueryBuilder) core.Quer
 
 // Find executes a query and stores the result in the provided destination
 func (e *Executor) Find(ctx context.Context, query core.IQueryBuilder, result interface{}) core.QueryResult {
-	sql, args := query.ToSQL()
+	sql, args, err := query.ToSQL()
+	if err != nil {
+		return core.QueryResult{Error: err}
+	}
 
 	res := e.db.Raw(sql, args...).Scan(result)
 
@@ -50,9 +56,12 @@ func (e *Executor) Find(ctx context.Context, query core.IQueryBuilder, result in
 
 // Count executes a COUNT query
 func (e *Executor) Count(ctx context.Context, query core.IQueryBuilder) (int64, error) {
-	sql, args := query.ToSQL()
+	sql, args, err := query.ToSQL()
+	if err != nil {
+		return 0, err
+	}
 	var count int64
-	err := e.db.Raw(sql, args...).Count(&count).Error
+	err = e.db.Raw(sql, args...).Count(&count).Error
 	return count, err
 }
 

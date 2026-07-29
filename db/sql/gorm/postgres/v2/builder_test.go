@@ -5,28 +5,29 @@ import (
 
 	dbCore "github.com/osbits/gorgany/db/sql/core"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewBuilder(t *testing.T) {
 	builder := NewBuilder()
 	assert.NotNil(t, builder)
-	assert.NotNil(t, builder.query)
-	assert.NotNil(t, builder.dialect)
+	assert.NotNil(t, builder.Build())
+	assert.IsType(t, &PostgresDialect{}, builder.Dialect())
 }
 
 func TestBuilder_Select(t *testing.T) {
 	builder := NewBuilder().Select("id", "name", "email")
-	builderImpl := builder.(*Builder)
-	assert.NotNil(t, builderImpl.query.Select)
-	assert.Equal(t, []string{"id", "name", "email"}, builderImpl.query.Select.Fields)
+	q := builder.Build()
+	assert.NotNil(t, q.Select)
+	assert.Equal(t, []string{"id", "name", "email"}, q.Select.Fields)
 }
 
 func TestBuilder_From(t *testing.T) {
 	builder := NewBuilder().From("users")
-	builderImpl := builder.(*Builder)
+	q := builder.Build()
 
-	assert.NotNil(t, builderImpl.query.From)
-	assert.Equal(t, "users", builderImpl.query.From.Table)
+	assert.NotNil(t, q.From)
+	assert.Equal(t, "users", q.From.Table)
 }
 
 func TestBuilder_Where(t *testing.T) {
@@ -36,12 +37,12 @@ func TestBuilder_Where(t *testing.T) {
 		Right:    1,
 	}
 	builder := NewBuilder().Where(condition)
-	builderImpl := builder.(*Builder)
+	q := builder.Build()
 
-	assert.NotNil(t, builderImpl.query.Where)
-	assert.Equal(t, "AND", builderImpl.query.Where.Operator)
-	assert.Len(t, builderImpl.query.Where.Conditions, 1)
-	assert.Equal(t, condition, builderImpl.query.Where.Conditions[0])
+	assert.NotNil(t, q.Where)
+	assert.Equal(t, "AND", q.Where.Operator)
+	assert.Len(t, q.Where.Conditions, 1)
+	assert.Equal(t, condition, q.Where.Conditions[0])
 }
 
 func TestBuilder_Join(t *testing.T) {
@@ -55,28 +56,28 @@ func TestBuilder_Join(t *testing.T) {
 		},
 	}
 	builder := NewBuilder().Join(join)
-	builderImpl := builder.(*Builder)
+	q := builder.Build()
 
-	assert.Len(t, builderImpl.query.Joins, 1)
-	assert.Equal(t, join, builderImpl.query.Joins[0])
+	assert.Len(t, q.Joins, 1)
+	assert.Equal(t, join, q.Joins[0])
 }
 
 func TestBuilder_OrderBy(t *testing.T) {
 	builder := NewBuilder().OrderBy("created_at", "DESC")
-	builderImpl := builder.(*Builder)
+	q := builder.Build()
 
-	assert.NotNil(t, builderImpl.query.OrderBy)
-	assert.Len(t, builderImpl.query.OrderBy.Fields, 1)
-	assert.Equal(t, "created_at", builderImpl.query.OrderBy.Fields[0].Field)
-	assert.Equal(t, "DESC", builderImpl.query.OrderBy.Fields[0].Direction)
+	assert.NotNil(t, q.OrderBy)
+	assert.Len(t, q.OrderBy.Fields, 1)
+	assert.Equal(t, "created_at", q.OrderBy.Fields[0].Field)
+	assert.Equal(t, "DESC", q.OrderBy.Fields[0].Direction)
 }
 
 func TestBuilder_GroupBy(t *testing.T) {
 	builder := NewBuilder().GroupBy("status", "type")
-	builderImpl := builder.(*Builder)
+	q := builder.Build()
 
-	assert.NotNil(t, builderImpl.query.GroupBy)
-	assert.Equal(t, []string{"status", "type"}, builderImpl.query.GroupBy.Fields)
+	assert.NotNil(t, q.GroupBy)
+	assert.Equal(t, []string{"status", "type"}, q.GroupBy.Fields)
 }
 
 func TestBuilder_Having(t *testing.T) {
@@ -86,20 +87,20 @@ func TestBuilder_Having(t *testing.T) {
 		Right:    5,
 	}
 	builder := NewBuilder().Having(condition)
-	builderImpl := builder.(*Builder)
+	q := builder.Build()
 
-	assert.NotNil(t, builderImpl.query.Having)
-	assert.Equal(t, condition, builderImpl.query.Having.Condition)
+	assert.NotNil(t, q.Having)
+	assert.Equal(t, condition, q.Having.Condition)
 }
 
 func TestBuilder_LimitOffset(t *testing.T) {
 	builder := NewBuilder().Limit(10).Offset(20)
-	builderImpl := builder.(*Builder)
+	q := builder.Build()
 
-	assert.NotNil(t, builderImpl.query.Limit)
-	assert.Equal(t, 10, *builderImpl.query.Limit)
-	assert.NotNil(t, builderImpl.query.Offset)
-	assert.Equal(t, 20, *builderImpl.query.Offset)
+	assert.NotNil(t, q.Limit)
+	assert.Equal(t, 10, *q.Limit)
+	assert.NotNil(t, q.Offset)
+	assert.Equal(t, 20, *q.Offset)
 }
 
 func TestBuilder_WithCTE(t *testing.T) {
@@ -112,11 +113,11 @@ func TestBuilder_WithCTE(t *testing.T) {
 		},
 	}
 	builder := NewBuilder().WithCTE("user_cte", cteQuery)
-	builderImpl := builder.(*Builder)
+	q := builder.Build()
 
-	assert.Len(t, builderImpl.query.CTEs, 1)
-	assert.Equal(t, "user_cte", builderImpl.query.CTEs[0].Name)
-	assert.Equal(t, cteQuery, builderImpl.query.CTEs[0].Query)
+	assert.Len(t, q.CTEs, 1)
+	assert.Equal(t, "user_cte", q.CTEs[0].Name)
+	assert.Equal(t, cteQuery, q.CTEs[0].Query)
 }
 
 func TestBuilder_Union(t *testing.T) {
@@ -129,11 +130,11 @@ func TestBuilder_Union(t *testing.T) {
 		},
 	}
 	builder := NewBuilder().Union(unionQuery)
-	builderImpl := builder.(*Builder)
+	q := builder.Build()
 
-	assert.Len(t, builderImpl.query.Unions, 1)
-	assert.Equal(t, unionQuery, builderImpl.query.Unions[0].Query)
-	assert.False(t, builderImpl.query.Unions[0].All)
+	assert.Len(t, q.Unions, 1)
+	assert.Equal(t, unionQuery, q.Unions[0].Query)
+	assert.False(t, q.Unions[0].All)
 }
 
 func TestBuilder_UnionAll(t *testing.T) {
@@ -146,11 +147,11 @@ func TestBuilder_UnionAll(t *testing.T) {
 		},
 	}
 	builder := NewBuilder().UnionAll(unionQuery)
-	builderImpl := builder.(*Builder)
+	q := builder.Build()
 
-	assert.Len(t, builderImpl.query.Unions, 1)
-	assert.Equal(t, unionQuery, builderImpl.query.Unions[0].Query)
-	assert.True(t, builderImpl.query.Unions[0].All)
+	assert.Len(t, q.Unions, 1)
+	assert.Equal(t, unionQuery, q.Unions[0].Query)
+	assert.True(t, q.Unions[0].All)
 }
 
 func TestBuilder_ToSQL(t *testing.T) {
@@ -345,7 +346,8 @@ func TestBuilder_ToSQL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			builder := tt.builder()
-			sql, args := builder.ToSQL()
+			sql, args, err := builder.ToSQL()
+			require.NoError(t, err)
 
 			assert.Equal(t, tt.expected.sql, sql)
 			assert.Equal(t, tt.expected.args, args)
@@ -428,10 +430,10 @@ func TestBuilder_ConditionHelpers(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			builder = NewBuilder()
-			builder = tt.condition().(*Builder)
-			assert.NotNil(t, builder.query.Where)
-			assert.Len(t, builder.query.Where.Conditions, 1)
-			assert.Equal(t, tt.expected, builder.query.Where.Conditions[0])
+			q := tt.condition().Build()
+			assert.NotNil(t, q.Where)
+			assert.Len(t, q.Where.Conditions, 1)
+			assert.Equal(t, tt.expected, q.Where.Conditions[0])
 		})
 	}
 }
@@ -446,12 +448,12 @@ func TestBuilder_Subquery(t *testing.T) {
 		},
 	}
 	builder := NewBuilder().Subquery(subquery, "u")
-	builderImpl := builder.(*Builder)
+	q := builder.Build()
 
-	assert.NotNil(t, builderImpl.query.From)
-	assert.True(t, builderImpl.query.From.IsSubquery)
-	assert.Equal(t, subquery, builderImpl.query.From.Subquery)
-	assert.Equal(t, "u", builderImpl.query.From.Alias)
+	assert.NotNil(t, q.From)
+	assert.True(t, q.From.IsSubquery)
+	assert.Equal(t, subquery, q.From.Subquery)
+	assert.Equal(t, "u", q.From.Alias)
 }
 
 func TestBuilder_RawCondition(t *testing.T) {
@@ -459,11 +461,11 @@ func TestBuilder_RawCondition(t *testing.T) {
 		SQL: "EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id)",
 	}
 	builder := NewBuilder().Where(rawCondition)
-	builderImpl := builder.(*Builder)
+	q := builder.Build()
 
-	assert.NotNil(t, builderImpl.query.Where)
-	assert.Len(t, builderImpl.query.Where.Conditions, 1)
-	assert.Equal(t, rawCondition, builderImpl.query.Where.Conditions[0])
+	assert.NotNil(t, q.Where)
+	assert.Len(t, q.Where.Conditions, 1)
+	assert.Equal(t, rawCondition, q.Where.Conditions[0])
 }
 
 func TestBuilder_RawSQL(t *testing.T) {
@@ -474,7 +476,8 @@ func TestBuilder_RawSQL(t *testing.T) {
 			SQL: "age > 18 AND status = 'active'",
 		})
 
-	sql, args := builder.ToSQL()
+	sql, args, err := builder.ToSQL()
+	require.NoError(t, err)
 	assert.Equal(t, "SELECT id, name FROM users WHERE age > 18 AND status = 'active'", sql)
 	assert.Nil(t, args)
 }
@@ -503,7 +506,8 @@ func TestBuilder_ToSQL_PreservesNestedConditionGrouping(t *testing.T) {
 			),
 		))
 
-	sql, args := builder.ToSQL()
+	sql, args, err := builder.ToSQL()
+	require.NoError(t, err)
 
 	assert.Equal(t, "SELECT id FROM users WHERE (user_id = ? AND (status = ? OR date > ?))", sql)
 	assert.Equal(t, []interface{}{1, "confirmed", "2026-01-01"}, args)
@@ -550,7 +554,8 @@ func TestBuilder_ComplexSubquery(t *testing.T) {
 			Subquery:   subquery,
 		})
 
-	sql, args := builder.ToSQL()
+	sql, args, err := builder.ToSQL()
+	require.NoError(t, err)
 	expected := "SELECT id, name, email FROM users WHERE id IN (SELECT user_id FROM orders WHERE status = ? GROUP BY user_id HAVING COUNT(*) > ?)"
 	assert.Equal(t, expected, sql)
 	assert.Equal(t, []interface{}{"active", 5}, args)
@@ -607,7 +612,8 @@ func TestBuilder_NestedSubqueries(t *testing.T) {
 			Subquery:   middleSubquery,
 		})
 
-	sql, args := builder.ToSQL()
+	sql, args, err := builder.ToSQL()
+	require.NoError(t, err)
 	expected := "SELECT id, name FROM users WHERE id IN (SELECT id FROM orders WHERE id IN (SELECT product_id FROM order_items WHERE quantity > ?))"
 	assert.Equal(t, expected, sql)
 	assert.Equal(t, []interface{}{10}, args)
@@ -622,7 +628,8 @@ func TestBuilder_RawWithParameters(t *testing.T) {
 			Args: []interface{}{18, "active"},
 		})
 
-	sql, args := builder.ToSQL()
+	sql, args, err := builder.ToSQL()
+	require.NoError(t, err)
 	assert.Equal(t, "SELECT id, name FROM users WHERE age > ? AND status = ?", sql)
 	assert.Equal(t, []interface{}{18, "active"}, args)
 }
@@ -635,7 +642,8 @@ func TestBuilder_ComplexRawCondition(t *testing.T) {
 			SQL: "EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id AND orders.status = 'active') AND (age > 18 OR (age = 18 AND parent_consent = true))",
 		})
 
-	sql, args := builder.ToSQL()
+	sql, args, err := builder.ToSQL()
+	require.NoError(t, err)
 	expected := "SELECT id, name, email FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id AND orders.status = 'active') AND (age > 18 OR (age = 18 AND parent_consent = true))"
 	assert.Equal(t, expected, sql)
 	assert.Nil(t, args)
@@ -651,7 +659,8 @@ func TestBuilder_ColumnComparison(t *testing.T) {
 			Operator: ">",
 			Right:    18,
 		})
-	sql, args := builder.ToSQL()
+	sql, args, err := builder.ToSQL()
+	require.NoError(t, err)
 	assert.Equal(t, "SELECT id, name FROM users WHERE age > ?", sql)
 	assert.Equal(t, []interface{}{18}, args)
 
@@ -662,7 +671,8 @@ func TestBuilder_ColumnComparison(t *testing.T) {
 		Where(&dbCore.RawCondition{
 			SQL: "age > min_age",
 		})
-	sql, args = builder.ToSQL()
+	sql, args, err = builder.ToSQL()
+	require.NoError(t, err)
 	assert.Equal(t, "SELECT id, name FROM users WHERE age > min_age", sql)
 	assert.Nil(t, args)
 
@@ -673,7 +683,8 @@ func TestBuilder_ColumnComparison(t *testing.T) {
 		Where(&dbCore.RawCondition{
 			SQL: "age > min_age AND (max_age IS NULL OR age < max_age)",
 		})
-	sql, args = builder.ToSQL()
+	sql, args, err = builder.ToSQL()
+	require.NoError(t, err)
 	assert.Equal(t, "SELECT id, name FROM users WHERE age > min_age AND (max_age IS NULL OR age < max_age)", sql)
 	assert.Nil(t, args)
 }
@@ -696,7 +707,8 @@ func TestBuilder_RawCondition_IdentifierPlaceholders_InJoin(t *testing.T) {
 			Right:    1,
 		})
 
-	sql, args := builder.ToSQL()
+	sql, args, err := builder.ToSQL()
+	require.NoError(t, err)
 	expectedSQL := "SELECT " + relatedTable + ".* FROM " + relatedTable + " INNER JOIN " + joinTable + " ON " + relatedTable + ".id = " + joinTable + ".treatment_category_id WHERE " + joinTable + ".treatment_id = ?"
 	assert.Equal(t, expectedSQL, sql)
 	assert.Equal(t, []interface{}{1}, args)
@@ -713,7 +725,8 @@ func TestBuilder_RawCondition_MixedIdentifierAndValuePlaceholders(t *testing.T) 
 			Args: []interface{}{table, "John"},
 		})
 
-	sql, args := builder.ToSQL()
+	sql, args, err := builder.ToSQL()
+	require.NoError(t, err)
 	expectedSQL := "SELECT id, name FROM " + table + " WHERE " + table + ".name = ?"
 	assert.Equal(t, expectedSQL, sql)
 	assert.Equal(t, []interface{}{"John"}, args)

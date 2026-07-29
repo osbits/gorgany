@@ -5,22 +5,26 @@ import (
 
 	dbCore "github.com/osbits/gorgany/db/sql/core"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestFormatOrderBy_QuotesSimpleIdentifiers(t *testing.T) {
 	d := &PostgresDialect{}
 
-	sql, args := d.FormatOrderBy("created_at", "desc")
+	sql, args, err := d.FormatOrderBy("created_at", "desc")
+	require.NoError(t, err)
 	assert.Equal(t, `ORDER BY "created_at" DESC`, sql)
 	assert.Empty(t, args)
 
-	sql, _ = d.FormatOrderBy("name", "asc")
+	sql, _, err = d.FormatOrderBy("name", "asc")
+	require.NoError(t, err)
 	assert.Equal(t, `ORDER BY "name" ASC`, sql)
 }
 
 func TestFormatOrderBy_QuotesDottedIdentifiers(t *testing.T) {
 	d := &PostgresDialect{}
-	sql, args := d.FormatOrderBy("members.created_at", "asc")
+	sql, args, err := d.FormatOrderBy("members.created_at", "asc")
+	require.NoError(t, err)
 	assert.Equal(t, `ORDER BY "members"."created_at" ASC`, sql)
 	assert.Empty(t, args)
 }
@@ -29,15 +33,18 @@ func TestFormatOrderBy_NormalizesDirection(t *testing.T) {
 	d := &PostgresDialect{}
 
 	// unknown / malicious direction falls back to ASC
-	sql, _ := d.FormatOrderBy("id", "asc; DROP TABLE users")
+	sql, _, err := d.FormatOrderBy("id", "asc; DROP TABLE users")
+	require.NoError(t, err)
 	assert.Equal(t, `ORDER BY "id" ASC`, sql)
 
 	// case-insensitive desc
-	sql, _ = d.FormatOrderBy("id", "DeSc")
+	sql, _, err = d.FormatOrderBy("id", "DeSc")
+	require.NoError(t, err)
 	assert.Equal(t, `ORDER BY "id" DESC`, sql)
 
 	// empty direction defaults to ASC
-	sql, _ = d.FormatOrderBy("id", "")
+	sql, _, err = d.FormatOrderBy("id", "")
+	require.NoError(t, err)
 	assert.Equal(t, `ORDER BY "id" ASC`, sql)
 }
 
@@ -48,11 +55,13 @@ func TestFormatOrderBy_NormalizesDirection(t *testing.T) {
 func TestFormatOrderBy_NonIdentifierIsBound(t *testing.T) {
 	d := &PostgresDialect{}
 
-	sql, args := d.FormatOrderBy("(SELECT CASE WHEN (SELECT 1)=1 THEN name ELSE id END)", "desc")
+	sql, args, err := d.FormatOrderBy("(SELECT CASE WHEN (SELECT 1)=1 THEN name ELSE id END)", "desc")
+	require.NoError(t, err)
 	assert.Equal(t, `ORDER BY ? DESC`, sql)
 	assert.Equal(t, []interface{}{"(SELECT CASE WHEN (SELECT 1)=1 THEN name ELSE id END)"}, args)
 
-	sql, args = d.FormatOrderBy("first_name || ' ' || last_name", "asc")
+	sql, args, err = d.FormatOrderBy("first_name || ' ' || last_name", "asc")
+	require.NoError(t, err)
 	assert.Equal(t, `ORDER BY ? ASC`, sql)
 	assert.Equal(t, []interface{}{"first_name || ' ' || last_name"}, args)
 }
@@ -87,7 +96,8 @@ func TestFormatQuery_MultipleOrderByFields(t *testing.T) {
 			},
 		},
 	}
-	sql, _ := d.FormatQuery(q)
+	sql, _, err := d.FormatQuery(q)
+	require.NoError(t, err)
 	assert.Contains(t, sql, `ORDER BY "last_name" ASC, "members"."created_at" DESC, first_name || ' ' || last_name ASC`)
 	// No repeated "ORDER BY" keyword.
 	assert.Equal(t, 1, countSubstr(sql, "ORDER BY"))
@@ -95,14 +105,16 @@ func TestFormatQuery_MultipleOrderByFields(t *testing.T) {
 
 func TestBuilder_OrderBy_BindsNonIdentifier(t *testing.T) {
 	// Through the builder: an untrusted expression is bound, not interpolated.
-	sql, args := NewBuilder().From("members").OrderBy("(SELECT 1)", "asc").ToSQL()
+	sql, args, err := NewBuilder().From("members").OrderBy("(SELECT 1)", "asc").ToSQL()
+	require.NoError(t, err)
 	assert.Contains(t, sql, "ORDER BY ? ASC")
 	assert.Contains(t, args, "(SELECT 1)")
 	assert.NotContains(t, sql, "(SELECT 1)")
 }
 
 func TestBuilder_OrderByRaw_Verbatim(t *testing.T) {
-	sql, args := NewBuilder().From("members").OrderByRaw("first_name || ' ' || last_name", "asc").ToSQL()
+	sql, args, err := NewBuilder().From("members").OrderByRaw("first_name || ' ' || last_name", "asc").ToSQL()
+	require.NoError(t, err)
 	assert.Contains(t, sql, `ORDER BY first_name || ' ' || last_name ASC`)
 	assert.Empty(t, args)
 }

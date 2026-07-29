@@ -11,6 +11,7 @@ import (
 	dbCore "github.com/osbits/gorgany/db/sql/core"
 	v2 "github.com/osbits/gorgany/db/sql/gorm/postgres/v2"
 	err2 "github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/log"
 	"github.com/osbits/gorgany/service/cache"
 	"gorm.io/gorm/schema"
 )
@@ -475,13 +476,21 @@ func applySubqueryToQueryBuilder(builder dbCore.IQueryBuilder, filter DBFilter) 
 	case "NOT IN":
 		return builder.NotInSubquery(filter.Field, subqueryQuery)
 	case "EXISTS":
-		sql, args := subqueryBuilder.ToSQL()
+		sql, args, err := subqueryBuilder.ToSQL()
+		if err != nil {
+			log.Log().Errorf("pagination: cannot render EXISTS subquery: %v", err)
+			return builder
+		}
 		return builder.Where(&dbCore.RawCondition{
 			SQL:  fmt.Sprintf("EXISTS (%s)", sql),
 			Args: args,
 		})
 	case "NOT EXISTS":
-		sql, args := subqueryBuilder.ToSQL()
+		sql, args, err := subqueryBuilder.ToSQL()
+		if err != nil {
+			log.Log().Errorf("pagination: cannot render NOT EXISTS subquery: %v", err)
+			return builder
+		}
 		return builder.Where(&dbCore.RawCondition{
 			SQL:  fmt.Sprintf("NOT EXISTS (%s)", sql),
 			Args: args,

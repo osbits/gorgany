@@ -69,7 +69,10 @@ func (o *ORM[T]) Find(id interface{}) (T, error) {
 		meta.PrimaryKey = primaryKey
 	}
 
-	sql, args := builder.From(tableName).Eq(primaryKey, id).Limit(1).ToSQL()
+	sql, args, err := builder.From(tableName).Eq(primaryKey, id).Limit(1).ToSQL()
+	if err != nil {
+		return entity, fmt.Errorf("failed to render Find query in ORM for %s: %w", indirectEntityType.Name(), err)
+	}
 
 	meta.LastQuery = sql
 	meta.LastArgs = args
@@ -118,7 +121,10 @@ func (o *ORM[T]) All() ([]T, error) {
 	}
 
 	// Convert to SQL
-	sql, args := builder.ToSQL()
+	sql, args, err := builder.ToSQL()
+	if err != nil {
+		return entities, fmt.Errorf("failed to render All query in ORM for %s: %w", indirectSampleType.Name(), err)
+	}
 
 	// Execute the query
 	queryResult := o.db.Executor().FindRaw(context.Background(), &entities, sql, args...)
@@ -288,13 +294,18 @@ func (o *ORM[T]) Count() (int64, error) {
 
 	tableName := GetTableName(sample)
 
-	builder := v2.NewBuilder()
+	// The builder is copy-on-write: every clause method returns a new builder and
+	// leaves the receiver untouched. The FROM used to be applied with its result
+	// discarded, so Count() emitted "SELECT COUNT(*)" with no FROM clause at all.
+	var builder dbCore.IQueryBuilder = v2.NewBuilder()
 	if tableName != "" {
-		builder.From(tableName)
+		builder = builder.From(tableName)
 	}
 
-	// Create a copy of the builder for the count query
-	sql, args := builder.Select("COUNT(*)").ToSQL()
+	sql, args, err := builder.Select("COUNT(*)").ToSQL()
+	if err != nil {
+		return 0, fmt.Errorf("failed to render Count query in ORM: %w", err)
+	}
 
 	// Execute the query
 	count, err := o.db.Executor().CountRaw(context.Background(), sql, args...)
@@ -422,7 +433,10 @@ func (o *ORM[T]) AllByQuery(qb dbCore.IQueryBuilder) ([]T, error) {
 	}
 
 	qb = qb.From(tableName)
-	sql, args := qb.ToSQL()
+	sql, args, err := qb.ToSQL()
+	if err != nil {
+		return entities, fmt.Errorf("failed to render AllByQuery in ORM: %w", err)
+	}
 
 	queryResult := o.db.Executor().FindRaw(context.Background(), &entities, sql, args...)
 	if queryResult.Error != nil {
@@ -480,7 +494,10 @@ func (o *ORM[T]) FirstByQuery(qb dbCore.IQueryBuilder) (T, error) {
 	}
 
 	qb = qb.Limit(1).From(tableName)
-	sql, args := qb.ToSQL()
+	sql, args, err := qb.ToSQL()
+	if err != nil {
+		return entity, fmt.Errorf("failed to render FirstByQuery in ORM: %w", err)
+	}
 
 	queryResult := o.db.Executor().FindRaw(context.Background(), &entity, sql, args...)
 	if queryResult.Error != nil {
@@ -534,7 +551,10 @@ func (o *ORM[T]) CountByQuery(qb dbCore.IQueryBuilder) (int64, error) {
 	}
 
 	qb = qb.Select("COUNT(*)").From(tableName)
-	sql, args := qb.ToSQL()
+	sql, args, err := qb.ToSQL()
+	if err != nil {
+		return 0, fmt.Errorf("failed to render CountByQuery in ORM: %w", err)
+	}
 
 	count, err := o.db.Executor().CountRaw(context.Background(), sql, args...)
 	if err != nil {

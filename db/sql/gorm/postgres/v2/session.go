@@ -4,15 +4,23 @@ import (
 	"context"
 	"sync"
 
+	"github.com/osbits/gorgany/db/sql/builder"
 	"github.com/osbits/gorgany/db/sql/core"
 
 	"gorm.io/gorm"
 )
 
+// DialectAware is implemented by datasources that know which SQL dialect their
+// connection speaks. Sessions use it to hand every builder the right dialect;
+// a datasource that does not implement it falls back to Postgres.
+type DialectAware interface {
+	Dialect() core.SQLDialect
+}
+
 // sessionImpl implements the ISession interface
 type sessionImpl struct {
 	executor   *Executor
-	query      *Builder
+	dialect    core.SQLDialect
 	dataSource core.IDataSource
 	mu         sync.RWMutex
 }
@@ -27,6 +35,7 @@ func (ds *gormPostgresDataSource) NewSession() (core.ISession, error) {
 
 	return &sessionImpl{
 		executor:   NewExecutor(session),
+		dialect:    ds.Dialect(),
 		dataSource: ds,
 	}, nil
 }
@@ -40,12 +49,14 @@ func (s *sessionImpl) Executor() core.IQueryExecutor {
 	return s.executor
 }
 
-// Query creates a new query builder
+// Query returns a fresh query builder speaking this session's dialect.
+//
+// It used to memoize one builder per session and hand the same instance back on
+// every call, so a second Query() arrived carrying the first query's WHERE and
+// ORDER BY state — silently wrong results rather than a crash. Every call now
+// returns a new builder.
 func (s *sessionImpl) Query() core.IQueryBuilder {
-	if s.query == nil {
-		s.query = NewBuilder()
-	}
-	return s.query
+	return builder.New(s.dialect)
 }
 
 // Transaction executes the provided function within a transaction
@@ -59,8 +70,9 @@ func (s *sessionImpl) Transaction(ctx context.Context, fn func(core.IDBTransacti
 	}
 
 	transaction := &transactionImpl{
-		Builder:  NewBuilder(),
+		Builder:  builder.New(s.dialect),
 		Executor: NewExecutor(tx),
+		dialect:  s.dialect,
 	}
 
 	if err := fn(transaction); err != nil {

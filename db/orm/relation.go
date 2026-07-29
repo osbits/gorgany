@@ -1016,7 +1016,10 @@ func (o *ORM[T]) relatedEntityExists(tableName, primaryKey string, primaryKeyVal
 			Right:    primaryKeyValue,
 		})
 
-	asSql, args := builder.ToSQL()
+	asSql, args, err := builder.ToSQL()
+	if err != nil {
+		return false, fmt.Errorf("failed to render existence check for %s: %w", tableName, err)
+	}
 	count, err := o.db.Executor().CountRaw(context.Background(), asSql, args...)
 	if err != nil {
 		return false, fmt.Errorf("failed to check existing related entity in %s: %w", tableName, err)

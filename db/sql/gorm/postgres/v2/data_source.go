@@ -68,6 +68,12 @@ func getDsn(config map[string]any) string {
 		config["host"], config["port"], config["username"], config["password"], config["db"], config["ssl"])
 }
 
+// Dialect returns the SQL dialect this connection speaks. Sessions created from
+// this datasource hand it to every builder they produce.
+func (ds *gormPostgresDataSource) Dialect() core.SQLDialect {
+	return &PostgresDialect{}
+}
+
 func (ds *gormPostgresDataSource) GetDriver() (any, error) {
 	return ds.db, nil
 }
