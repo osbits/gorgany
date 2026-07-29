@@ -81,6 +81,50 @@ work.
   that declares a target datasource is skipped when a different one is selected.
 - **Route-scoped middleware is no longer published into the shared
   `webCtx` middleware list.** It now attaches to its own route only.
+- **`core.IJob` reshaped: `Schedule() JobSchedule` and `Run(ctx) error`** replace
+  `GetJob()`/`GetInterval()`/`GetUnit()`, and `gocron` is gone from the module
+  entirely. Scheduled jobs never ran on any prior version — `JobProvider.Boot`
+  called `c.Make(&job.Scheduler{})`, which field-injected a zero value instead of
+  resolving the registered one, so the scheduler that was started was always
+  empty. Compile break; see MIGRATION_v2.md §13.
+- **`err.ValidationError` carries `Rule`, `Param` and `Path`, and `Field`/`Err`
+  changed meaning.** `Field` is now the wire name (the `json`/`scheme` tag) rather
+  than the Go field name, and `Err` is a readable message rather than
+  go-playground's raw `Key: 'Dto.Email' Error:Field validation for 'Email' failed
+  on the 'email' tag`. The new keys are `omitempty`, so the JSON shape is additive.
+  **Behaviour change, no compiler error** — a client matching on the old field name
+  or parsing the old message will notice. See MIGRATION_v2.md §14.
+- **`Container.Make` errors when handed a pointer-to-struct whose type has a
+  registered binding holding a different instance.** That call silently
+  field-injected a zero value where the caller expected the registered singleton,
+  which is how the job scheduler came to tick empty. Use `Resolve` instead. See
+  MIGRATION_v2.md §15.
+- **A malformed request body is `400` with `err.InputBodyParseError`, not a `301`
+  redirect.** `err.NewInputBodyParseError` had zero call sites while
+  `http/error.go` registered a handler for it, so every parse failure arrived as an
+  *empty* `ValidationErrors` and `processValidationErrors` redirected to the
+  `Referer`. **Behaviour change, no compiler error.**
+- **MySQL `ON CONFLICT … DO UPDATE` is refused by default.** It translated to `ON
+  DUPLICATE KEY UPDATE`, silently dropping the conflict-target columns — valid but
+  wrong SQL, which is the failure mode the dialect rule exists to prevent. Opt in
+  with `MySQLDialect{AllowUnfaithfulUpsert: true}`. `DO NOTHING` is unaffected.
+  See MIGRATION_v2.md §16.
+- **`NewCorsMiddleware` refuses `AllowCredentials` together with a wildcard
+  origin.** Browsers reject that pair, so it was a silent failure with no
+  diagnostic. Use `NewCorsMiddlewareChecked` for an error instead of a panic. Note
+  that an *empty* `AllowedOrigins` with no `AllowOriginFunc` also means "all
+  origins". See MIGRATION_v2.md §17.
+- **`core.MongoDb` removed.** It was a `DbType` constant with no driver behind it,
+  so `driver: mongo` failed at boot while the exported constant advertised support.
+- **`X-CSRF-Token` is now set on every session-carrying response**, and
+  `GET /csrf` is registered by default. **Behaviour change, no compiler error.**
+  Call `RouteProvider.DisableCsrfController()` to opt out. See MIGRATION_v2.md §18.
+- **404, 405 and the framework's error handlers are content-negotiated.** An API
+  client gets the standard envelope where it previously got an empty body or
+  `text/plain`. `405` is answered at all now — chi's bare default was in place.
+  **Behaviour change, no compiler error.**
+- **A DTO whose `ContentType()` has no body parser now panics at route
+  registration** rather than serving 500s. Compile-clean, boot-time break.
 
 ### Added
 
@@ -121,6 +165,49 @@ work.
 - **`dbCore.SortedKeys`** for deterministic map-driven SQL generation.
 - **`i18n.Manager.FallbackTag`** and locale fallback in `GetConfig`.
 - **`core.GormMySQL`** (`"mysql_gorm"`) alongside `core.GormPostgreSQL`.
+- **`testsupport`**: a database test harness — throwaway-per-run connection,
+  migrate once per package, truncate-between-tests or transaction-rollback-per-test,
+  Postgres and MySQL, skip-or-fail when no engine is reachable. See
+  [`docs/TESTING.md`](docs/TESTING.md).
+- **`middleware.RateLimitMiddleware`**: an in-memory token bucket keyed by IP plus
+  route, with a `RateLimitStore` seam for a distributed backend. Nothing in the
+  framework rate-limited anything before. See
+  [`docs/RATE_LIMITING.md`](docs/RATE_LIMITING.md).
+- **`controller.SpaController`**: static files with an `index.html` fallback, so
+  client-side routing works. `no-store` on the entry document, immutable caching on
+  hashed assets, API prefixes excluded from the fallback, and a path-traversal
+  guard. See [`docs/SPA.md`](docs/SPA.md).
+- **`controller.CsrfController`** at `GET /csrf`, registered by default, backed by
+  `CsrfService.GetCSRFToken` — which existed with zero call sites. See
+  [`docs/CSRF.md`](docs/CSRF.md).
+- **`job.Scheduler`**: the framework's own interval scheduler, replacing `gocron`.
+  `Add`, `Start(ctx)`, `Stop`, `Jobs`, `Stats`, with per-job overlap protection and
+  panic recovery.
+- **A per-rule validation message catalog**, localised through `i18n` under
+  `validation.<rule>` with English defaults and a rule-naming catch-all.
+  `validator.DefaultMessages()` exposes what an app is overriding. See
+  [`docs/VALIDATION.md`](docs/VALIDATION.md).
+- **`core.ILocalizedValidator`** (`ValidateStructForLocale`), an optional interface
+  the HTTP input resolver uses to render messages in the request's locale.
+- **`model.ParseStructTag` / `model.WireFieldName`**: the shared `json`/`scheme`
+  tag handling, so the response marshaller and the validator cannot drift.
+- **`i18n.Interpolate`** and **`i18n.HasManager`**.
+- **`http.WantsJSON`**: the content-negotiation decision, exported so the auth
+  middleware, the router's 404/405 and the error handlers cannot answer
+  differently for the same request.
+- **`auth.RoleFromClaims`** and a `role` claim on generated JWTs — informational
+  only; the user-service lookup remains the authority so a role change takes
+  effect immediately.
+- **`dbCore.LastInsertIDExecutor`** and `dbCore.SupportsReturning`, so `orm.Create`
+  reads a generated key back on an engine without `RETURNING`.
+- **`config.ResolveEnvPlaceholders`**, and `${VAR}` substitution that distinguishes
+  an unset variable from an empty one. An unresolved security-relevant key
+  (`auth.jwt.secret`, `auth.session.cookie.secure`) now stops the boot.
+- **`core.MethodNotAllowedHttpStatus`**, `core.CSRFSessionKey`,
+  `core.DefaultCSRFTokenPath`.
+- **`RouteProvider.DisableCsrfController()`**.
+- **A build-failing guard test** (`db/sql/builder/no_hardcoded_dialect_test.go`)
+  against any new hard-coded-Postgres builder outside the dialect packages.
 - Test coverage went from 14 `_test.go` files to 47. Measured with no database
   running: `db/sql/builder` 96.6%, MySQL dialect 95.3%, Postgres dialect 96.6%.
   A `livedb`-tagged suite additionally verifies the Tier-1 fixes against real
@@ -160,6 +247,25 @@ work.
 - **`db:migrate`, `db:seed`, `db:diff` could only touch `default`**, so a
   migration written for a second database executed against the first.
 - **`db:migrate down` was an empty stub** that reported success and did nothing.
+- **The ORM ignored the session's dialect entirely.** Thirteen sites called
+  `v2.NewBuilder()`, which hard-codes Postgres, so every ORM query against a MySQL
+  datasource emitted Postgres SQL — double-quoted identifiers, `$1` placeholders, a
+  `RETURNING` clause. The MySQL driver shipped in v2 with a green test suite while
+  being unable to insert a row, because every dialect test asserts strings and no
+  test drove the ORM against a real engine. All thirteen now route through
+  `o.db.Query()`, and a build-failing guard test rejects any new one.
+- **`orm.Create` required `RETURNING`.** On an engine without it, the generated key
+  was never read back, so a created entity came away with a zero id. It now uses
+  `sql.Result.LastInsertId()` through GORM's `ConnPool` — which avoids the
+  connection-affinity race a separate `LAST_INSERT_ID()` query would have — and
+  refuses, rather than guessing, on a table with more than one auto-increment key.
+- **`${VAR}` substitution wiped its siblings.** Writing each resolved key with
+  `viper.Set` puts it in the *override* layer, and a map fetch resolves against the
+  highest layer holding the key without deep-merging the ones below — so after
+  substituting `databases.default.host`, `GetStringMap("databases")` returned only
+  that key and `driver`, `log` and `properties` were gone. The app died at boot with
+  "datasource config: 'driver' is required". Substitutions now go through
+  `MergeConfigMap`, which deep-merges into the config layer.
 
 #### Query builder and dialect
 
@@ -213,6 +319,61 @@ work.
   including `httptest.ResponseRecorder` and any writer wrapped by an upstream
   middleware, so a compression or metrics middleware in front of the router took
   every request down.
+- **There was no way for a client to obtain a CSRF token.** `X-CSRF-Token` was set
+  on exactly one response per session — the one that created it — so a reload, a
+  second tab, or a pre-existing session left a client permanently unable to make a
+  mutating request. Closing the two bypasses above made that reliably fatal.
+- **`CsrfService.ValidateCSRFToken` used `strings.Compare`** under a comment
+  claiming constant-time comparison. It short-circuits on the first differing byte,
+  so the timing leaked the length of the matching prefix.
+- **`csrfTokenKey` was declared twice under the same literal**, once in `auth` and
+  once in `http/middleware`. Renaming either would have left the middleware
+  comparing against a key nothing wrote.
+- **Eight unchecked type assertions on request paths.** Two in `auth/jwt_service.go`
+  — anything able to produce a valid signature chooses the claim set, so a token
+  with `username` absent or of the wrong JSON type panicked inside `GetUser` on
+  every role-guarded route. Three in `decoder/query.go`, reachable straight from the
+  query string: `?items[0][name]=a&items[0][name]=b` panicked the handler, and
+  `?items=x&items[0][name]=y` panicked depending on which key Go's randomised map
+  iteration yielded first. One of them had carried a `// todo: Test it` since it was
+  written.
+- **A DTO embedding two self-marshalling types panicked in the response
+  marshaller**, because `buildBodyElement` returns a `json.RawMessage` where a map
+  was asserted.
+- **The JSON parser's error classification was entirely dead code.**
+  `errors.Is(err, &json.SyntaxError{})` compares with `==` for a type implementing
+  no `Is` method, and both operands were freshly allocated pointers, so no case
+  could ever match. Every malformed body fell to the default branch and produced an
+  empty `ValidationErrors`.
+- **Two guaranteed panics in the input resolver**: an unresolvable body parser was
+  warned about and then dereferenced on the next line, and a non-primitive
+  non-`HttpCommand` handler parameter reached `reflect.Call` with too few arguments.
+  Both are now boot-time errors at route registration.
+- **`getOverriddenFields` had five silent faults**, four of them verified by running
+  the old code: an accumulating namespace made the exclusion nondeterministic across
+  embedded structs; embedded pointers were keyed by `reflect.Type.Name()`, which is
+  `""` for a pointer; `field.Addr()` panicked for a struct passed by value, so
+  `ValidateStruct(SomeDto{})` went down outright; and a nil embedded pointer
+  panicked on `reflect.Value.Type`. The exclusions also never worked at all — the
+  namespaces were built from wire names while `StructExcept` matches Go names.
+- **`ValidateStruct(nil)` panicked** inside `util.IndirectType`.
+- **Two fields of one struct sharing a wire name is now an error.** The body parser
+  can bind only one of them, so the other silently stayed zero and validation
+  reported a name matching neither.
+
+#### Jobs
+
+- **Scheduled jobs now run.** `JobProvider.Boot` called `c.Make(&job.Scheduler{})`,
+  which field-injected a zero value rather than resolving the registered scheduler,
+  so every job was registered against one object and a different, empty one was
+  started. Nothing in the repo noticed, on any version.
+- The scheduler dispatches each tick on its own goroutine. A blocking job used to
+  stop the ticker being read, and `time.Ticker` buffers exactly one tick — so
+  `AllowOverlap` could never take effect and a skipped run was never recorded.
+- A job that panics no longer takes the scheduler down with it.
+- Job dependencies are injected: a pointer job goes through `Make`, and a *value*
+  job carrying `container:"inject"` tags is a loud error rather than a silently
+  unfilled struct.
 
 #### Providers, routing, ergonomics
 
@@ -230,9 +391,10 @@ work.
 - **`Container.bind` overwrote silently.** Rebinding still works, but replacing a
   core interface now warns.
 
-### Corrections to the v2 brief
+### Corrections to the briefs
 
-Two claims in `IMPROVEMENT_v2.md` did not survive verification:
+Five claims across `IMPROVEMENT_v2.md` and `IMPROVEMENT_v2.1.md` did not survive
+verification:
 
 1. **`DROP TABLE ... CASCADE` is not invalid MySQL.** MySQL 8 documents
    `RESTRICT` and `CASCADE` on `DROP TABLE` as accepted no-ops "to make porting
@@ -242,6 +404,24 @@ Two claims in `IMPROVEMENT_v2.md` did not survive verification:
 2. **Ground rule 5 was stale.** The working tree was clean at `HEAD`; the edits to
    `README.md`, `http/multipart_parser.go`, `http/query_parser.go` and their tests
    had already landed in `f3557d0`, so there was nothing to preserve or confirm.
+3. **A5's prescribed fix does not work as stated.** "If the variable is absent,
+   leave the key alone so defaults and `IsSet` behave" cannot work: a key written
+   in `config.yaml` lives in viper's *config* layer, which outranks `SetDefault`.
+   `IsSet` stays true and `GetString` returns the literal `${VAR}` no matter what
+   the parser does — verified with a probe, not assumed. Leaving it there would
+   have left the cookie guard failing open, so the actual safety net is the
+   hardened `SessionCookieSecure()`, and an unresolved security-relevant key stops
+   the boot outright.
+4. **B1's count of 42 is wrong.** The brief's own grep yields 11 at that HEAD, of
+   which 3 are comments v2 wrote describing the code it had replaced — leaving 8
+   real sites, exactly the set the brief's own table lists. The table was right and
+   the total was not. The 42 corresponds to a broader all-type-assertions pattern
+   (46 at that HEAD, 39 after).
+5. **A2's step 3 was not deferred.** `gocron` was *removed* rather than swapped,
+   so there is no third-party scheduler to replace. Cron expressions are
+   deliberately not supported: they would need a parser dependency, and shipping a
+   non-functional `Cron` field would repeat exactly the `core.MongoDb` problem the
+   same brief asked to fix.
 
 ---
 
