@@ -29,6 +29,7 @@ import (
 	dbCmd "github.com/osbits/gorgany/command/db"
 	"github.com/osbits/gorgany/db"
 	"github.com/osbits/gorgany/db/migration"
+	"github.com/osbits/gorgany/db/orm"
 	dsconfig "github.com/osbits/gorgany/db/sql/config"
 	dbCore "github.com/osbits/gorgany/db/sql/core"
 	_ "github.com/osbits/gorgany/db/sql/driver/builtin"
@@ -836,4 +837,198 @@ func isApplied(t *testing.T, gormDb *gorm.DB, name string) bool {
 	var count int64
 	require.NoError(t, gormDb.Model(&db.Migration{}).Where("name = ?", name).Count(&count).Error)
 	return count > 0
+}
+
+// ============================================================ A1: ORM on MySQL
+
+// ormWidget has an AUTO_INCREMENT primary key, which is the case the brief calls
+// out: reading a generated key back is exactly what needs RETURNING on Postgres and
+// something else entirely on MySQL.
+type ormWidget struct {
+	orm.BaseEntity
+	ID    int64  `gorm:"primaryKey;autoIncrement;column:id"`
+	Name  string `gorm:"column:name;not null"`
+	Label string `gorm:"column:label"`
+}
+
+func (ormWidget) TableName() string { return "orm_widgets" }
+
+// ormTag and the join table cover the many-to-many path, which built raw
+// `ON CONFLICT` regardless of engine.
+type ormTag struct {
+	orm.BaseEntity
+	ID   int64  `gorm:"primaryKey;autoIncrement;column:id"`
+	Name string `gorm:"column:name;not null"`
+}
+
+func (ormTag) TableName() string { return "orm_tags" }
+
+// createOrmSchema builds the probe tables with engine-appropriate DDL.
+func createOrmSchema(t *testing.T, gormDb *gorm.DB, dialect string) {
+	t.Helper()
+
+	dropOrmSchema(t, gormDb)
+
+	autoPK := "BIGSERIAL PRIMARY KEY"
+	if dialect == "mysql" {
+		autoPK = "BIGINT AUTO_INCREMENT PRIMARY KEY"
+	}
+
+	stmts := []string{
+		fmt.Sprintf("CREATE TABLE orm_widgets (id %s, name VARCHAR(100) NOT NULL, label VARCHAR(100))", autoPK),
+		fmt.Sprintf("CREATE TABLE orm_tags (id %s, name VARCHAR(100) NOT NULL)", autoPK),
+		"CREATE TABLE orm_widget_tags (orm_widget_id BIGINT NOT NULL, orm_tag_id BIGINT NOT NULL, " +
+			"PRIMARY KEY (orm_widget_id, orm_tag_id))",
+	}
+	for _, s := range stmts {
+		require.NoError(t, gormDb.Exec(s).Error, "DDL: %s", s)
+	}
+}
+
+func dropOrmSchema(t *testing.T, gormDb *gorm.DB) {
+	t.Helper()
+	for _, table := range []string{"orm_widget_tags", "orm_widgets", "orm_tags"} {
+		gormDb.Exec("DROP TABLE IF EXISTS " + table)
+	}
+}
+
+// TestA1_OrmCreateInsertsOnBothEngines is the test whose absence let a MySQL driver
+// ship with a green suite while being unable to insert a row.
+//
+// The ORM built every query with v2.NewBuilder() — the Postgres builder — so
+// `Create` appended `RETURNING id` and MySQL answered with error 1064. Every dialect
+// test asserted strings; none drove the ORM against a real engine.
+func TestA1_OrmCreateInsertsOnBothEngines(t *testing.T) {
+	for _, engine := range ormEngines(t) {
+		t.Run(engine.name, func(t *testing.T) {
+			gormDb := gormOf(t, engine.ds)
+			createOrmSchema(t, gormDb, engine.name)
+			t.Cleanup(func() { dropOrmSchema(t, gormDb) })
+
+			session, err := engine.ds.NewSession()
+			require.NoError(t, err)
+			defer session.Close()
+
+			require.Equal(t, engine.name, session.Query().Dialect().Name(),
+				"the session must speak the engine's own dialect")
+
+			widget := &ormWidget{Name: "gadget", Label: "shiny"}
+			require.NoError(t, orm.New[*ormWidget](session).Create(widget),
+				"orm.Create must succeed on %s", engine.name)
+
+			// The generated key must come back on both engines: via RETURNING on
+			// Postgres, via the driver's sql.Result on MySQL.
+			assert.NotZero(t, widget.ID,
+				"the auto-increment primary key must be populated after Create")
+
+			// And the row must really be there, with the values we sent.
+			var stored ormWidget
+			require.NoError(t, gormDb.Raw(
+				"SELECT id, name, label FROM orm_widgets WHERE id = ?", widget.ID,
+			).Scan(&stored).Error)
+			assert.Equal(t, widget.ID, stored.ID)
+			assert.Equal(t, "gadget", stored.Name)
+			assert.Equal(t, "shiny", stored.Label)
+
+			// A second insert must get a distinct key, which proves the read-back is
+			// per-statement and not a stale cached value.
+			second := &ormWidget{Name: "other", Label: "dull"}
+			require.NoError(t, orm.New[*ormWidget](session).Create(second))
+			assert.NotZero(t, second.ID)
+			assert.NotEqual(t, widget.ID, second.ID,
+				"each Create must read back its own generated key")
+
+			var count int64
+			require.NoError(t, gormDb.Raw("SELECT COUNT(*) FROM orm_widgets").Scan(&count).Error)
+			assert.Equal(t, int64(2), count)
+		})
+	}
+}
+
+// TestA1_ManyToManySaveWritesTheJoinRow covers the other half of A1: the m2m path
+// built `ON CONFLICT (a, b) DO NOTHING` with the Postgres builder, bypassing the
+// MySQL dialect's own translation to ON DUPLICATE KEY UPDATE and sending a clause
+// MySQL has no syntax for.
+func TestA1_ManyToManySaveWritesTheJoinRow(t *testing.T) {
+	for _, engine := range ormEngines(t) {
+		t.Run(engine.name, func(t *testing.T) {
+			gormDb := gormOf(t, engine.ds)
+			createOrmSchema(t, gormDb, engine.name)
+			t.Cleanup(func() { dropOrmSchema(t, gormDb) })
+
+			session, err := engine.ds.NewSession()
+			require.NoError(t, err)
+			defer session.Close()
+
+			widget := &ormWidget{Name: "gadget"}
+			require.NoError(t, orm.New[*ormWidget](session).Create(widget))
+			tag := &ormTag{Name: "red"}
+			require.NoError(t, orm.New[*ormTag](session).Create(tag))
+			require.NotZero(t, widget.ID)
+			require.NotZero(t, tag.ID)
+
+			// Write the association through the builder the ORM now uses, exercising
+			// the dialect's own upsert translation rather than raw ON CONFLICT.
+			insert := session.Query().
+				Insert("orm_widget_tags").
+				Columns("orm_widget_id", "orm_tag_id").
+				Values(widget.ID, tag.ID).
+				OnConflict("orm_widget_id", "orm_tag_id").
+				DoNothing()
+
+			sql, _, err := insert.ToSQL()
+			require.NoError(t, err, "the join insert must render for %s", engine.name)
+			t.Logf("%s join upsert: %s", engine.name, sql)
+
+			res := session.Executor().Exec(context.Background(), insert)
+			require.NoError(t, res.Error, "the join insert must execute on %s", engine.name)
+
+			var joined int64
+			require.NoError(t, gormDb.Raw(
+				"SELECT COUNT(*) FROM orm_widget_tags WHERE orm_widget_id = ? AND orm_tag_id = ?",
+				widget.ID, tag.ID,
+			).Scan(&joined).Error)
+			assert.Equal(t, int64(1), joined, "the join row must exist")
+
+			// Re-running the same upsert must be a no-op, not a duplicate-key error —
+			// that is the whole point of DO NOTHING, and the translation must preserve it.
+			res = session.Executor().Exec(context.Background(), insert)
+			require.NoError(t, res.Error, "a repeated DO NOTHING upsert must not error")
+
+			require.NoError(t, gormDb.Raw(
+				"SELECT COUNT(*) FROM orm_widget_tags").Scan(&joined).Error)
+			assert.Equal(t, int64(1), joined, "DO NOTHING must not insert a duplicate")
+		})
+	}
+}
+
+// ormEngine pairs a datasource with the dialect name it speaks.
+type ormEngine struct {
+	name string
+	ds   dbCore.IDataSource
+}
+
+// ormEngines returns every reachable engine, so the ORM tests assert on Postgres
+// (no regression) and MySQL (the fix) from one body.
+func ormEngines(t *testing.T) []ormEngine {
+	t.Helper()
+
+	engines := []ormEngine{}
+
+	pg := waitForDatasource(t, func() (dbCore.IDataSource, error) {
+		return pgv2.NewDataSource(pgConfig())
+	})
+	t.Cleanup(func() { _ = pg.Close() })
+	engines = append(engines, ormEngine{name: "postgres", ds: pg})
+
+	if mysqlAvailable() {
+		my, err := mysqlv2.NewDataSource(mysqlConfig())
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = my.Close() })
+		engines = append(engines, ormEngine{name: "mysql", ds: my})
+	} else {
+		t.Log("MySQL not reachable; the ORM fix is only asserted on Postgres in this run")
+	}
+
+	return engines
 }

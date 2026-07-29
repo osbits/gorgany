@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/osbits/gorgany/app/core"
+	sqlbuilder "github.com/osbits/gorgany/db/sql/builder"
 	dbCore "github.com/osbits/gorgany/db/sql/core"
 	v2 "github.com/osbits/gorgany/db/sql/gorm/postgres/v2"
 	err2 "github.com/osbits/gorgany/err"
@@ -383,7 +384,7 @@ func ApplyDBFiltersToQueryBuilder(builder dbCore.IQueryBuilder, dbFilters []DBFi
 		var orConditions []dbCore.Condition
 		for _, filter := range orFilters {
 			// Create a temporary builder to build the condition
-			tempBuilder := v2.NewBuilder()
+			tempBuilder := sqlbuilder.NewLike(builder)
 			tempBuilder = applyDBFilterToQueryBuilder(tempBuilder, filter).(*v2.Builder)
 			// Extract the condition from the builder
 			query := tempBuilder.Build()
@@ -453,7 +454,7 @@ func applySubqueryToQueryBuilder(builder dbCore.IQueryBuilder, filter DBFilter) 
 	subquery := filter.Subquery
 
 	// Build subquery
-	subqueryBuilder := v2.NewBuilder()
+	subqueryBuilder := sqlbuilder.NewLike(builder)
 	subqueryBuilder = subqueryBuilder.Select(subquery.Select).From(subquery.Table).(*v2.Builder)
 
 	// Apply joins to subquery

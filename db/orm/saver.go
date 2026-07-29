@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	dbCore "github.com/osbits/gorgany/db/sql/core"
-	v2 "github.com/osbits/gorgany/db/sql/gorm/postgres/v2"
+	"github.com/osbits/gorgany/log"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 )
@@ -186,7 +186,7 @@ func (o *ORM[T]) createEntity(entity T) error {
 
 	// Create a builder for the INSERT query
 	var builder dbCore.IQueryBuilder
-	builder = v2.NewBuilder()
+	builder = o.newBuilder()
 
 	builder = builder.Insert(tableName)
 
@@ -213,18 +213,32 @@ func (o *ORM[T]) createEntity(entity T) error {
 		}
 	}
 
-	builder = builder.Returning(returningCols...)
+	// Read the server-generated columns back.
+	//
+	// RETURNING is the efficient way and it is what Postgres supports, but MySQL has
+	// no such clause: appending it unconditionally is what made `orm.Create` fail
+	// with MySQL error 1064 for the whole of v2. Which path to take is decided by
+	// asking the dialect, not by naming an engine, so a third dialect gets the right
+	// behaviour without touching this code.
+	generated := map[string]interface{}{}
+	if dbCore.SupportsReturning(o.dialect()) {
+		builder = builder.Returning(returningCols...)
 
-	// Execute the query
-	result := map[string]interface{}{}
-	queryRes := o.db.Executor().Find(context.Background(), builder, &result)
-	if queryRes.Error != nil {
-		return fmt.Errorf("failed to create domain: %w", queryRes.Error)
+		queryRes := o.db.Executor().Find(context.Background(), builder, &generated)
+		if queryRes.Error != nil {
+			return fmt.Errorf("failed to create domain: %w", queryRes.Error)
+		}
+	} else {
+		var err error
+		generated, err = o.insertAndReadBack(builder, entitySchema, returningCols)
+		if err != nil {
+			return err
+		}
 	}
 
 	destVal := reflect.Indirect(reflect.ValueOf(entity))
 	for _, col := range returningCols {
-		if val, ok := result[col]; ok {
+		if val, ok := generated[col]; ok {
 			if sf := entitySchema.LookUpField(col); sf != nil {
 				// Set — это schema.Field.Set, он правильно обходит вложенные поля
 				sf.Set(context.Background(), destVal, val)
@@ -356,4 +370,122 @@ func (o *ORM[T]) updateEntity(entity T) error {
 	}
 
 	return nil
+}
+
+// insertAndReadBack performs an INSERT on an engine that has no RETURNING clause,
+// then reads the server-generated columns back.
+//
+// The generated key comes from the driver's own sql.Result for the INSERT — see
+// core.LastInsertIDExecutor for why a separate `SELECT LAST_INSERT_ID()` would be
+// unsafe against a connection pool. Any remaining generated columns (defaults,
+// computed values) are then fetched with one SELECT keyed on the primary key, so
+// the cost on MySQL is one extra round trip and none on Postgres.
+func (o *ORM[T]) insertAndReadBack(
+	builder dbCore.IQueryBuilder,
+	entitySchema *schema.Schema,
+	returningCols []string,
+) (map[string]interface{}, error) {
+	generated := map[string]interface{}{}
+
+	executor, ok := o.db.Executor().(dbCore.LastInsertIDExecutor)
+	if !ok {
+		// Without a generated-key channel there is no correct way to learn an
+		// auto-increment value, and silently returning a zero id would corrupt every
+		// relation saved against this entity.
+		return nil, fmt.Errorf(
+			"orm: %s does not support RETURNING and its executor (%T) cannot report a "+
+				"generated key, so a created row's primary key cannot be read back",
+			o.dialect().Name(), o.db.Executor())
+	}
+
+	res := executor.ExecInsert(context.Background(), builder)
+	if res.Error != nil {
+		return nil, fmt.Errorf("failed to create domain: %w", res.Error)
+	}
+
+	// Identify the single auto-increment primary key, if there is one.
+	autoIncrementPK := ""
+	for _, f := range entitySchema.PrimaryFields {
+		if f.AutoIncrement {
+			if autoIncrementPK != "" {
+				// Composite auto-increment keys are not a thing any supported engine
+				// reports, so refuse rather than guess which column the id belongs to.
+				return nil, fmt.Errorf(
+					"orm: %s reports one generated key but %s has multiple auto-increment "+
+						"primary key columns", o.dialect().Name(), entitySchema.Table)
+			}
+			autoIncrementPK = f.DBName
+		}
+	}
+
+	if res.HasLastInsertID && autoIncrementPK != "" {
+		generated[autoIncrementPK] = res.LastInsertID
+	}
+
+	// Fetch any other generated columns in one read, keyed on the primary key we now
+	// know. Skipped entirely when the only generated column was the key itself.
+	remaining := make([]string, 0, len(returningCols))
+	for _, col := range returningCols {
+		if _, have := generated[col]; !have {
+			remaining = append(remaining, col)
+		}
+	}
+	if len(remaining) == 0 {
+		return generated, nil
+	}
+
+	keyColumn, keyValue, err := o.readBackKey(entitySchema, generated, autoIncrementPK)
+	if err != nil {
+		// Nothing to key the read on. The insert succeeded, so report what is known
+		// rather than failing the whole Create.
+		log.Log().Warnf(
+			"orm: created a row in %s but cannot read back %v: %v",
+			entitySchema.Table, remaining, err)
+		return generated, nil
+	}
+
+	sql, args, err := o.newBuilder().
+		Select(remaining...).
+		From(entitySchema.Table).
+		Eq(keyColumn, keyValue).
+		Limit(1).
+		ToSQL()
+	if err != nil {
+		return nil, fmt.Errorf("orm: cannot render the generated-column read-back: %w", err)
+	}
+
+	fetched := map[string]interface{}{}
+	queryRes := o.db.Executor().FindRaw(context.Background(), &fetched, sql, args...)
+	if queryRes.Error != nil {
+		return nil, fmt.Errorf("orm: cannot read back generated columns: %w", queryRes.Error)
+	}
+	for col, value := range fetched {
+		generated[col] = value
+	}
+
+	return generated, nil
+}
+
+// readBackKey picks the column and value to key the generated-column read-back on:
+// the auto-increment key just reported, or otherwise a primary key the caller
+// supplied itself.
+func (o *ORM[T]) readBackKey(
+	entitySchema *schema.Schema,
+	generated map[string]interface{},
+	autoIncrementPK string,
+) (string, interface{}, error) {
+	if autoIncrementPK != "" {
+		if value, ok := generated[autoIncrementPK]; ok {
+			return autoIncrementPK, value, nil
+		}
+	}
+
+	// A client-assigned primary key is just as good to select on.
+	for _, f := range entitySchema.PrimaryFields {
+		if value, ok := generated[f.DBName]; ok {
+			return f.DBName, value, nil
+		}
+	}
+
+	return "", nil, fmt.Errorf("no known primary key value")
 }

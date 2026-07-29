@@ -326,6 +326,20 @@ func NewFromConfig(cfg Config) *Builder {
 	return New(cfg.Dialect)
 }
 
+// NewLike returns a fresh, empty builder speaking the same dialect as b.
+//
+// It exists for code that is handed a builder and needs a second, independent one
+// — building a sub-condition, or a subquery — without having to know which engine
+// it is talking to. Before this, such code called the Postgres constructor
+// directly and silently emitted Postgres SQL onto whatever connection it was
+// given.
+func NewLike(b dbCore.IQueryBuilder) *Builder {
+	if b == nil {
+		panic("gorgany/db/sql/builder: NewLike requires a non-nil builder")
+	}
+	return New(b.Dialect())
+}
+
 // Select adds fields to the SELECT clause
 func (b *Builder) Select(fields ...string) dbCore.IQueryBuilder {
 	newBuilder := b.Clone()

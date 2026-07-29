@@ -651,3 +651,15 @@ func TestNilJoinIsIgnoredByMySQL(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, sql)
 }
+
+// TestSupportsReturningPerDialect pins the capability probe the ORM branches on when
+// deciding how to read a generated key back. Asking the dialect is deliberate: a
+// hand-maintained capability flag would eventually disagree with what
+// FormatReturning actually does, and the disagreement would surface as invalid SQL.
+func TestSupportsReturningPerDialect(t *testing.T) {
+	assert.True(t, dbCore.SupportsReturning(&postgres.PostgresDialect{}),
+		"Postgres supports RETURNING")
+	assert.False(t, dbCore.SupportsReturning(&mysql.MySQLDialect{}),
+		"MySQL has no RETURNING, which is why orm.Create needs a second path")
+	assert.False(t, dbCore.SupportsReturning(nil))
+}

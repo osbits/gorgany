@@ -28,6 +28,46 @@ type IQueryExecutor interface {
 	CountRaw(ctx context.Context, sql string, args ...interface{}) (int64, error)
 }
 
+// InsertResult is what an INSERT reported back.
+type InsertResult struct {
+	QueryResult
+
+	// LastInsertID is the auto-generated key the driver reported for this
+	// statement, valid only when HasLastInsertID is true.
+	LastInsertID int64
+	// HasLastInsertID reports whether the driver supplied a generated key. It is
+	// false on engines whose driver does not implement it — notably pgx, which is
+	// why Postgres reads generated values back with RETURNING instead.
+	HasLastInsertID bool
+}
+
+// LastInsertIDExecutor is implemented by executors that can report the
+// auto-generated key of an INSERT.
+//
+// It reads the key from the driver's own sql.Result for that statement, so it is
+// taken from the same connection that ran the INSERT. A separate
+// `SELECT LAST_INSERT_ID()` would not be safe: the value is connection-scoped and
+// the follow-up query can be served by a different connection from the pool.
+//
+// This is an optional interface — check for it with a type assertion.
+type LastInsertIDExecutor interface {
+	// ExecInsert runs q as a statement and reports any generated key.
+	ExecInsert(ctx context.Context, q IQueryBuilder) InsertResult
+}
+
+// SupportsReturning reports whether d can render a RETURNING clause.
+//
+// The dialect is the only authority worth asking: a hand-maintained capability
+// flag would eventually disagree with what FormatReturning actually does, and the
+// disagreement would show up as invalid SQL rather than as a failed check.
+func SupportsReturning(d SQLDialect) bool {
+	if d == nil {
+		return false
+	}
+	_, _, err := d.FormatReturning([]string{"id"})
+	return err == nil
+}
+
 // QueryResult contains the result of a query operation
 type QueryResult struct {
 	// Error is the error that occurred during the query, if any

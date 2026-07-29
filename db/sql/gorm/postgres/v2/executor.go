@@ -101,3 +101,48 @@ func (e *Executor) CountRaw(ctx context.Context, sql string, args ...interface{}
 	err := e.db.Raw(sql, args...).Count(&count).Error
 	return count, err
 }
+
+// ExecInsert runs q and reports any generated key, implementing
+// core.LastInsertIDExecutor.
+//
+// The key comes from the driver's sql.Result for this very statement, obtained via
+// GORM's ConnPool. That matters: on MySQL the value behind LAST_INSERT_ID() is
+// connection-scoped, so issuing a separate `SELECT LAST_INSERT_ID()` could be
+// served by a different pooled connection and return someone else's key, or zero.
+// Reading sql.Result cannot race that way, and inside a transaction ConnPool *is*
+// the *sql.Tx, so the read stays transactional.
+//
+// A driver that does not implement LastInsertId — pgx, for one — leaves
+// HasLastInsertID false rather than reporting an error; Postgres reads generated
+// values back with RETURNING instead.
+func (e *Executor) ExecInsert(ctx context.Context, query core.IQueryBuilder) core.InsertResult {
+	sql, args, err := query.ToSQL()
+	if err != nil {
+		return core.InsertResult{QueryResult: core.QueryResult{Error: err}}
+	}
+
+	db := e.db.WithContext(ctx)
+	if db.ConnPool == nil {
+		// No pool to read a result from; fall back to a plain exec.
+		res := db.Exec(sql, args...)
+		return core.InsertResult{QueryResult: core.QueryResult{
+			Error:        res.Error,
+			RowsAffected: res.RowsAffected,
+		}}
+	}
+
+	result, execErr := db.ConnPool.ExecContext(ctx, sql, args...)
+	if execErr != nil {
+		return core.InsertResult{QueryResult: core.QueryResult{Error: execErr}}
+	}
+
+	insertResult := core.InsertResult{}
+	if affected, affErr := result.RowsAffected(); affErr == nil {
+		insertResult.RowsAffected = affected
+	}
+	if lastID, idErr := result.LastInsertId(); idErr == nil && lastID != 0 {
+		insertResult.LastInsertID = lastID
+		insertResult.HasLastInsertID = true
+	}
+	return insertResult
+}

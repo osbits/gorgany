@@ -9,7 +9,6 @@ import (
 	"sync"
 
 	dbCore "github.com/osbits/gorgany/db/sql/core"
-	v2 "github.com/osbits/gorgany/db/sql/gorm/postgres/v2"
 	"github.com/osbits/gorgany/util"
 	"gorm.io/gorm/schema"
 )
@@ -24,6 +23,35 @@ func New[T EntityWithMeta](db dbCore.ISession) *ORM[T] {
 	return &ORM[T]{
 		db: db,
 	}
+}
+
+// newBuilder returns a query builder speaking the dialect of this ORM's session.
+//
+// Every query the ORM builds must go through here. It used to call
+// v2.NewBuilder() — the *Postgres* builder — unconditionally at 11 sites across
+// this package, which is why `orm.Create` against MySQL emitted `... RETURNING id`
+// and died with error 1064, and why the many-to-many path sent raw
+// `ON CONFLICT` to a server that has no such clause. The session was right there
+// the whole time; T2.1 threaded the dialect as far as session.Query() and the ORM
+// simply never asked.
+//
+// Reads, updates and deletes happened to survive that, because PostgresDialect
+// emits bare unquoted identifiers and both engines accept `LIMIT n OFFSET m`. That
+// was luck, not design: any dialect-specific emission added later would have broken
+// all of them at once.
+func (o *ORM[T]) newBuilder() dbCore.IQueryBuilder {
+	if o.db == nil {
+		// The ORM is always constructed with a session (New) or has one injected.
+		// A nil session is a wiring error, and saying so here beats a nil
+		// dereference inside whichever query is being built.
+		panic("gorgany/db/orm: ORM has no session, so its dialect is unknown")
+	}
+	return o.db.Query()
+}
+
+// dialect returns the SQL dialect this ORM's session speaks.
+func (o *ORM[T]) dialect() dbCore.SQLDialect {
+	return o.newBuilder().Dialect()
 }
 
 // Find finds an domain by its ID and returns it
@@ -297,7 +325,7 @@ func (o *ORM[T]) Count() (int64, error) {
 	// The builder is copy-on-write: every clause method returns a new builder and
 	// leaves the receiver untouched. The FROM used to be applied with its result
 	// discarded, so Count() emitted "SELECT COUNT(*)" with no FROM clause at all.
-	var builder dbCore.IQueryBuilder = v2.NewBuilder()
+	var builder dbCore.IQueryBuilder = o.newBuilder()
 	if tableName != "" {
 		builder = builder.From(tableName)
 	}

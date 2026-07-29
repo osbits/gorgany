@@ -11,7 +11,6 @@ import (
 	"time"
 
 	dbCore "github.com/osbits/gorgany/db/sql/core"
-	v2 "github.com/osbits/gorgany/db/sql/gorm/postgres/v2"
 	"gorm.io/gorm/schema"
 )
 
@@ -216,7 +215,7 @@ func (o *ORM[T]) SaveRelations(entity T) error {
 				keptRelatedPKs = append(keptRelatedPKs, relPK)
 
 				// Upsert a row in the join table (ignore if already exists)
-				joinBuilder := v2.NewBuilder().
+				joinBuilder := o.newBuilder().
 					Insert(joinTable).
 					Columns(ownerFKCol, relatedFKCol).
 					Values(ownerPKValue.Interface(), relPK).
@@ -230,7 +229,7 @@ func (o *ORM[T]) SaveRelations(entity T) error {
 			}
 
 			// Delete stale join rows: those belonging to this owner but not in keptRelatedPKs
-			deleteBuilder := v2.NewBuilder().
+			deleteBuilder := o.newBuilder().
 				Delete(joinTable).
 				Where(&dbCore.BinaryCondition{
 					Left:     ownerFKCol,
@@ -547,7 +546,7 @@ func (o *ORM[T]) loadHasRelation(
 
 	// Build query to load related entities
 	var builder dbCore.IQueryBuilder
-	builder = v2.NewBuilder()
+	builder = o.newBuilder()
 	builder = builder.
 		Select("*").
 		From(tableName).
@@ -707,7 +706,7 @@ func (o *ORM[T]) loadBelongsToRelation(
 
 	// Build query to load related domain
 	var builder dbCore.IQueryBuilder
-	builder = v2.NewBuilder()
+	builder = o.newBuilder()
 	builder = builder.
 		Select("*").
 		From(tableName).
@@ -843,7 +842,7 @@ func (o *ORM[T]) loadManyToManyRelation(
 	relatedTableName := relationship.FieldSchema.Table
 
 	// Build query to load related entities through join table
-	builder := v2.NewBuilder().
+	builder := o.newBuilder().
 		Select(fmt.Sprintf("%s.*", relatedTableName)).
 		From(relatedTableName).
 		InnerJoin(joinTable, &dbCore.RawCondition{
@@ -1007,7 +1006,7 @@ func (o *ORM[T]) saveManyToManyRelatedEntity(relEntity EntityWithMeta) error {
 }
 
 func (o *ORM[T]) relatedEntityExists(tableName, primaryKey string, primaryKeyValue interface{}) (bool, error) {
-	builder := v2.NewBuilder().
+	builder := o.newBuilder().
 		Select("COUNT(*)").
 		From(tableName).
 		Where(&dbCore.BinaryCondition{
@@ -1189,7 +1188,7 @@ func (o *ORM[T]) batchLoadHasRelation(entityMap map[interface{}]T, primaryKeys [
 	foreignKey := relationship.References[0].ForeignKey.DBName
 
 	// Build query to load all related entities at once
-	var builder dbCore.IQueryBuilder = v2.NewBuilder()
+	var builder dbCore.IQueryBuilder = o.newBuilder()
 	builder = builder.
 		Select("*").
 		From(tableName).
@@ -1284,7 +1283,7 @@ func (o *ORM[T]) batchLoadBelongsToRelation(entityMap map[interface{}]T, primary
 	}
 
 	// Build query to load all related entities at once
-	var builder dbCore.IQueryBuilder = v2.NewBuilder()
+	var builder dbCore.IQueryBuilder = o.newBuilder()
 	builder = builder.
 		Select("*").
 		From(tableName).
@@ -1376,7 +1375,7 @@ func (o *ORM[T]) batchLoadManyToManyRelation(entityMap map[interface{}]T, primar
 	relatedTableName := relationship.FieldSchema.Table
 
 	// Build query to load related entities through join table
-	var builder dbCore.IQueryBuilder = v2.NewBuilder()
+	var builder dbCore.IQueryBuilder = o.newBuilder()
 	builder = builder.Select(fmt.Sprintf("%s.*, %s.%s as _join_fk", relatedTableName, joinTable, joinFKName))
 	builder = builder.From(relatedTableName)
 	builder = builder.InnerJoin(joinTable, &dbCore.RawCondition{
