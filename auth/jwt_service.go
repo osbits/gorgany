@@ -3,9 +3,9 @@ package auth
 import (
 	"context"
 	"fmt"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/osbits/gorgany/app/core"
 	"github.com/osbits/gorgany/util"
-	"github.com/golang-jwt/jwt/v5"
 	"github.com/spf13/viper"
 	"time"
 )
@@ -52,7 +52,11 @@ func (thiz JwtService) ParseJwt(token string, secret string) (jwt.MapClaims, err
 	if err != nil {
 		return nil, err
 	}
-	return t.Claims.(jwt.MapClaims), err
+	claims, ok := t.Claims.(jwt.MapClaims)
+	if !ok {
+		return nil, fmt.Errorf("jwt: unexpected claims type %T", t.Claims)
+	}
+	return claims, err
 }
 
 func (thiz JwtService) GetUser(token string, secret string) (core.Authenticable, error) {
@@ -61,7 +65,22 @@ func (thiz JwtService) GetUser(token string, secret string) (core.Authenticable,
 		return nil, err
 	}
 
-	return thiz.userService.GetByUsername(claims["username"].(string))
+	// A validly-signed token whose `username` claim is absent or not a string used
+	// to panic here. The claim set is attacker-influenced — anything that can obtain
+	// a signature can choose the claims — so this must be a rejection, not a crash.
+	username, ok := claims["username"].(string)
+	if !ok {
+		return nil, fmt.Errorf("jwt: token has no usable 'username' claim (got %T)", claims["username"])
+	}
+	if username == "" {
+		return nil, fmt.Errorf("jwt: token has an empty 'username' claim")
+	}
+
+	if thiz.userService == nil {
+		return nil, fmt.Errorf("jwt: no user service is wired, so a token cannot be resolved to a user")
+	}
+
+	return thiz.userService.GetByUsername(username)
 }
 
 // CurrentUser

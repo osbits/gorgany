@@ -168,7 +168,14 @@ func (thiz FloatResolver) Resolve(kind reflect.Kind, value string) (any, error) 
 	}
 	reflectedValue := reflect.ValueOf(val)
 	arg = ConvertReflectedValue(reflectedValue)
-	return ResolveFloatValuer(kind, arg.(float64)).Value(), nil
+	// ConvertReflectedValue is expected to hand back a float64 here, having just
+	// parsed one, but asserting it unchecked turns any future change in that
+	// function into a panic on a request path.
+	floatValue, ok := arg.(float64)
+	if !ok {
+		return nil, err2.NewInputParamParseError(value, "float64")
+	}
+	return ResolveFloatValuer(kind, floatValue).Value(), nil
 }
 
 // bool resolver

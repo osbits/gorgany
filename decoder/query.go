@@ -1,6 +1,7 @@
 package decoder
 
 import (
+	"fmt"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -64,12 +65,28 @@ func ParseUrlValues(params url.Values) (QueryParams, error) {
 			processedParams[elementName] = make([]map[string]string, elementsCount[elementName])
 		}
 
-		if processedParams[elementName].([]map[string]string)[index] == nil {
-			processedParams[elementName].([]map[string]string)[index] = make(map[string]string)
+		// These three assertions were unchecked and are reached straight from the
+		// query string, so a request could pick the shape that panicked. The
+		// `// todo: Test it` on the value assertion had been there since it was
+		// written.
+		elements, ok := processedParams[elementName].([]map[string]string)
+		if !ok {
+			return nil, fmt.Errorf(
+				"query: parameter %q was already decoded as %T, so it cannot also be an indexed collection",
+				elementName, processedParams[elementName])
+		}
+		if elements[index] == nil {
+			elements[index] = make(map[string]string)
 		}
 
-		if value.(string) != "" { // todo: Test it
-			processedParams[elementName].([]map[string]string)[index][key] = value.(string)
+		stringValue, ok := value.(string)
+		if !ok {
+			return nil, fmt.Errorf(
+				"query: parameter %q[%d].%s must be a string, got %T",
+				elementName, index, key, value)
+		}
+		if stringValue != "" {
+			elements[index][key] = stringValue
 		}
 	}
 

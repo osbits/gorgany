@@ -2,11 +2,11 @@ package view
 
 import (
 	"context"
+	"github.com/go-chi/chi"
 	"github.com/osbits/gorgany/app/core"
 	"github.com/osbits/gorgany/i18n"
 	"github.com/osbits/gorgany/service"
 	"github.com/osbits/gorgany/util"
-	"github.com/go-chi/chi"
 	"html/template"
 	"io"
 )
@@ -61,7 +61,13 @@ func (er *EngineRenderer) registerFunctions(lrc *localRenderingContext, opts map
 		"SafeHtml":   lrc.SafeHtml,
 		"Pagination": er.PaginationService.Pagination,
 	}
-	merged := util.MergeMaps(opts["fn"].(map[string]any), er.functions)
+	// opts is assembled by callers, so an "fn" that is not a func map is a caller
+	// mistake rather than an invariant. Treat it as absent instead of panicking.
+	existingFuncs, ok := opts["fn"].(map[string]any)
+	if !ok {
+		existingFuncs = map[string]any{}
+	}
+	merged := util.MergeMaps(existingFuncs, er.functions)
 	opts["fn"] = util.MergeMaps(funcs, merged)
 	return opts
 }

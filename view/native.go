@@ -47,12 +47,14 @@ func (thiz NativeEngine) Render(output io.Writer, templateName string, opts map[
 
 	processedContent, imports := thiz.processImports(string(content))
 
-	funcs, ok := opts["fn"]
+	funcMap, ok := opts["fn"].(map[string]any)
 	if !ok {
-		funcs = make(map[string]any)
+		// Either absent or the wrong shape; both mean "no extra functions" rather
+		// than a reason to panic while rendering.
+		funcMap = map[string]any{}
 	}
 
-	tpl := template2.New(templatePath).Funcs(funcs.(map[string]any))
+	tpl := template2.New(templatePath).Funcs(funcMap)
 
 	for _, imp := range imports {
 		tpl, err = tpl.Parse(imp)

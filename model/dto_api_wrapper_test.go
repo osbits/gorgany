@@ -437,3 +437,121 @@ func TestParseJSONTag(t *testing.T) {
 	assert.Equal(t, jsonTag{Name: "named_omit", HasName: true, OmitEmpty: true}, byName("NamedOmit"))
 	assert.Equal(t, jsonTag{Name: "stringed", HasName: true, OmitEmpty: true}, byName("Stringed"))
 }
+
+// Reaching the `nestedElement.(map[string]any)` assertion in buildBodyElement takes a
+// specific shape, and finding it is the point: the embedded field must marshal itself
+// (so buildBodyElement hands back a json.RawMessage) while the *outer* DTO must not
+// (or buildBodyElement would return early at its own json.Marshaler check).
+//
+// Method promotion normally forbids that combination — embed one self-marshalling type
+// and the outer struct promotes MarshalJSON. Embed *two* at the same depth and the
+// selector is ambiguous, so neither is promoted: the outer DTO is not a json.Marshaler,
+// but each field still is. A DTO embedding two self-marshalling helper types is an
+// ordinary thing to write, and it used to panic on the response path.
+
+type SelfMarshallingA struct {
+	Name string
+}
+
+func (SelfMarshallingA) AllowedProtectedFields() []string { return nil }
+
+func (SelfMarshallingA) AllowedFields() []string { return []string{"*"} }
+
+func (s SelfMarshallingA) MarshalJSON() ([]byte, error) {
+	return []byte(`{"name":"` + s.Name + `"}`), nil
+}
+
+type SelfMarshallingB struct {
+	Other string
+}
+
+func (SelfMarshallingB) AllowedProtectedFields() []string { return nil }
+
+func (SelfMarshallingB) AllowedFields() []string { return []string{"*"} }
+
+func (s SelfMarshallingB) MarshalJSON() ([]byte, error) {
+	return []byte(`{"other":"` + s.Other + `"}`), nil
+}
+
+type DtoWithTwoSelfMarshallingEmbeds struct {
+	SelfMarshallingA
+	SelfMarshallingB
+	Extra string `json:"extra"`
+}
+
+func (DtoWithTwoSelfMarshallingEmbeds) AllowedProtectedFields() []string { return nil }
+
+func (DtoWithTwoSelfMarshallingEmbeds) AllowedFields() []string { return []string{"*"} }
+
+// TestASelfMarshallingEmbeddedDtoIsAnErrorNotAPanic covers the last B1 site.
+func TestASelfMarshallingEmbeddedDtoIsAnErrorNotAPanic(t *testing.T) {
+	// Guard the premise: if either of these ever stops holding, the test is no longer
+	// exercising the branch it claims to.
+	var dto any = DtoWithTwoSelfMarshallingEmbeds{}
+	_, outerMarshals := dto.(json.Marshaler)
+	require.False(t, outerMarshals, "the ambiguous selector must leave the outer DTO a plain struct")
+	var field any = SelfMarshallingA{}
+	_, fieldMarshals := field.(json.Marshaler)
+	require.True(t, fieldMarshals)
+
+	obj := &ApiReturnObject{
+		HttpStatus: core.SuccessHttpStatus,
+		Body: DtoWithTwoSelfMarshallingEmbeds{
+			SelfMarshallingA: SelfMarshallingA{Name: "ann"},
+			SelfMarshallingB: SelfMarshallingB{Other: "b"},
+			Extra:            "x",
+		},
+	}
+
+	var err error
+	require.NotPanics(t, func() { _, err = json.Marshal(obj) })
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "SelfMarshalling")
+	assert.Contains(t, err.Error(), "marshals itself")
+}
+
+// EmbeddedLimited is the ordinary case the branch exists for: embedded, limited, and
+// not self-marshalling. Its allowed fields are inlined.
+//
+// The type has to be exported for its fields to be promoted at all — an embedded field
+// of unexported type has an unexported field name, which this marshaller skips (see the
+// note in buildBodyElement).
+type EmbeddedLimited struct {
+	Name   string `json:"name"`
+	Secret string `json:"-"`
+}
+
+func (EmbeddedLimited) AllowedProtectedFields() []string { return nil }
+
+func (EmbeddedLimited) AllowedFields() []string { return []string{"Name"} }
+
+type DtoWithLimitedEmbed struct {
+	EmbeddedLimited
+	Extra string `json:"extra"`
+}
+
+func (DtoWithLimitedEmbed) AllowedProtectedFields() []string { return nil }
+
+func (DtoWithLimitedEmbed) AllowedFields() []string { return []string{"*"} }
+
+// TestALimitedEmbeddedDtoStillInlines keeps the working path honest alongside the fix.
+func TestALimitedEmbeddedDtoStillInlines(t *testing.T) {
+	obj := &ApiReturnObject{
+		HttpStatus: core.SuccessHttpStatus,
+		Body:       DtoWithLimitedEmbed{EmbeddedLimited{Name: "ann", Secret: "s"}, "x"},
+	}
+
+	raw, err := json.Marshal(obj)
+	require.NoError(t, err)
+
+	var decoded struct {
+		Body map[string]any `json:"body"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &decoded))
+
+	assert.Equal(t, "ann", decoded.Body["name"], "the embedded field is inlined")
+	assert.Equal(t, "x", decoded.Body["extra"])
+	assert.NotContains(t, decoded.Body, "Secret")
+	assert.NotContains(t, decoded.Body, "EmbeddedLimited")
+}

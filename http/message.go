@@ -16,9 +16,9 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/google/uuid"
 	err2 "github.com/osbits/gorgany/err"
 	"github.com/osbits/gorgany/util"
-	"github.com/google/uuid"
 
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
@@ -501,7 +501,16 @@ func (m *Message) RedirectWithFlash(urlStr string, code int, data map[string]int
 					val = str.String()
 				}
 
-				oneTimeParams.Values[key] = append(oneTimeParams.Values[key].([]any), val)
+				// oneTimeParams.Values is built locally just above and only this loop
+				// writes it, so today this assertion cannot fail. It is checked anyway
+				// because the surrounding code is a redirect path: a future change that
+				// pre-populates the map would otherwise turn into a panic mid-response
+				// rather than a dropped flash value.
+				existing, ok := oneTimeParams.Values[key].([]any)
+				if !ok {
+					existing = []any{}
+				}
+				oneTimeParams.Values[key] = append(existing, val)
 			}
 		} else {
 			val := value

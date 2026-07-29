@@ -189,7 +189,19 @@ func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (any, error
 					if e != nil {
 						return nil, e
 					}
-					body = util.MergeMaps(body, nestedElement.(map[string]any))
+					// buildBodyElement returns a json.RawMessage instead of a map when
+					// the value marshals itself, so this assertion could fail for an
+					// embedded type that is both a LimitedFieldsMarshaller and a
+					// json.Marshaler. Reached from any response DTO with an embedded
+					// struct, which makes it a panic on a response path.
+					nestedFields, ok := nestedElement.(map[string]any)
+					if !ok {
+						return nil, fmt.Errorf(
+							"dto: embedded field %s of %s marshals itself, so its fields cannot be "+
+								"inlined; give it an explicit json tag to nest it instead",
+							rtField.Name, element.Type())
+					}
+					body = util.MergeMaps(body, nestedFields)
 				}
 				continue
 			}
