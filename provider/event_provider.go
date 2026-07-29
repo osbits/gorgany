@@ -41,7 +41,19 @@ func (p *EventProvider) Register(c core.IContainer) {
 	}
 }
 
-func (p *EventProvider) Boot(c core.IContainer) error {
+// Boot wires every registered subscriber onto the event bus.
+//
+// It satisfies core.IProvider, which has no error return, so an unrecoverable
+// wiring failure panics — an app that boots with its subscribers silently
+// missing is worse than one that refuses to boot. The fallible work lives in
+// boot() so it can be asserted on directly.
+func (p *EventProvider) Boot(c core.IContainer) {
+	if err := p.boot(c); err != nil {
+		panic(err)
+	}
+}
+
+func (p *EventProvider) boot(c core.IContainer) error {
 	var bus core.IEventBus
 	if err := c.Make(&bus); err != nil {
 		return fmt.Errorf("event Boot: cannot Make EventBus: %w", err)
