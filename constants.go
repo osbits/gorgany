@@ -2,7 +2,7 @@ package gorgany
 
 const FrameworkGit = "github.com/osbits/gorgany"
 
-const FrameworkVersion = "1.5.1"
+const FrameworkVersion = "1.5.2"
 
 type ExecType string
 
