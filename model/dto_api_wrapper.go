@@ -291,49 +291,12 @@ func (thiz *ApiReturnObject) inlineEmbedded(rvField reflect.Value) (func() (map[
 	}, true
 }
 
-// jsonTag is a parsed `json:"..."` struct tag.
-type jsonTag struct {
-	// Name is the key to serialise under.
-	Name string
-	// HasName reports whether the tag named the field explicitly.
-	HasName bool
-	// Skip is true for `json:"-"`, meaning never serialise this field.
-	Skip bool
-	// OmitEmpty is true when the tag carries the omitempty option.
-	OmitEmpty bool
-}
+// jsonTag is StructTag; parseJSONTag is ParseStructTag bound to the json tag. The
+// definitions moved to struct_tag.go when validation errors needed the same tag
+// handling to report wire names (B2) — the alternative was a second tag parser that
+// could drift from this one.
+type jsonTag = StructTag
 
-// parseJSONTag parses a `json:"..."` tag with encoding/json's semantics.
-//
-// It used to return only a name, and treated `json:"-"` identically to an absent
-// tag by returning the Go field name for both — which is how a field explicitly
-// marked as never-serialise ended up on the wire.
-//
-// Note the one subtlety encoding/json also has: `json:"-"` means skip, while
-// `json:"-,"` means "use the literal name -".
 func parseJSONTag(rtField reflect.StructField) jsonTag {
-	raw, ok := rtField.Tag.Lookup("json")
-	if !ok || raw == "" {
-		return jsonTag{Name: rtField.Name}
-	}
-
-	if raw == "-" {
-		return jsonTag{Name: rtField.Name, Skip: true}
-	}
-
-	name, opts, _ := strings.Cut(raw, ",")
-
-	tag := jsonTag{Name: rtField.Name}
-	if name != "" {
-		tag.Name = name
-		tag.HasName = true
-	}
-
-	for _, opt := range strings.Split(opts, ",") {
-		if opt == "omitempty" {
-			tag.OmitEmpty = true
-		}
-	}
-
-	return tag
+	return ParseStructTag(rtField, JSONTagName)
 }

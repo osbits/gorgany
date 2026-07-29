@@ -22,31 +22,43 @@ func AvailableLocales() []string {
 
 func Translation(code string, opts map[string]any, locale string) string {
 	cfg := GetManager().GetConfig(locale)
-	msg := cfg.GetString(code)
+	return Interpolate(cfg.GetString(code), opts)
+}
 
-	regex := regexp.MustCompile(`\{\:(?P<key>.+?)\}`)
-	processed := regex.ReplaceAllStringFunc(msg, func(pattern string) string {
-		parts := regex.FindStringSubmatch(pattern)
+// placeholderPattern matches the `{:key}` placeholders a translation carries.
+var placeholderPattern = regexp.MustCompile(`\{\:(?P<key>.+?)\}`)
+
+// Interpolate substitutes `{:key}` placeholders in msg from opts, leaving any
+// placeholder it has no value for visible rather than blanking it.
+//
+// This is exported because the validator's built-in message catalog (B2) needs the same
+// placeholder syntax for messages that never came from a translation file. Sharing the
+// implementation is what keeps a `{:param}` in an app's own translation and a
+// `{:param}` in a framework default from diverging.
+func Interpolate(msg string, opts map[string]any) string {
+	if msg == "" || len(opts) == 0 {
+		return msg
+	}
+
+	return placeholderPattern.ReplaceAllStringFunc(msg, func(pattern string) string {
+		parts := placeholderPattern.FindStringSubmatch(pattern)
 		if len(parts) != 2 {
 			return pattern
 		}
-		key := parts[1]
-		if val, ok := opts[key]; ok {
+		if val, ok := opts[parts[1]]; ok {
 			return fmt.Sprintf("%v", val)
 		}
 		return pattern
 	})
-	return processed
 }
 
 func TranslationWithSequence(code string, locale string, opts ...any) string {
 	cfg := GetManager().GetConfig(locale)
 	msg := cfg.GetString(code)
 
-	regex := regexp.MustCompile(`\{\:(?P<key>.+?)\}`)
 	i := 0
-	processed := regex.ReplaceAllStringFunc(msg, func(pattern string) string {
-		parts := regex.FindStringSubmatch(pattern)
+	processed := placeholderPattern.ReplaceAllStringFunc(msg, func(pattern string) string {
+		parts := placeholderPattern.FindStringSubmatch(pattern)
 		if len(parts) != 2 {
 			return pattern
 		}

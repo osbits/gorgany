@@ -24,6 +24,16 @@ func GetManager() core.Ii18nManager {
 	return mgr
 }
 
+// HasManager reports whether a manager has been installed.
+//
+// It exists so a caller that can proceed without translations can ask instead of
+// recovering from GetManager's panic. The validator's message catalog is the case that
+// needs it: a CLI app validates its command DTOs without ever booting i18n, and
+// panicking there would turn a bad flag into a crash.
+func HasManager() bool {
+	return mgr != nil
+}
+
 type Manager struct {
 	Configs map[string]core.Ii18nConfig
 

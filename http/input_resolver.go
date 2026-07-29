@@ -6,6 +6,7 @@ import (
 	"github.com/go-chi/chi"
 	"github.com/osbits/gorgany/app/core"
 	error2 "github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/i18n"
 	"github.com/osbits/gorgany/util"
 	"reflect"
 	"strings"
@@ -84,7 +85,7 @@ func (thiz *InputResolver) Resolve() ([]reflect.Value, error) {
 			//	return nil, err
 			//}
 
-			if err := thiz.Validator.ValidateStruct(arg); err != nil {
+			if err := thiz.validate(arg); err != nil {
 				return nil, err
 			}
 		}
@@ -95,6 +96,30 @@ func (thiz *InputResolver) Resolve() ([]reflect.Value, error) {
 	//thiz.Message.(*Message).inputParameters = args
 
 	return args, nil
+}
+
+// validate runs the DTO through the validator, asking for messages in the request's
+// locale when the validator can produce them.
+//
+// The locale is only available here, on the request, and core.IValidator's
+// ValidateStruct takes no locale — so this asks for the optional interface and falls
+// back to the default locale for a validator that does not implement it.
+func (thiz *InputResolver) validate(arg any) error {
+	if localized, ok := thiz.Validator.(core.ILocalizedValidator); ok {
+		return localized.ValidateStructForLocale(arg, thiz.requestLocale())
+	}
+	return thiz.Validator.ValidateStruct(arg)
+}
+
+// requestLocale is the {lang} path parameter, falling back to the configured default —
+// the same resolution the view renderer uses.
+func (thiz *InputResolver) requestLocale() string {
+	if req := thiz.Message.Request(); req != nil {
+		if lang := req.PathParam("lang"); lang != "" {
+			return lang
+		}
+	}
+	return i18n.DefaultLocale()
 }
 
 func (thiz *InputResolver) collectPathParams() []string {

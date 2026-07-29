@@ -21,3 +21,13 @@ type IValidator interface {
 	// RegisterCustomTypeFunc registers a custom type function for validation
 	RegisterCustomTypeFunc(fn validator.CustomTypeFunc, types ...interface{})
 }
+
+// ILocalizedValidator is implemented by a validator that can render its messages in a
+// specific locale. It is a separate, optional interface rather than a change to
+// IValidator so an existing implementation keeps compiling; callers that have a locale
+// available — the HTTP input resolver has the request's — type-assert for it and fall
+// back to IValidator.ValidateStruct, which uses the default locale.
+type ILocalizedValidator interface {
+	// ValidateStructForLocale validates a struct and renders its messages in locale.
+	ValidateStructForLocale(s any, locale string) error
+}
