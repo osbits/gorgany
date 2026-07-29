@@ -13,7 +13,6 @@ require (
 	github.com/gorilla/schema v1.4.1
 	github.com/iancoleman/strcase v0.3.0
 	github.com/jackc/pgx/v5 v5.7.5
-	github.com/jasonlvhit/gocron v0.0.1
 	github.com/joho/godotenv v1.5.1
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.10.0
