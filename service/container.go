@@ -25,9 +25,14 @@ func EmergencyContainer() core.IEmergencyContainer {
 
 // binding holds resolver and cached instance for singletons
 type binding struct {
-	resolver     interface{}
-	concrete     interface{}
-	isSingleton  bool
+	resolver    interface{}
+	concrete    interface{}
+	isSingleton bool
+	// explicit is true for a binding created by a Singleton*/Transient* call, and
+	// false for one the container auto-registered while resolving a
+	// pointer-to-struct. Make uses it to tell "the caller wanted the registered
+	// instance" from "this type has merely been resolved before".
+	explicit     bool
 	mu           sync.Mutex
 	cond         *sync.Cond
 	constructing bool
@@ -146,7 +151,12 @@ func (c *Container) bind(resolver interface{}, name string, isSingleton, isLazy 
 			instType, namedSuffix(name))
 	}
 
-	c.bindings[instType][name] = &binding{resolver: resolver, concrete: preInst, isSingleton: isSingleton}
+	c.bindings[instType][name] = &binding{
+		resolver:    resolver,
+		concrete:    preInst,
+		isSingleton: isSingleton,
+		explicit:    true,
+	}
 	return nil
 }
 
@@ -190,6 +200,24 @@ func (c *Container) Make(target interface{}, overrides ...map[string]interface{}
 		return errors.New("container: Make requires a pointer")
 	}
 	if v.Elem().Kind() == reflect.Struct {
+		// A pointer-to-struct takes the field-injection branch below, which fills
+		// the struct the caller already has. A caller who instead expected to
+		// *receive* the registered instance gets a zero value and a nil error — that
+		// silence is how JobProvider.Boot came to tick an empty &gocron.Scheduler{}
+		// for as long as this has been shipping.
+		//
+		// The two intents are told apart by identity. Passing the very instance the
+		// binding holds means "fill my fields", which is a supported pattern.
+		// Passing a different instance of a type that *is* registered means the
+		// caller wanted Resolve, so say so instead of returning a zero value.
+		if targetType := reflect.TypeOf(target); c.hasForeignExplicitBinding(targetType, target) {
+			return fmt.Errorf(
+				"container: Make(%s) fills a struct's container:\"inject\" fields, but %s "+
+					"has a registered binding and this is not the bound instance — use "+
+					"Resolve(**%s) to obtain the registered one",
+				targetType, targetType, targetType.Elem())
+		}
+
 		if len(overrides) > 0 {
 			s := v.Elem()
 			for field, val := range overrides[0] {
@@ -653,4 +681,27 @@ func dependencyLabel(key dependencyKey) string {
 		return key.t.String()
 	}
 	return fmt.Sprintf("%s[%s]", key.t.String(), key.name)
+}
+
+// hasForeignExplicitBinding reports whether t has an explicit binding that holds an
+// instance other than target.
+//
+// Auto-registered bindings — the ones resolve() creates on demand for a
+// pointer-to-struct — deliberately do not count. Otherwise merely having resolved a
+// type once would change how Make behaves for it afterwards.
+func (c *Container) hasForeignExplicitBinding(t reflect.Type, target interface{}) bool {
+	c.mu.RLock()
+	b, ok := c.bindings[t][""]
+	c.mu.RUnlock()
+
+	if !ok || !b.explicit {
+		return false
+	}
+
+	b.mu.Lock()
+	held := b.concrete
+	b.mu.Unlock()
+
+	// The bound instance being filled by its own owner is the supported pattern.
+	return held != target
 }

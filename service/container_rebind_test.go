@@ -113,3 +113,128 @@ type stubDataContext struct {
 func reflectTypeOf[T any]() reflect.Type {
 	return reflect.TypeOf((*T)(nil)).Elem()
 }
+
+// ---------------------------------------------------------------- B4: Make intent
+
+// schedulerLike stands in for *gocron.Scheduler: a third-party struct with no
+// container:"inject" tags, which a caller might mistakenly try to obtain with Make.
+type schedulerLike struct {
+	jobs    int
+	started bool
+}
+
+// TestMakeRefusesAForeignInstanceOfABoundType is the B4 regression, in the exact
+// shape that broke the job subsystem. JobProvider.Boot did:
+//
+//	sched := &gocron.Scheduler{}
+//	c.Make(sched)     // field injection on a type with no inject tags
+//	go sched.Start()  // ticks the zero value
+//
+// Make returned nil and left sched as the zero value, so an empty scheduler was
+// started and no job ever ran.
+func TestMakeRefusesAForeignInstanceOfABoundType(t *testing.T) {
+	c := NewContainer()
+
+	registered := &schedulerLike{jobs: 7, started: true}
+	require.NoError(t, c.SingletonLazy(func() *schedulerLike { return registered }))
+
+	// The A2 mistake: a fresh zero value, expecting to receive the registered one.
+	fresh := &schedulerLike{}
+	err := c.Make(fresh)
+
+	require.Error(t, err, "Make must not silently field-inject when resolution was wanted")
+	assert.Contains(t, err.Error(), "Resolve", "the error must name the method the caller wanted")
+	assert.Contains(t, err.Error(), "schedulerLike")
+	assert.Zero(t, fresh.jobs, "and it must not have pretended to succeed")
+}
+
+// TestResolveIsTheWayToObtainABoundStruct shows the correct call the error points at.
+func TestResolveIsTheWayToObtainABoundStruct(t *testing.T) {
+	c := NewContainer()
+
+	registered := &schedulerLike{jobs: 7, started: true}
+	require.NoError(t, c.SingletonLazy(func() *schedulerLike { return registered }))
+
+	var resolved *schedulerLike
+	require.NoError(t, c.Resolve(&resolved))
+	assert.Same(t, registered, resolved)
+	assert.Equal(t, 7, resolved.jobs)
+}
+
+// TestMakeStillFillsAnUnboundStruct is the overwhelmingly common use, and must be
+// untouched: controllers, middlewares, commands and jobs are all filled this way.
+func TestMakeStillFillsAnUnboundStruct(t *testing.T) {
+	c := NewContainer()
+	require.NoError(t, c.SingletonLazy(func() core.IValidator {
+		return &frameworkValidator{id: "v"}
+	}))
+
+	target := &struct {
+		Validator core.IValidator `container:"inject"`
+	}{}
+
+	require.NoError(t, c.Make(target))
+	require.NotNil(t, target.Validator, "an unbound struct must still be injected")
+}
+
+// TestMakeOnTheBoundInstanceItselfIsAllowed keeps the supported pattern working:
+// bind a concrete pointer, then fill that very instance's fields.
+func TestMakeOnTheBoundInstanceItselfIsAllowed(t *testing.T) {
+	c := NewContainer()
+
+	type service struct {
+		Validator core.IValidator `container:"inject"`
+	}
+
+	// The validator first: Singleton is non-lazy, so it resolves at bind time and
+	// its own field injection needs the dependency already present.
+	require.NoError(t, c.SingletonLazy(func() core.IValidator {
+		return &frameworkValidator{id: "v"}
+	}))
+
+	instance := &service{}
+	require.NoError(t, c.Singleton(func() *service { return instance }))
+
+	require.NoError(t, c.Make(instance),
+		"filling the bound instance's own fields is the supported pattern")
+	assert.NotNil(t, instance.Validator)
+}
+
+// TestAutoRegisteredBindingsDoNotChangeMakeBehaviour: resolve() auto-registers a
+// binding for any pointer-to-struct it is asked for. Merely having resolved a type
+// once must not make a later Make on a fresh one fail.
+func TestAutoRegisteredBindingsDoNotChangeMakeBehaviour(t *testing.T) {
+	c := NewContainer()
+	require.NoError(t, c.SingletonLazy(func() core.IValidator {
+		return &frameworkValidator{id: "v"}
+	}))
+
+	type injected struct {
+		Validator core.IValidator `container:"inject"`
+	}
+
+	// Resolving auto-registers *injected.
+	var first *injected
+	require.NoError(t, c.Resolve(&first))
+	require.NotNil(t, first)
+
+	// A later Make on a different instance must still just fill it.
+	second := &injected{}
+	require.NoError(t, c.Make(second),
+		"an auto-registered binding must not turn Make into an error")
+	assert.NotNil(t, second.Validator)
+}
+
+// TestMakeOnAnInterfacePointerStillResolves pins the other branch, which every
+// provider relies on.
+func TestMakeOnAnInterfacePointerStillResolves(t *testing.T) {
+	c := NewContainer()
+	require.NoError(t, c.SingletonLazy(func() core.IValidator {
+		return &frameworkValidator{id: "v"}
+	}))
+
+	var resolved core.IValidator
+	require.NoError(t, c.Make(&resolved))
+	require.NotNil(t, resolved)
+	assert.Equal(t, "v", resolved.(*frameworkValidator).id)
+}
