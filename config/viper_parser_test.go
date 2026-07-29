@@ -234,3 +234,130 @@ func buildNestedYAML(dottedKey, value string) string {
 	}
 	return b.String()
 }
+
+// TestSubstitutionDoesNotWipeSiblingKeys is the test whose absence let a boot-breaking
+// regression ship past the whole unit suite.
+//
+// Substituting a leaf with viper.Set writes the *override* layer, and a map fetch
+// resolves against the highest layer holding the key without deep-merging the ones
+// below. So after Set("databases.default.host", ...), GetStringMap("databases") returned
+// {"default": {"host": ...}} and driver, log and properties were gone — which is how the
+// e2e fixture app came to die with "datasource config: 'driver' is required".
+//
+// Every unit test passed throughout, because they all read scalars through GetString.
+// This one reads the map, which is what provider.configuredConnections does.
+func TestSubstitutionDoesNotWipeSiblingKeys(t *testing.T) {
+	t.Setenv("GORGANY_TEST_DB_HOST", "db.internal")
+	t.Setenv("GORGANY_TEST_DB_PORT", "5432")
+
+	loadYAML(t, `
+databases:
+  default:
+    driver: postgres_gorm
+    host: ${GORGANY_TEST_DB_HOST}
+    port: ${GORGANY_TEST_DB_PORT}
+    prefer_simple_protocol: true
+    log: false
+    properties:
+      maxOpenConnections: 5
+`)
+
+	require.NoError(t, ResolveEnvPlaceholders())
+
+	// This is the read that broke: the db provider fetches the whole subtree.
+	databases := viper.GetStringMap("databases")
+	defaults, ok := databases["default"].(map[string]any)
+	require.True(t, ok, "the databases subtree must still be a map")
+
+	assert.Equal(t, "postgres_gorm", defaults["driver"],
+		"a sibling of a substituted key must survive substitution")
+	assert.Equal(t, "db.internal", defaults["host"], "and the substitution must have applied")
+	assert.Equal(t, "5432", defaults["port"])
+	assert.Equal(t, true, defaults["prefer_simple_protocol"])
+	assert.Equal(t, false, defaults["log"])
+	assert.NotNil(t, defaults["properties"], "a nested sibling map must survive too")
+
+	// And the scalar reads keep working.
+	assert.Equal(t, "db.internal", viper.GetString("databases.default.host"))
+	assert.Equal(t, "postgres_gorm", viper.GetString("databases.default.driver"))
+}
+
+// TestAnUnresolvedPlaceholderAlsoLeavesSiblingsAlone: the untouched path must not
+// disturb the subtree either.
+func TestAnUnresolvedPlaceholderAlsoLeavesSiblingsAlone(t *testing.T) {
+	loadYAML(t, `
+databases:
+  default:
+    driver: postgres_gorm
+    host: ${DEFINITELY_NOT_SET_ANYWHERE}
+`)
+
+	require.NoError(t, ResolveEnvPlaceholders())
+
+	defaults, ok := viper.GetStringMap("databases")["default"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "postgres_gorm", defaults["driver"])
+	assert.Equal(t, "${DEFINITELY_NOT_SET_ANYWHERE}", defaults["host"])
+}
+
+// TestSubstitutionAcrossSeveralSubtrees: one MergeConfigMap call carries every
+// substitution, so a nested map built for one subtree must not clobber another.
+func TestSubstitutionAcrossSeveralSubtrees(t *testing.T) {
+	t.Setenv("GORGANY_TEST_A", "value-a")
+	t.Setenv("GORGANY_TEST_B", "value-b")
+	t.Setenv("GORGANY_TEST_C", "value-c")
+
+	loadYAML(t, `
+one:
+  deep:
+    nested: ${GORGANY_TEST_A}
+    kept: keep-one
+  sibling: keep-two
+two:
+  value: ${GORGANY_TEST_B}
+  kept: keep-three
+top: ${GORGANY_TEST_C}
+`)
+
+	require.NoError(t, ResolveEnvPlaceholders())
+
+	assert.Equal(t, "value-a", viper.GetString("one.deep.nested"))
+	assert.Equal(t, "keep-one", viper.GetString("one.deep.kept"))
+	assert.Equal(t, "keep-two", viper.GetString("one.sibling"))
+	assert.Equal(t, "value-b", viper.GetString("two.value"))
+	assert.Equal(t, "keep-three", viper.GetString("two.kept"))
+	assert.Equal(t, "value-c", viper.GetString("top"))
+
+	one := viper.GetStringMap("one")
+	deep, ok := one["deep"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "value-a", deep["nested"])
+	assert.Equal(t, "keep-one", deep["kept"])
+	assert.Equal(t, "keep-two", one["sibling"])
+}
+
+func TestSetNested(t *testing.T) {
+	root := map[string]any{}
+
+	setNested(root, "a", 1)
+	setNested(root, "b.c", 2)
+	setNested(root, "b.d.e", 3)
+	setNested(root, "b.d.f", 4)
+
+	assert.Equal(t, map[string]any{
+		"a": 1,
+		"b": map[string]any{
+			"c": 2,
+			"d": map[string]any{"e": 3, "f": 4},
+		},
+	}, root)
+}
+
+// TestSetNestedOverwritesAScalarInThePath: a config declaring both `a: 1` and `a.b: 2`
+// is contradictory, and setNested must not panic on it.
+func TestSetNestedOverwritesAScalarInThePath(t *testing.T) {
+	root := map[string]any{"a": "scalar"}
+
+	require.NotPanics(t, func() { setNested(root, "a.b", 2) })
+	assert.Equal(t, map[string]any{"a": map[string]any{"b": 2}}, root)
+}

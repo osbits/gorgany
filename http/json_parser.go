@@ -137,10 +137,21 @@ type JsonParser struct {
 	message core.HttpMessage
 }
 
+// Parse decodes the request body into dest.
+//
+// A body that cannot be parsed at all returns *err.InputBodyParseError, which the
+// framework's error handler answers with 400. A body that parses but holds a value a
+// field cannot accept returns *err.ValidationErrors, answered with 422. That split is
+// the point of B3: InputBodyParseError had zero call sites while http/error.go and the
+// fixture app both registered handlers for it, so app authors reasonably believed it was
+// the hook for malformed bodies. It was not — every parse failure arrived as
+// ValidationErrors, and a syntax error arrived as an *empty* one (see below), which the
+// validation handler turned into a 301 redirect to the referer.
 func (p *JsonParser) Parse(dest interface{}) error {
 	body, err := p.message.Request().Body()
 	if err != nil {
-		return fmt.Errorf("failed to read request body: %v", err)
+		return error2.NewInputBodyParseError("", core.ApplicationJson.String(),
+			fmt.Errorf("failed to read request body: %w", err))
 	}
 
 	if len(body) == 0 {
@@ -149,12 +160,8 @@ func (p *JsonParser) Parse(dest interface{}) error {
 
 	// Check input size
 	if len(body) > maxJSONSize {
-		return &error2.ValidationErrors{
-			error2.ValidationError{
-				Field: "body",
-				Err:   fmt.Sprintf("Input size exceeds maximum allowed size of %d bytes", maxJSONSize),
-			},
-		}
+		return error2.NewInputBodyParseError(string(body), core.ApplicationJson.String(),
+			fmt.Errorf("body is %d bytes, over the %d-byte limit", len(body), maxJSONSize))
 	}
 
 	// Check JSON depth
@@ -165,24 +172,28 @@ func (p *JsonParser) Parse(dest interface{}) error {
 	inputMap := make(map[string]interface{})
 	err = json.Unmarshal(body, &inputMap)
 	if err != nil {
-		validationErrors := make(error2.ValidationErrors, 0)
-		switch {
-		case errors.Is(err, &json.UnmarshalTypeError{}):
-			typeError := err.(*json.UnmarshalTypeError)
-			validationErrors.AddValidationError(error2.ValidationError{
-				Field: typeError.Field,
-				Err:   fmt.Sprintf("Invalid type for field: expected %s, got %s", typeError.Type, typeError.Value),
-			})
-		case errors.Is(err, &json.SyntaxError{}):
-			syntaxError := err.(*json.SyntaxError)
-			validationErrors.AddValidationError(error2.ValidationError{
-				Field: "body",
-				Err:   fmt.Sprintf("Invalid JSON syntax at position %d", syntaxError.Offset),
-			})
-		default:
-			checkAndAddIfValidationError(err, &validationErrors)
+		// This used to switch on errors.Is(err, &json.SyntaxError{}) and
+		// errors.Is(err, &json.UnmarshalTypeError{}). errors.Is compares with == for a
+		// type that implements no Is method, and both operands were freshly allocated
+		// pointers, so neither case could ever match. Every malformed body fell to the
+		// default branch, which produced an empty ValidationErrors — a non-nil error
+		// with no entries, which processValidationErrors answered with a 301 redirect
+		// to the Referer. errors.As is the call that works.
+		var syntaxError *json.SyntaxError
+		if errors.As(err, &syntaxError) {
+			return error2.NewInputBodyParseError(string(body), core.ApplicationJson.String(),
+				fmt.Errorf("invalid JSON syntax at byte %d: %w", syntaxError.Offset, err))
 		}
-		return &validationErrors
+
+		// Unmarshalling into map[string]interface{} accepts any JSON *object*, so this
+		// fires when the body is a top-level array, string, number or boolean.
+		var typeError *json.UnmarshalTypeError
+		if errors.As(err, &typeError) {
+			return error2.NewInputBodyParseError(string(body), core.ApplicationJson.String(),
+				fmt.Errorf("body must be a JSON object, got %s: %w", typeError.Value, err))
+		}
+
+		return error2.NewInputBodyParseError(string(body), core.ApplicationJson.String(), err)
 	}
 
 	return p.initStruct(dest, inputMap)
@@ -626,12 +637,10 @@ func (p *JsonParser) checkJSONDepth(body []byte) error {
 			case '{', '[':
 				depth++
 				if depth > maxJSONDepth {
-					return &error2.ValidationErrors{
-						error2.ValidationError{
-							Field: "body",
-							Err:   fmt.Sprintf("JSON structure exceeds maximum allowed depth of %d", maxJSONDepth),
-						},
-					}
+					// A refusal to parse, not a field-level complaint: there is no
+					// field to name, and the caller gets 400 rather than 422.
+					return error2.NewInputBodyParseError(string(body), core.ApplicationJson.String(),
+						fmt.Errorf("nesting exceeds the %d-level limit", maxJSONDepth))
 				}
 			case '}', ']':
 				depth--

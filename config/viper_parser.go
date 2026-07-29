@@ -82,6 +82,22 @@ func ResolveEnvPlaceholders() error {
 	unresolved := make(map[string]string)
 	var unresolvedSecurityKeys []string
 
+	// Substitutions are collected and applied together through MergeConfigMap rather
+	// than written one at a time with viper.Set. viper.Set writes the *override* layer,
+	// and a map fetch resolves against the highest layer that holds the key without
+	// deep-merging the ones below: after Set("databases.default.host", ...),
+	// GetStringMap("databases") returns {"default": {"host": ...}} and every sibling —
+	// driver, log, properties — is gone.
+	//
+	// That is not hypothetical. It is exactly how the e2e fixture app failed to boot
+	// with "datasource config: 'driver' is required" once this function stopped
+	// promoting *every* key: the old else branch rewrote untouched keys too, which
+	// happened to keep the override subtree complete and hid the hazard.
+	//
+	// MergeConfigMap deep-merges into the *config* layer, so siblings survive, defaults
+	// still apply to keys absent from the file, and IsSet keeps its file-based meaning.
+	substitutions := make(map[string]any)
+
 	for _, key := range viper.AllKeys() {
 		value, isString := viper.Get(key).(string)
 		if !isString {
@@ -107,7 +123,13 @@ func ResolveEnvPlaceholders() error {
 			continue
 		}
 
-		viper.Set(key, resolved)
+		setNested(substitutions, key, resolved)
+	}
+
+	if len(substitutions) > 0 {
+		if err := viper.MergeConfigMap(substitutions); err != nil {
+			return fmt.Errorf("config: could not apply environment substitutions: %w", err)
+		}
 	}
 
 	if len(unresolvedSecurityKeys) > 0 {
@@ -126,6 +148,26 @@ func ResolveEnvPlaceholders() error {
 	}
 
 	return nil
+}
+
+// setNested writes value at a dotted key path, creating the intervening maps.
+//
+// The path segments come from viper.AllKeys(), which lowercases them, so they line up
+// with what MergeConfigMap expects.
+func setNested(root map[string]any, dottedKey string, value any) {
+	segments := strings.Split(dottedKey, ".")
+
+	current := root
+	for _, segment := range segments[:len(segments)-1] {
+		next, ok := current[segment].(map[string]any)
+		if !ok {
+			next = make(map[string]any)
+			current[segment] = next
+		}
+		current = next
+	}
+
+	current[segments[len(segments)-1]] = value
 }
 
 // isSecurityRelevant reports whether an unresolved placeholder for this key should

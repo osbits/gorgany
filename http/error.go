@@ -6,6 +6,7 @@ import (
 	"github.com/osbits/gorgany/app"
 	"github.com/osbits/gorgany/app/core"
 	error2 "github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/service/dto"
 	"reflect"
 )
 
@@ -84,10 +85,32 @@ func processInputParsingError(error error, message core.HttpMessage) {
 	return
 }
 
-func processBodyParsingError(error error, message core.HttpMessage) {
-	error2.PrintError(error)
-	message.Response().Text("", 400)
-	return
+// processBodyParsingError answers a body the framework could not parse with 400.
+//
+// It used to write Text("", 400) — an empty body with a text/plain content type, which
+// told an API client nothing. It was also unreachable: nothing constructed
+// InputBodyParseError, so a malformed body arrived as an empty ValidationErrors and
+// processValidationErrors redirected to the Referer with a 301 (B3).
+//
+// The response never echoes the body back. InputBodyParseError carries it for the log,
+// and a body that failed to parse is exactly the kind that might contain a password
+// halfway through.
+func processBodyParsingError(err error, message core.HttpMessage) {
+	error2.PrintError(err)
+
+	reason := "The request body could not be parsed"
+	if parseError, ok := err.(*error2.InputBodyParseError); ok && parseError.RawError != nil {
+		reason = parseError.RawError.Error()
+	}
+
+	if WantsJSON(message) {
+		message.Response().JSON(
+			dto.ReturnObject(nil, core.BadRequestHttpStatus, reason),
+			core.BadRequestHttpStatus.Status)
+		return
+	}
+
+	message.Response().Text(reason, core.BadRequestHttpStatus.Status)
 }
 
 func processJwtAuthError(err error, message core.HttpMessage) {

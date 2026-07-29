@@ -2,9 +2,9 @@ package middleware
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/osbits/gorgany/app/core"
+	grghttp "github.com/osbits/gorgany/http"
 	"github.com/osbits/gorgany/log"
 	"github.com/osbits/gorgany/service/dto"
 	"github.com/spf13/viper"
@@ -121,42 +121,11 @@ func (thiz AuthMiddleware) deny(message core.HttpMessage, status core.HttpStatus
 	message.Response().Redirect(loginFormUrl, http.StatusFound)
 }
 
-// wantsJSON decides whether the caller is an API client.
+// wantsJSON delegates to grghttp.WantsJSON.
 //
-// It used to test only `Content-Type == application/json` or
-// `PathParam("namespace") == "api"`. A GET request carries no Content-Type, so the
-// first test could never fire for the most common case and apps were pushed into an
-// `api` namespace purely to get a JSON 401.
+// The implementation moved to http/negotiate.go when the router's 404/405 and the
+// framework's error handlers needed the same decision (C2): three copies would have
+// answered differently for the same request.
 func wantsJSON(message core.HttpMessage) bool {
-	if message.Request().PathParam("namespace") == "api" {
-		return true
-	}
-
-	req := message.Request().RawRequest()
-	if req == nil {
-		return strings.Contains(
-			message.Request().Header().Get("Content-Type"),
-			core.ApplicationJson.String(),
-		)
-	}
-
-	if strings.Contains(req.Header.Get("Content-Type"), core.ApplicationJson.String()) {
-		return true
-	}
-
-	// Honour Accept, but only when JSON is asked for specifically: a browser sends
-	// `Accept: text/html,...,*/*`, and matching the wildcard there would turn every
-	// browser redirect into a JSON body.
-	if strings.Contains(req.Header.Get("Accept"), core.ApplicationJson.String()) {
-		return true
-	}
-
-	if req.URL != nil {
-		path := req.URL.Path
-		if strings.HasPrefix(path, "/api/") || path == "/api" {
-			return true
-		}
-	}
-
-	return false
+	return grghttp.WantsJSON(message)
 }

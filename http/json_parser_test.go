@@ -318,14 +318,16 @@ func TestJsonParser_Parse_SizeLimit(t *testing.T) {
 		t.Error("expected error for large payload but got none")
 	}
 
-	validationErrors, ok := err.(*error2.ValidationErrors)
+	// This used to assert *ValidationErrors. A refusal to parse is a 400-class failure
+	// with no field to name, so it is now an InputBodyParseError (B3) — which is also
+	// the type http/error.go had a handler registered for all along.
+	parseError, ok := err.(*error2.InputBodyParseError)
 	if !ok {
-		t.Errorf("expected ValidationErrors but got %T", err)
-		return
+		t.Fatalf("expected InputBodyParseError but got %T", err)
 	}
 
-	if len(*validationErrors) == 0 {
-		t.Error("expected validation errors but got none")
+	if parseError.RawError == nil {
+		t.Error("expected a reason attached to the parse error")
 	}
 }
 
@@ -349,14 +351,14 @@ func TestJsonParser_Parse_DepthLimit(t *testing.T) {
 		t.Error("expected error for deep structure but got none")
 	}
 
-	validationErrors, ok := err.(*error2.ValidationErrors)
+	// Same reclassification as the size limit above (B3).
+	parseError, ok := err.(*error2.InputBodyParseError)
 	if !ok {
-		t.Errorf("expected ValidationErrors but got %T", err)
-		return
+		t.Fatalf("expected InputBodyParseError but got %T", err)
 	}
 
-	if len(*validationErrors) == 0 {
-		t.Error("expected validation errors but got none")
+	if parseError.RawError == nil {
+		t.Error("expected a reason attached to the parse error")
 	}
 }
 

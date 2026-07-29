@@ -394,9 +394,16 @@ func TestANilEmbeddedPointerDoesNotPanic(t *testing.T) {
 	assert.Error(t, err)
 }
 
-type CollidingDto struct {
-	Primary   string `json:"email" validate:"required"`
-	Secondary string `json:"email" validate:"required"`
+// collidingDto builds the DTO at runtime rather than declaring it, because `go vet`'s
+// structtag check rejects a literal duplicate tag — the very shape this test needs. The
+// type it builds is indistinguishable from a declared one as far as reflect is
+// concerned, which is all the walk sees.
+func collidingDto() any {
+	t := reflect.StructOf([]reflect.StructField{
+		{Name: "Primary", Type: reflect.TypeOf(""), Tag: `json:"email" validate:"required"`},
+		{Name: "Secondary", Type: reflect.TypeOf(""), Tag: `json:"email" validate:"required"`},
+	})
+	return reflect.New(t).Elem().Interface()
 }
 
 // TestTwoFieldsOnOneWireNameFailLoudly is the brief's "either make that safe or fail
@@ -405,7 +412,7 @@ type CollidingDto struct {
 func TestTwoFieldsOnOneWireNameFailLoudly(t *testing.T) {
 	v := newValidator(t)
 
-	err := v.ValidateStruct(CollidingDto{})
+	err := v.ValidateStruct(collidingDto())
 	require.Error(t, err)
 
 	var validationErrors *error2.ValidationErrors

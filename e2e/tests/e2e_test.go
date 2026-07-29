@@ -394,6 +394,83 @@ func TestValidationAndMultipartParsing(t *testing.T) {
 	}
 }
 
+// TestMalformedBodiesGet400 is the B3 requirement, end to end.
+//
+// err.NewInputBodyParseError had zero call sites while both http/error.go and this
+// fixture app registered handlers for it, so a malformed body took the *validation*
+// path instead — and because that path built an empty ValidationErrors, the framework
+// answered a syntax error with a 301 redirect to the Referer. A parse failure is 400,
+// distinct from a 422 validation failure, and these are the shapes that separate them.
+func TestMalformedBodiesGet400(t *testing.T) {
+	waitForServer(t)
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"truncated object", `{"name": "parser"`},
+		{"trailing garbage", `{"name": "parser"} oops`},
+		{"top-level array", `[{"name": "parser"}]`},
+		{"top-level string", `"just a string"`},
+		{"top-level number", `42`},
+		{"not json at all", `<xml/>`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := mustRequest(t, http.MethodPost, baseURL()+"/api/v1/parse/json",
+				"application/json", []byte(tc.body), nil, true)
+
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("expected 400 for %s, got %d body=%s",
+					tc.name, resp.StatusCode, preview(resp.Body))
+			}
+
+			// The response must not echo the body back: a body that failed to parse is
+			// exactly the kind that might carry a secret halfway through.
+			if strings.Contains(string(resp.Body), tc.body) {
+				t.Fatalf("the 400 response echoed the request body: %s", preview(resp.Body))
+			}
+
+			var parsed apiResponse
+			decodeJSON(t, resp.Body, &parsed)
+			if parsed.Status != http.StatusBadRequest {
+				t.Fatalf("expected the standard envelope with status 400, got %d body=%s",
+					parsed.Status, preview(resp.Body))
+			}
+		})
+	}
+}
+
+// TestAWellFormedBodyStillParses guards against the 400 path swallowing valid input.
+func TestAWellFormedBodyStillParses(t *testing.T) {
+	waitForServer(t)
+
+	resp := mustJSON(t, http.MethodPost, baseURL()+"/api/v1/parse/json", map[string]any{
+		"name":  "parser",
+		"count": 3,
+	}, nil, false)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for a valid payload, got %d body=%s", resp.StatusCode, preview(resp.Body))
+	}
+}
+
+// TestAValidationFailureIsStill422 pins the other side of the split: a body that parses
+// but holds a value a field rejects is 422, not 400.
+func TestAValidationFailureIsStill422(t *testing.T) {
+	waitForServer(t)
+
+	resp := mustJSON(t, http.MethodPost, baseURL()+"/api/v1/parse/json", map[string]any{
+		"name":  "parser",
+		"count": "bad-type",
+	}, nil, false)
+
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d body=%s", resp.StatusCode, preview(resp.Body))
+	}
+}
+
 func TestCliMigrationsAndSeedState(t *testing.T) {
 	waitForServer(t)
 
