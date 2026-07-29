@@ -124,7 +124,7 @@ func BuildDSN(cfg dsconfig.DataSource) (string, error) {
 		if err := validateDSNParam(key); err != nil {
 			return "", err
 		}
-		params.Set(key, cfg.Options[key])
+		params.Set(canonicalDSNParam(key), cfg.Options[key])
 	}
 
 	var auth strings.Builder
@@ -169,6 +169,52 @@ func sortedKeys(m map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// dsnParamCanonicalNames maps the lowercased form of every go-sql-driver/mysql DSN
+// parameter to the spelling the driver actually expects.
+//
+// This exists because Viper lowercases every key it reads, so an `options` entry
+// written as `readTimeout: 10s` in YAML arrives here as `readtimeout` — and
+// go-sql-driver's parameter names are case-sensitive, so it would reject the DSN
+// outright. Restoring the canonical spelling makes camelCase options expressible
+// from a config file at all.
+//
+// A parameter not in this table is passed through unchanged: it may be a MySQL
+// server system variable, which the driver forwards verbatim and which is
+// case-insensitive on the server side.
+var dsnParamCanonicalNames = map[string]string{
+	"allowallfiles":            "allowAllFiles",
+	"allowcleartextpasswords":  "allowCleartextPasswords",
+	"allowfallbacktoplaintext": "allowFallbackToPlaintext",
+	"allownativepasswords":     "allowNativePasswords",
+	"allowoldpasswords":        "allowOldPasswords",
+	"charset":                  "charset",
+	"checkconnliveness":        "checkConnLiveness",
+	"clientfoundrows":          "clientFoundRows",
+	"collation":                "collation",
+	"columnswithalias":         "columnsWithAlias",
+	"connectionattributes":     "connectionAttributes",
+	"interpolateparams":        "interpolateParams",
+	"loc":                      "loc",
+	"maxallowedpacket":         "maxAllowedPacket",
+	"multistatements":          "multiStatements",
+	"parsetime":                "parseTime",
+	"readtimeout":              "readTimeout",
+	"rejectreadonly":           "rejectReadOnly",
+	"serverpubkey":             "serverPubKey",
+	"timetruncate":             "timeTruncate",
+	"timeout":                  "timeout",
+	"tls":                      "tls",
+	"writetimeout":             "writeTimeout",
+}
+
+// canonicalDSNParam restores the driver's expected spelling for a known parameter.
+func canonicalDSNParam(key string) string {
+	if canonical, ok := dsnParamCanonicalNames[strings.ToLower(key)]; ok {
+		return canonical
+	}
+	return key
 }
 
 // validateDSNParam rejects parameter names that are not plain identifiers.

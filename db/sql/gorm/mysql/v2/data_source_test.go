@@ -1,6 +1,7 @@
 package v2
 
 import (
+	"strings"
 	"testing"
 
 	dsconfig "github.com/osbits/gorgany/db/sql/config"
@@ -181,4 +182,65 @@ func TestTransactionQueryReturnsFreshMySQLBuilder(t *testing.T) {
 
 	assert.NotSame(t, tx.Query(), tx.Query())
 	assert.Equal(t, "mysql", tx.Query().Dialect().Name())
+}
+
+// TestViperLowercasedOptionKeysAreRestored covers the second half of the Viper
+// case-folding problem. go-sql-driver/mysql parameter names are case-sensitive, so
+// an `options` entry written as `readTimeout: 10s` in YAML — which Viper delivers as
+// `readtimeout` — would be rejected by the driver. The DSN builder restores the
+// canonical spelling.
+func TestViperLowercasedOptionKeysAreRestored(t *testing.T) {
+	tests := map[string]string{
+		"readtimeout":       "readTimeout",
+		"writetimeout":      "writeTimeout",
+		"parsetime":         "parseTime",
+		"multistatements":   "multiStatements",
+		"interpolateparams": "interpolateParams",
+		"maxallowedpacket":  "maxAllowedPacket",
+		"clientfoundrows":   "clientFoundRows",
+		"checkconnliveness": "checkConnLiveness",
+		"rejectreadonly":    "rejectReadOnly",
+		"serverpubkey":      "serverPubKey",
+		// Already-canonical spellings must survive untouched.
+		"readTimeout": "readTimeout",
+		"timeout":     "timeout",
+		"loc":         "loc",
+	}
+
+	for given, want := range tests {
+		t.Run(given, func(t *testing.T) {
+			cfg := mysqlConfig()
+			cfg.Options = map[string]string{given: "10s"}
+
+			dsn, err := BuildDSN(cfg)
+			require.NoError(t, err)
+			assert.Containsf(t, dsn, want+"=10s",
+				"option %q must reach the driver as %q", given, want)
+		})
+	}
+}
+
+// TestUnknownOptionKeyIsPassedThroughUnchanged: a key not in the canonical table may
+// be a MySQL server system variable, which the driver forwards verbatim.
+func TestUnknownOptionKeyIsPassedThroughUnchanged(t *testing.T) {
+	cfg := mysqlConfig()
+	cfg.Options = map[string]string{"sql_mode": "TRADITIONAL"}
+
+	dsn, err := BuildDSN(cfg)
+	require.NoError(t, err)
+	assert.Contains(t, dsn, "sql_mode=TRADITIONAL")
+}
+
+// TestCanonicalisationDoesNotProduceDuplicateParams guards against emitting both the
+// folded and canonical spelling of one parameter.
+func TestCanonicalisationDoesNotProduceDuplicateParams(t *testing.T) {
+	cfg := mysqlConfig()
+	cfg.Options = map[string]string{"parsetime": "false"}
+
+	dsn, err := BuildDSN(cfg)
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(dsn, "parseTime="),
+		"the folded key must override the default, not sit alongside it")
+	assert.NotContains(t, dsn, "parsetime=")
+	assert.Contains(t, dsn, "parseTime=false", "an explicit option must win")
 }

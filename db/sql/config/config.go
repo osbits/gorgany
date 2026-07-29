@@ -94,8 +94,15 @@ func (c *DataSource) Validate() error {
 	return nil
 }
 
-// knownKeys are the top-level keys Parse understands. Anything else is reported
-// rather than silently ignored, so a typo like "databse" surfaces at boot.
+// knownKeys are the top-level keys Parse understands, lowercased. Anything else is
+// reported rather than silently ignored, so a typo like "databse" surfaces at boot.
+//
+// Everything in this package matches keys case-insensitively, because Viper
+// lowercases every key it reads: a YAML `maxOpenConnections` arrives as
+// `maxopenconnections`. Comparing against a camelCase literal therefore never
+// matches anything that came from a config file — which is how all four pool
+// settings came to be silently ignored on every version before this fix, and how
+// the unknown-key check below briefly turned that silence into a boot failure.
 var knownKeys = map[string]bool{
 	"driver": true, "host": true, "port": true, "username": true,
 	"password": true, "db": true, "ssl": true, "search_path": true,
@@ -109,14 +116,18 @@ var knownKeys = map[string]bool{
 // hands numbers back as int, int64, float64 or string depending on whether the
 // value came from YAML, an environment variable or a literal map, so numeric and
 // boolean keys accept all of those rather than assuming one.
-func Parse(raw map[string]any) (DataSource, error) {
+func Parse(rawInput map[string]any) (DataSource, error) {
 	var cfg DataSource
 
-	if raw == nil {
+	if rawInput == nil {
 		return cfg, fmt.Errorf("datasource config: configuration is empty")
 	}
 
-	if unknown := unknownKeys(raw, knownKeys); len(unknown) > 0 {
+	// Fold keys to lowercase so a hand-built camelCase map and a Viper-supplied
+	// lowercased one behave identically.
+	raw := foldKeys(rawInput)
+
+	if unknown := unknownKeys(rawInput, knownKeys); len(unknown) > 0 {
 		return cfg, fmt.Errorf("datasource config: unknown key(s) %s", strings.Join(unknown, ", "))
 	}
 
@@ -161,9 +172,10 @@ func Parse(raw map[string]any) (DataSource, error) {
 	return cfg, nil
 }
 
+// knownPoolKeys are the `properties` keys, lowercased — see knownKeys for why.
 var knownPoolKeys = map[string]bool{
-	"maxOpenConnections": true, "maxIdleConnections": true,
-	"connectionMaxLifetime": true, "connectionMaxIdleLifetime": true,
+	"maxopenconnections": true, "maxidleconnections": true,
+	"connectionmaxlifetime": true, "connectionmaxidlelifetime": true,
 }
 
 func parsePool(raw map[string]any) (Pool, error) {
@@ -174,31 +186,32 @@ func parsePool(raw map[string]any) (Pool, error) {
 		return pool, nil
 	}
 
-	props, ok := toStringMap(propsRaw)
+	propsInput, ok := toStringMap(propsRaw)
 	if !ok {
 		return pool, fmt.Errorf("datasource config: key 'properties' must be a map, got %T", propsRaw)
 	}
+	props := foldKeys(propsInput)
 
-	if unknown := unknownKeys(props, knownPoolKeys); len(unknown) > 0 {
+	if unknown := unknownKeys(propsInput, knownPoolKeys); len(unknown) > 0 {
 		return pool, fmt.Errorf("datasource config: unknown key(s) %s under 'properties'", strings.Join(unknown, ", "))
 	}
 
 	var err error
-	if pool.MaxOpenConnections, err = optIntUnder(props, "properties", "maxOpenConnections"); err != nil {
+	if pool.MaxOpenConnections, err = poolInt(props, "maxOpenConnections"); err != nil {
 		return pool, err
 	}
-	if pool.MaxIdleConnections, err = optIntUnder(props, "properties", "maxIdleConnections"); err != nil {
+	if pool.MaxIdleConnections, err = poolInt(props, "maxIdleConnections"); err != nil {
 		return pool, err
 	}
 
 	// Durations are configured in seconds, matching the pre-v2 behaviour.
-	lifetime, err := optIntUnder(props, "properties", "connectionMaxLifetime")
+	lifetime, err := poolInt(props, "connectionMaxLifetime")
 	if err != nil {
 		return pool, err
 	}
 	pool.ConnectionMaxLifetime = time.Duration(lifetime) * time.Second
 
-	idle, err := optIntUnder(props, "properties", "connectionMaxIdleLifetime")
+	idle, err := poolInt(props, "connectionMaxIdleLifetime")
 	if err != nil {
 		return pool, err
 	}
@@ -207,10 +220,45 @@ func parsePool(raw map[string]any) (Pool, error) {
 	return pool, nil
 }
 
+// poolInt reads a `properties` entry by its lowercased key while reporting errors
+// under the camelCase spelling the docs and config files use.
+func poolInt(props map[string]any, camelKey string) (int, error) {
+	return optIntUnder(props, "properties", strings.ToLower(camelKey), camelKey)
+}
+
+// foldKeys returns m with every key lowercased. A collision (the same key in two
+// cases) keeps the first in sorted order, so the result is deterministic.
+func foldKeys(m map[string]any) map[string]any {
+	folded := make(map[string]any, len(m))
+	for _, k := range sortedMapKeys(m) {
+		lower := strings.ToLower(k)
+		if _, taken := folded[lower]; taken {
+			continue
+		}
+		folded[lower] = m[k]
+	}
+	return folded
+}
+
+func sortedMapKeys(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// unknownKeys reports keys of raw that are not in known.
+//
+// Matching is done on the lowercased key, because `known` is lowercased and Viper
+// lowercases what it reads, but the *reported* key is the caller's original
+// spelling — being told your typo was 'maxopenconnection' when you wrote
+// 'maxOpenConnection' is needlessly confusing.
 func unknownKeys(raw map[string]any, known map[string]bool) []string {
 	var unknown []string
 	for k := range raw {
-		if !known[strings.ToLower(k)] && !known[k] {
+		if !known[strings.ToLower(k)] {
 			unknown = append(unknown, "'"+k+"'")
 		}
 	}
@@ -257,10 +305,12 @@ func optString(raw map[string]any, key string) (string, error) {
 }
 
 func optInt(raw map[string]any, key string) (int, error) {
-	return optIntUnder(raw, "", key)
+	return optIntUnder(raw, "", key, key)
 }
 
-func optIntUnder(raw map[string]any, parent, key string) (int, error) {
+// optIntUnder reads raw[key], reporting problems under displayKey so an error names
+// the spelling the user actually wrote in their config.
+func optIntUnder(raw map[string]any, parent, key, displayKey string) (int, error) {
 	v, ok := raw[key]
 	if !ok || v == nil {
 		return 0, nil
@@ -278,17 +328,17 @@ func optIntUnder(raw map[string]any, parent, key string) (int, error) {
 		return int(n), nil
 	case float64:
 		if n != float64(int(n)) {
-			return 0, fmt.Errorf("datasource config: key '%s' must be a whole number, got %v", qualify(parent, key), v)
+			return 0, fmt.Errorf("datasource config: key '%s' must be a whole number, got %v", qualify(parent, displayKey), v)
 		}
 		return int(n), nil
 	case string:
 		parsed, err := strconv.Atoi(strings.TrimSpace(n))
 		if err != nil {
-			return 0, fmt.Errorf("datasource config: key '%s' must be an integer, got %q", qualify(parent, key), n)
+			return 0, fmt.Errorf("datasource config: key '%s' must be an integer, got %q", qualify(parent, displayKey), n)
 		}
 		return parsed, nil
 	default:
-		return 0, fmt.Errorf("datasource config: key '%s' must be an integer, got %T (%v)", qualify(parent, key), v, v)
+		return 0, fmt.Errorf("datasource config: key '%s' must be an integer, got %T (%v)", qualify(parent, displayKey), v, v)
 	}
 }
 
@@ -321,6 +371,9 @@ func optStringMap(raw map[string]any, key string) (map[string]string, error) {
 	if !ok {
 		return nil, fmt.Errorf("datasource config: key '%s' must be a map of strings, got %T", key, v)
 	}
+	// Option keys are NOT folded: they are passed to the driver verbatim, and some
+	// drivers are case-sensitive about them. Viper will already have lowercased
+	// anything read from a config file — see the note on DataSource.Options.
 
 	out := make(map[string]string, len(m))
 	for k, val := range m {

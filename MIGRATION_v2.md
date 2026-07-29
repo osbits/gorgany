@@ -25,6 +25,7 @@ affected, and states whether the fix is mechanical or needs judgement.
 | [§2](#2-json--is-now-honoured-in-api-responses-behaviour-security) | `json:"-"`, `omitempty`, embedded inlining | Response JSON keys appear/disappear; a previously leaked field is now absent |
 | [§3](#3-a-role-mismatch-returns-403-not-401-behaviour) | Role mismatch is 403, not 401 | Clients branching on 401 stop seeing it for authorised-but-wrong-role users |
 | [§4](#4-options-no-longer-invokes-your-route-handler-behaviour-security) | `OPTIONS` returns 204, never the handler | An `OPTIONS` call that used to reach a handler now does not |
+| [§4a](#4a-connection-pool-limits-now-actually-apply-behaviour) | `properties` pool limits now apply | Connection-pool caps you configured years ago start being enforced |
 
 ---
 
@@ -388,6 +389,72 @@ func TestOptionsHasNoSideEffect(t *testing.T) {
 
 **Judgement**, but usually a no-op: almost nobody deliberately routed `OPTIONS`
 to a mutating handler. Check your CORS setup.
+
+---
+
+## 4a. Connection-pool limits now actually apply (behaviour)
+
+### What broke and why it had to
+
+Viper lowercases every key it reads, so a YAML `maxOpenConnections` arrives as
+`maxopenconnections`. The datasource read it back as:
+
+```go
+if maxOpenConnections, ok := props["maxOpenConnections"]; ok {   // never matched
+    rawDb.SetMaxOpenConns(maxOpenConnections.(int))
+}
+```
+
+That camelCase lookup never matched a Viper-supplied map, so **all four pool
+settings have been silently ignored on every version up to and including v1.5.1**.
+Config that looked applied was inert.
+
+Key matching is now case-insensitive, so the values take effect.
+
+### Before / after
+
+Nothing in your code changes. What changes is what the pool does:
+
+```yaml
+databases:
+  default:
+    driver: postgres_gorm
+    host: localhost
+    db: myapp
+    properties:
+      maxOpenConnections: 5          # v1.5.1: ignored — pool was unlimited
+      maxIdleConnections: 5          # v2.0.0: enforced — at most 5 open connections
+      connectionMaxLifetime: 300
+      connectionMaxIdleLifetime: 300
+```
+
+**This is the one change in v2 that can make a working app slower or stall it.** If
+the number was written years ago, never took effect, and is too low for your current
+concurrency, requests will now queue waiting for a connection.
+
+### How to detect whether you are affected
+
+```bash
+grep -rn -A6 'properties:' config/*.yaml config/*.yml 2>/dev/null
+```
+
+If that finds a `properties` block, the values in it are about to start mattering.
+Sanity-check them against your actual concurrency before deploying:
+
+- `maxOpenConnections` should be at least your peak concurrent DB-using requests.
+  Postgres' own `max_connections` defaults to 100, so a value in the tens is normal
+  per instance; a value like `5` is almost certainly a stale guess.
+- `maxIdleConnections` should not exceed `maxOpenConnections`.
+
+To keep the pre-v2 behaviour exactly — an uncapped pool — delete the `properties`
+block rather than setting it to `0`. A configured `0` is treated as "unset" for the
+upload limits, but for pool settings `0` reaches `SetMaxOpenConns(0)`, which Go
+documents as unlimited; deleting the block is clearer about intent.
+
+### Mechanical or judgement?
+
+**Judgement, and worth doing before you deploy.** This is the only change here that
+can degrade a running system rather than break a build.
 
 ---
 

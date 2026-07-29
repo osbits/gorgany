@@ -23,16 +23,18 @@ This release contains source-breaking changes, so a major bump is required:
 - `provider.EventProvider.Boot` no longer returns an `error` (it previously did
   not satisfy `core.IProvider` at all).
 
-There are also four **behaviour** changes that no compiler will catch — a
-memoized query builder, `json:"-"`, a role-mismatch status code, and `OPTIONS`
-routing. Those are the ones most likely to surprise, and they are why
-[`MIGRATION_v2.md`](MIGRATION_v2.md) leads with them.
+There are also five **behaviour** changes that no compiler will catch — a memoized
+query builder, `json:"-"`, a role-mismatch status code, `OPTIONS` routing, and
+connection-pool limits that start being enforced. Those are the ones most likely to
+surprise, and they are why [`MIGRATION_v2.md`](MIGRATION_v2.md) leads with them.
 
 `e2e/fixture-app`, the only v1.5.1-compatible sample app in this repo, needed
-**no changes at all** — it builds and passes untouched. That is a useful signal
-about blast radius, not a claim that no app is affected: an app that calls
-`builder.ToSQL()` directly, implements `SQLDialect`, or relies on any of the four
-behaviour changes will need work.
+**no source changes at all**, and its full dockerised suite (7 tests over a real
+Postgres, exercising routing, session auth, JWT, relations, validation, multipart
+and the CLI) passes against v2. That is a useful signal about blast radius, not a
+claim that no app is affected: an app that calls `builder.ToSQL()` directly,
+implements `SQLDialect`, or relies on any of the five behaviour changes will need
+work.
 
 ### Breaking
 
@@ -58,6 +60,12 @@ behaviour changes will need work.
   preflight responder with an `Allow` header instead of the route's own handler,
   and `CSRFMiddleware` answers `OPTIONS` itself. **Behaviour change, no compiler
   error.**
+- **Connection-pool limits under `properties` now actually apply.** Viper
+  lowercases config keys, so the camelCase lookups
+  (`props["maxOpenConnections"]`) never matched and all four settings were
+  silently ignored on every version up to v1.5.1. **Behaviour change, no compiler
+  error** — and the only one here that can slow a working app rather than break a
+  build, if the configured cap is a stale guess. See MIGRATION_v2.md §4a.
 - **`v2.NewDataSource` returns `(IDataSource, error)`** rather than panicking on a
   missing or mistyped config key.
 - **`EventProvider.Boot(core.IContainer)`** no longer returns an error, so
@@ -113,8 +121,10 @@ behaviour changes will need work.
 - **`dbCore.SortedKeys`** for deterministic map-driven SQL generation.
 - **`i18n.Manager.FallbackTag`** and locale fallback in `GetConfig`.
 - **`core.GormMySQL`** (`"mysql_gorm"`) alongside `core.GormPostgreSQL`.
-- Test coverage went from 14 `_test.go` files to 30. Measured with no database
+- Test coverage went from 14 `_test.go` files to 47. Measured with no database
   running: `db/sql/builder` 96.6%, MySQL dialect 95.3%, Postgres dialect 96.6%.
+  A `livedb`-tagged suite additionally verifies the Tier-1 fixes against real
+  MySQL 8 and Postgres 16.
 
 ### Fixed
 
@@ -134,6 +144,13 @@ behaviour changes will need work.
 - **The DSN was built by raw string interpolation**, so a password containing a
   space silently truncated it and one containing a quote corrupted it. Values are
   now escaped per libpq rules.
+- **Config keys are matched case-insensitively.** Viper lowercases every key it
+  reads, so camelCase lookups such as `props["maxOpenConnections"]` never matched
+  a config-file value. Two consequences, both fixed: the pool settings were
+  silently ignored (see Breaking), and MySQL DSN options written in camelCase —
+  `readTimeout`, `parseTime`, `multiStatements` — arrived lowercased at a driver
+  whose parameter names are case-sensitive, which would have made them unusable
+  from YAML. The MySQL DSN builder restores the canonical spelling.
 - **The `sessions` migration could not run on MySQL.**
   `CREATE INDEX IF NOT EXISTS` has no MySQL equivalent, and `Up()` passed three
   `;`-separated statements to one `db.Exec`, which `go-sql-driver/mysql` rejects
