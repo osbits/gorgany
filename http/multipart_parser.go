@@ -8,13 +8,13 @@ import (
 	"sync"
 
 	"github.com/gorilla/schema"
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/db"
-	"github.com/osbits/gorgany/decoder"
-	mpart "github.com/osbits/gorgany/decoder/multipart"
-	error2 "github.com/osbits/gorgany/err"
-	"github.com/osbits/gorgany/service/cache"
-	"github.com/osbits/gorgany/util"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/db"
+	"github.com/osbits/gorgany/v2/decoder"
+	mpart "github.com/osbits/gorgany/v2/decoder/multipart"
+	error2 "github.com/osbits/gorgany/v2/err"
+	"github.com/osbits/gorgany/v2/service/cache"
+	"github.com/osbits/gorgany/v2/util"
 	"github.com/spf13/viper"
 )
 

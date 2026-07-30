@@ -3,11 +3,11 @@ package middleware
 import (
 	"fmt"
 
-	"github.com/osbits/gorgany/app/core"
-	error2 "github.com/osbits/gorgany/err"
-	grghttp "github.com/osbits/gorgany/http"
-	"github.com/osbits/gorgany/log"
-	"github.com/osbits/gorgany/service/dto"
+	"github.com/osbits/gorgany/v2/app/core"
+	error2 "github.com/osbits/gorgany/v2/err"
+	grghttp "github.com/osbits/gorgany/v2/http"
+	"github.com/osbits/gorgany/v2/log"
+	"github.com/osbits/gorgany/v2/service/dto"
 )
 
 // RecoveryMiddleware recovers from a panic raised anywhere downstream of it.

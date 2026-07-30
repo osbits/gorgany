@@ -4,8 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/err"
 	"reflect"
 	"sync"
 )

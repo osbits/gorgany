@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	dbCore "github.com/osbits/gorgany/db/sql/core"
-	"github.com/osbits/gorgany/util"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
+	"github.com/osbits/gorgany/v2/util"
 	"gorm.io/gorm/schema"
 )
 

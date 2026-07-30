@@ -5,11 +5,11 @@ import (
 	"reflect"
 
 	goValidator "github.com/go-playground/validator/v10"
-	"github.com/osbits/gorgany/app/core"
-	error2 "github.com/osbits/gorgany/err"
-	"github.com/osbits/gorgany/i18n"
-	"github.com/osbits/gorgany/model"
-	"github.com/osbits/gorgany/util"
+	"github.com/osbits/gorgany/v2/app/core"
+	error2 "github.com/osbits/gorgany/v2/err"
+	"github.com/osbits/gorgany/v2/i18n"
+	"github.com/osbits/gorgany/v2/model"
+	"github.com/osbits/gorgany/v2/util"
 )
 
 func New() core.IValidator {

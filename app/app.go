@@ -14,13 +14,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/osbits/gorgany"
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/command"
-	"github.com/osbits/gorgany/config"
-	"github.com/osbits/gorgany/log"
-	"github.com/osbits/gorgany/service"
 	"github.com/joho/godotenv"
+	"github.com/osbits/gorgany/v2"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/command"
+	"github.com/osbits/gorgany/v2/config"
+	"github.com/osbits/gorgany/v2/log"
+	"github.com/osbits/gorgany/v2/service"
 	"github.com/spf13/viper"
 )
 

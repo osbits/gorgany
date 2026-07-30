@@ -9,8 +9,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/http/router"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/http/router"
 )
 
 // SpaController serves a built single-page app: real files where they exist, and the

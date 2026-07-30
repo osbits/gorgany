@@ -2,11 +2,11 @@ package http
 
 import (
 	"fmt"
-	"github.com/osbits/gorgany"
-	"github.com/osbits/gorgany/app"
-	"github.com/osbits/gorgany/app/core"
-	error2 "github.com/osbits/gorgany/err"
-	"github.com/osbits/gorgany/service/dto"
+	"github.com/osbits/gorgany/v2"
+	"github.com/osbits/gorgany/v2/app"
+	"github.com/osbits/gorgany/v2/app/core"
+	error2 "github.com/osbits/gorgany/v2/err"
+	"github.com/osbits/gorgany/v2/service/dto"
 	gohttp "net/http"
 	"reflect"
 )

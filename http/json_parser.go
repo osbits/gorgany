@@ -8,12 +8,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/db"
-	error2 "github.com/osbits/gorgany/err"
-	"github.com/osbits/gorgany/log"
-	"github.com/osbits/gorgany/service/cache"
-	"github.com/osbits/gorgany/util"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/db"
+	error2 "github.com/osbits/gorgany/v2/err"
+	"github.com/osbits/gorgany/v2/log"
+	"github.com/osbits/gorgany/v2/service/cache"
+	"github.com/osbits/gorgany/v2/util"
 	"github.com/spf13/viper"
 )
 

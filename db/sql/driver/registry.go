@@ -13,8 +13,8 @@ import (
 	"sort"
 	"sync"
 
-	dsconfig "github.com/osbits/gorgany/db/sql/config"
-	dbCore "github.com/osbits/gorgany/db/sql/core"
+	dsconfig "github.com/osbits/gorgany/v2/db/sql/config"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
 )
 
 // Constructor builds a datasource from a validated typed config.
@@ -99,8 +99,8 @@ func New(cfg dsconfig.DataSource) (dbCore.IDataSource, error) {
 		return nil, fmt.Errorf(
 			"datasource config: unknown driver %q (registered drivers: %v). If the engine you "+
 				"want is missing, import its package for its side effects: "+
-				"_ \"github.com/osbits/gorgany/db/sql/driver/postgres\" or "+
-				"_ \"github.com/osbits/gorgany/db/sql/driver/mysql\"",
+				"_ \"github.com/osbits/gorgany/v2/db/sql/driver/postgres\" or "+
+				"_ \"github.com/osbits/gorgany/v2/db/sql/driver/mysql\"",
 			cfg.Driver, registered)
 	}
 
@@ -124,9 +124,9 @@ func importHint(registered []string) string {
 		return ""
 	}
 	return " Import the engine you use for its side effects — " +
-		"_ \"github.com/osbits/gorgany/db/sql/driver/postgres\" or " +
-		"_ \"github.com/osbits/gorgany/db/sql/driver/mysql\", or " +
-		"_ \"github.com/osbits/gorgany/db/sql/driver/builtin\" for both — " +
+		"_ \"github.com/osbits/gorgany/v2/db/sql/driver/postgres\" or " +
+		"_ \"github.com/osbits/gorgany/v2/db/sql/driver/mysql\", or " +
+		"_ \"github.com/osbits/gorgany/v2/db/sql/driver/builtin\" for both — " +
 		"typically next to your provider package's imports."
 }
 

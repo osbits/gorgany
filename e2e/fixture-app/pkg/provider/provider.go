@@ -5,22 +5,22 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/osbits/gorgany/app/core"
-	grghttp "github.com/osbits/gorgany/http"
+	"github.com/osbits/gorgany/v2/app/core"
+	grghttp "github.com/osbits/gorgany/v2/http"
 
 	// The engine this app uses, imported for its registration side effect. DbProvider no
 	// longer registers any driver itself, so a Postgres-only app links only Postgres —
 	// which is the point of the split, and the reason this is the single-engine package
 	// rather than driver/builtin.
-	_ "github.com/osbits/gorgany/db/sql/driver/postgres"
-	"github.com/osbits/gorgany/http/middleware"
-	"github.com/osbits/gorgany/provider"
-	"github.com/osbits/gorgany/service/dto"
+	_ "github.com/osbits/gorgany/v2/db/sql/driver/postgres"
+	"github.com/osbits/gorgany/v2/http/middleware"
+	"github.com/osbits/gorgany/v2/provider"
+	"github.com/osbits/gorgany/v2/service/dto"
 
-	fixturemigration "github.com/osbits/gorgany/e2e/fixture-app/db/migration"
-	fixtureseeder "github.com/osbits/gorgany/e2e/fixture-app/db/seeder"
-	fixturehttp "github.com/osbits/gorgany/e2e/fixture-app/pkg/http"
-	fixtureservice "github.com/osbits/gorgany/e2e/fixture-app/pkg/service"
+	fixturemigration "github.com/osbits/gorgany/v2/e2e/fixture-app/db/migration"
+	fixtureseeder "github.com/osbits/gorgany/v2/e2e/fixture-app/db/seeder"
+	fixturehttp "github.com/osbits/gorgany/v2/e2e/fixture-app/pkg/http"
+	fixtureservice "github.com/osbits/gorgany/v2/e2e/fixture-app/pkg/service"
 )
 
 func NewBootstrapper() *provider.Bootstrapper {

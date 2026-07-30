@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/v2/app/core"
 )
 
 // TeamManagerFilterProcessor handles complex team-based filtering

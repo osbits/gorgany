@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	goValidator "github.com/go-playground/validator/v10"
-	"github.com/osbits/gorgany/app/core"
-	error2 "github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/v2/app/core"
+	error2 "github.com/osbits/gorgany/v2/err"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

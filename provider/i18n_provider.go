@@ -3,9 +3,9 @@ package provider
 import (
 	"fmt"
 
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/i18n"
-	"github.com/osbits/gorgany/log"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/i18n"
+	"github.com/osbits/gorgany/v2/log"
 	"github.com/spf13/viper"
 )
 

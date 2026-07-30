@@ -3,7 +3,7 @@ package err
 import (
 	"errors"
 	"fmt"
-	"github.com/osbits/gorgany/log"
+	"github.com/osbits/gorgany/v2/log"
 	"runtime"
 	"strings"
 )

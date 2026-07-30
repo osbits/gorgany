@@ -7,12 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/osbits/gorgany/app/core"
-	sqlbuilder "github.com/osbits/gorgany/db/sql/builder"
-	dbCore "github.com/osbits/gorgany/db/sql/core"
-	err2 "github.com/osbits/gorgany/err"
-	"github.com/osbits/gorgany/log"
-	"github.com/osbits/gorgany/service/cache"
+	"github.com/osbits/gorgany/v2/app/core"
+	sqlbuilder "github.com/osbits/gorgany/v2/db/sql/builder"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
+	err2 "github.com/osbits/gorgany/v2/err"
+	"github.com/osbits/gorgany/v2/log"
+	"github.com/osbits/gorgany/v2/service/cache"
 	"gorm.io/gorm/schema"
 )
 

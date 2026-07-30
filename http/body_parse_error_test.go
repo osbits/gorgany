@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	error2 "github.com/osbits/gorgany/err"
+	error2 "github.com/osbits/gorgany/v2/err"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

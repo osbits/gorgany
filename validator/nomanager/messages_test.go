@@ -3,8 +3,8 @@ package nomanager_test
 import (
 	"testing"
 
-	"github.com/osbits/gorgany/i18n"
-	"github.com/osbits/gorgany/validator"
+	"github.com/osbits/gorgany/v2/i18n"
+	"github.com/osbits/gorgany/v2/validator"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

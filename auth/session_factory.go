@@ -3,7 +3,7 @@ package auth
 import (
 	"time"
 
-	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/v2/app/core"
 )
 
 // ISessionFactory defines the interface for creating sessions

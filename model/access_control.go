@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/v2/app/core"
 )
 
 // DBTestUser is used for testing DB RBAC functionality

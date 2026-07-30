@@ -1,6 +1,6 @@
 package model
 
-import "github.com/osbits/gorgany/app/core"
+import "github.com/osbits/gorgany/v2/app/core"
 
 type DomainMeta struct {
 	Loaded   bool

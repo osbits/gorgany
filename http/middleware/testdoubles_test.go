@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 
-	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/v2/app/core"
 )
 
 // The doubles below embed the framework interface they stand in for, so they

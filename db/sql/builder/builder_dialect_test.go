@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/osbits/gorgany/db/sql/builder"
-	dbCore "github.com/osbits/gorgany/db/sql/core"
+	"github.com/osbits/gorgany/v2/db/sql/builder"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

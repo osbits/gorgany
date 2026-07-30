@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/auth"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/auth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

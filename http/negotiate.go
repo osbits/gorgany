@@ -3,7 +3,7 @@ package http
 import (
 	"strings"
 
-	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/v2/app/core"
 )
 
 // WantsJSON decides whether the caller is an API client, and therefore whether an error

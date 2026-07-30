@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/osbits/gorgany/db/sql/config"
+	"github.com/osbits/gorgany/v2/db/sql/config"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

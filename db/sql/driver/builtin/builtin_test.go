@@ -3,9 +3,9 @@ package builtin_test
 import (
 	"testing"
 
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/db/sql/driver"
-	_ "github.com/osbits/gorgany/db/sql/driver/builtin"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/db/sql/driver"
+	_ "github.com/osbits/gorgany/v2/db/sql/driver/builtin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

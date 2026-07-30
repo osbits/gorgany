@@ -1,7 +1,7 @@
 package i18n
 
 import (
-	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/v2/app/core"
 )
 
 var (

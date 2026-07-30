@@ -1,8 +1,8 @@
 package cp
 
 import (
-	"github.com/osbits/gorgany/model"
-	"github.com/osbits/gorgany/util"
+	"github.com/osbits/gorgany/v2/model"
+	"github.com/osbits/gorgany/v2/util"
 	"reflect"
 )
 

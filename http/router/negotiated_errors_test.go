@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/osbits/gorgany/app/core"
-	grghttp "github.com/osbits/gorgany/http"
+	"github.com/osbits/gorgany/v2/app/core"
+	grghttp "github.com/osbits/gorgany/v2/http"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -6,10 +6,10 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/err"
-	"github.com/osbits/gorgany/log"
-	"github.com/osbits/gorgany/util"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/err"
+	"github.com/osbits/gorgany/v2/log"
+	"github.com/osbits/gorgany/v2/util"
 )
 
 type ApiReturnObject struct {

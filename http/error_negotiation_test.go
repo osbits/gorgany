@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/osbits/gorgany/app/core"
-	error2 "github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/v2/app/core"
+	error2 "github.com/osbits/gorgany/v2/err"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

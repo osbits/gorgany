@@ -1,7 +1,7 @@
 package multipart
 
 import (
-	"github.com/osbits/gorgany/model"
+	"github.com/osbits/gorgany/v2/model"
 	"io"
 	"mime/multipart"
 	"reflect"

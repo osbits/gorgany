@@ -2,10 +2,10 @@ package cp
 
 import (
 	"fmt"
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/db"
-	"github.com/osbits/gorgany/service/cache"
-	"github.com/osbits/gorgany/util"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/db"
+	"github.com/osbits/gorgany/v2/service/cache"
+	"github.com/osbits/gorgany/v2/util"
 	"gorm.io/gorm/schema"
 	"reflect"
 	"sort"

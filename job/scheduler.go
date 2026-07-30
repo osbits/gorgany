@@ -7,9 +7,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/err"
-	"github.com/osbits/gorgany/log"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/err"
+	"github.com/osbits/gorgany/v2/log"
 )
 
 // Scheduler runs registered jobs on their schedules.

@@ -2,7 +2,7 @@ package http
 
 import (
 	"context"
-	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/v2/app/core"
 	"net/http"
 )
 

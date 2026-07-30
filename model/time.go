@@ -2,7 +2,7 @@ package model
 
 import (
 	"fmt"
-	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/v2/app/core"
 	"strings"
 	"time"
 )

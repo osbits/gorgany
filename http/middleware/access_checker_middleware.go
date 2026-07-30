@@ -1,9 +1,9 @@
 package middleware
 
 import (
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/log"
-	"github.com/osbits/gorgany/service/dto"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/log"
+	"github.com/osbits/gorgany/v2/service/dto"
 )
 
 type AccessCheckerMiddleware struct {

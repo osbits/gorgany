@@ -1614,8 +1614,8 @@ Every import path gains `/v2`:
 ```go
 // BEFORE
 import (
-    "github.com/osbits/gorgany/app/core"
-    "github.com/osbits/gorgany/http/middleware"
+    "github.com/osbits/gorgany/v2/app/core"
+    "github.com/osbits/gorgany/v2/http/middleware"
 )
 ```
 
@@ -1632,8 +1632,8 @@ import (
 Every app is affected. It is one sweep:
 
 ```bash
-grep -rl '"github.com/osbits/gorgany' --include="*.go" . \
-  | xargs sed -i '' 's|"github.com/osbits/gorgany/|"github.com/osbits/gorgany/v2/|g; s|"github.com/osbits/gorgany"|"github.com/osbits/gorgany/v2"|g'
+grep -rl '"github.com/osbits/gorgany/v2' --include="*.go" . \
+  | xargs sed -i '' 's|"github.com/osbits/gorgany/v2/|"github.com/osbits/gorgany/v2/|g; s|"github.com/osbits/gorgany/v2"|"github.com/osbits/gorgany/v2"|g'
 gofmt -w .
 go mod edit -require=github.com/osbits/gorgany/v2@v2.0.0 -droprequire=github.com/osbits/gorgany
 go mod tidy

@@ -3,7 +3,7 @@ package job
 import (
 	"context"
 
-	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/v2/app/core"
 )
 
 // ClearExpiredSessionsJob is the framework's session garbage collector, registered

@@ -1,8 +1,8 @@
 package provider
 
 import (
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/http"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/http"
 )
 
 type ErrorProvider struct {

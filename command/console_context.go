@@ -1,6 +1,6 @@
 package command
 
-import "github.com/osbits/gorgany/app/core"
+import "github.com/osbits/gorgany/v2/app/core"
 
 type ConsoleContext struct {
 	commands map[string]core.ICommand

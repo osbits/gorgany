@@ -1,8 +1,8 @@
 package orm
 
 import (
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/util"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/util"
 	"reflect"
 	"strings"
 

@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/osbits/gorgany/app/core"
-	err2 "github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/v2/app/core"
+	err2 "github.com/osbits/gorgany/v2/err"
 	"github.com/spf13/viper"
 )
 

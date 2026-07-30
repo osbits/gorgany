@@ -2,8 +2,8 @@ package view
 
 import (
 	"fmt"
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/log"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/log"
 	template2 "html/template"
 	"io"
 	"os"

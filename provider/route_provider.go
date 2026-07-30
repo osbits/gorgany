@@ -3,12 +3,12 @@ package provider
 
 import (
 	"fmt"
-	"github.com/osbits/gorgany/app/core"
-	err2 "github.com/osbits/gorgany/err"
-	"github.com/osbits/gorgany/http"
-	"github.com/osbits/gorgany/http/controller"
-	"github.com/osbits/gorgany/http/middleware"
-	"github.com/osbits/gorgany/http/router"
+	"github.com/osbits/gorgany/v2/app/core"
+	err2 "github.com/osbits/gorgany/v2/err"
+	"github.com/osbits/gorgany/v2/http"
+	"github.com/osbits/gorgany/v2/http/controller"
+	"github.com/osbits/gorgany/v2/http/middleware"
+	"github.com/osbits/gorgany/v2/http/router"
 	gohttp "net/http"
 	"reflect"
 )

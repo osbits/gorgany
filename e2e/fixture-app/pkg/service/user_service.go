@@ -3,11 +3,11 @@ package fixtureservice
 import (
 	"fmt"
 
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/db/orm"
-	dbcore "github.com/osbits/gorgany/db/sql/core"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/db/orm"
+	dbcore "github.com/osbits/gorgany/v2/db/sql/core"
 
-	fixturedomain "github.com/osbits/gorgany/e2e/fixture-app/pkg/domain"
+	fixturedomain "github.com/osbits/gorgany/v2/e2e/fixture-app/pkg/domain"
 )
 
 type UserService struct {

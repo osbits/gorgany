@@ -10,13 +10,13 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/osbits/gorgany/err"
-	"github.com/osbits/gorgany/util"
+	"github.com/osbits/gorgany/v2/err"
+	"github.com/osbits/gorgany/v2/util"
 
 	"github.com/go-chi/chi"
-	"github.com/osbits/gorgany/app/core"
-	grghttp "github.com/osbits/gorgany/http"
-	"github.com/osbits/gorgany/service/dto"
+	"github.com/osbits/gorgany/v2/app/core"
+	grghttp "github.com/osbits/gorgany/v2/http"
+	"github.com/osbits/gorgany/v2/service/dto"
 )
 
 var (

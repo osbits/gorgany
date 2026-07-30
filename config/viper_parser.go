@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/osbits/gorgany/log"
+	"github.com/osbits/gorgany/v2/log"
 	"github.com/spf13/viper"
 )
 

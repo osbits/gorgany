@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	dbCore "github.com/osbits/gorgany/db/sql/core"
-	v2 "github.com/osbits/gorgany/db/sql/gorm/postgres/v2"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
+	v2 "github.com/osbits/gorgany/v2/db/sql/gorm/postgres/v2"
 	"github.com/stretchr/testify/require"
 )
 

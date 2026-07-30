@@ -3,10 +3,10 @@ package view
 import (
 	"context"
 	"github.com/go-chi/chi"
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/i18n"
-	"github.com/osbits/gorgany/service"
-	"github.com/osbits/gorgany/util"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/i18n"
+	"github.com/osbits/gorgany/v2/service"
+	"github.com/osbits/gorgany/v2/util"
 	"html/template"
 	"io"
 )

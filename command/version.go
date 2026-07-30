@@ -3,7 +3,7 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/osbits/gorgany"
+	"github.com/osbits/gorgany/v2"
 )
 
 type VersionCommand struct {

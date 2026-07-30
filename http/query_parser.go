@@ -6,11 +6,11 @@ import (
 	"reflect"
 
 	"github.com/gorilla/schema"
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/db"
-	error2 "github.com/osbits/gorgany/err"
-	"github.com/osbits/gorgany/service/cache"
-	"github.com/osbits/gorgany/util"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/db"
+	error2 "github.com/osbits/gorgany/v2/err"
+	"github.com/osbits/gorgany/v2/service/cache"
+	"github.com/osbits/gorgany/v2/util"
 )
 
 type QueryParser struct {

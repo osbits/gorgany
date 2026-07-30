@@ -1,7 +1,7 @@
 package util
 
 import (
-	err2 "github.com/osbits/gorgany/err"
+	err2 "github.com/osbits/gorgany/v2/err"
 	"reflect"
 	"strconv"
 	"strings"

@@ -1,6 +1,6 @@
 package provider
 
-import "github.com/osbits/gorgany/app/core"
+import "github.com/osbits/gorgany/v2/app/core"
 
 // Compile-time proof that every provider this package ships actually satisfies
 // core.IProvider.

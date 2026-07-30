@@ -1,10 +1,10 @@
 package provider
 
 import (
-	"github.com/osbits/gorgany/app/core"
-	grgerr "github.com/osbits/gorgany/err"
-	"github.com/osbits/gorgany/log"
-	"github.com/osbits/gorgany/view"
+	"github.com/osbits/gorgany/v2/app/core"
+	grgerr "github.com/osbits/gorgany/v2/err"
+	"github.com/osbits/gorgany/v2/log"
+	"github.com/osbits/gorgany/v2/view"
 )
 
 type ViewProvider struct {

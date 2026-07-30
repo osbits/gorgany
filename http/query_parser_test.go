@@ -9,9 +9,9 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/decoder"
-	error2 "github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/decoder"
+	error2 "github.com/osbits/gorgany/v2/err"
 )
 
 // QueryTestStruct represents a simple struct for testing basic query parsing

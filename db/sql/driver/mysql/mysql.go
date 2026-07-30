@@ -2,7 +2,7 @@
 //
 // Import it for its side effects:
 //
-//	import _ "github.com/osbits/gorgany/db/sql/driver/mysql"
+//	import _ "github.com/osbits/gorgany/v2/db/sql/driver/mysql"
 //
 // See the sibling postgres package for why the engines are registered separately.
 //
@@ -10,10 +10,10 @@
 package mysql
 
 import (
-	dsconfig "github.com/osbits/gorgany/db/sql/config"
-	dbCore "github.com/osbits/gorgany/db/sql/core"
-	"github.com/osbits/gorgany/db/sql/driver"
-	mysql "github.com/osbits/gorgany/db/sql/gorm/mysql/v2"
+	dsconfig "github.com/osbits/gorgany/v2/db/sql/config"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
+	"github.com/osbits/gorgany/v2/db/sql/driver"
+	mysql "github.com/osbits/gorgany/v2/db/sql/gorm/mysql/v2"
 )
 
 // Name is the driver name as written under `databases.<name>.driver`.

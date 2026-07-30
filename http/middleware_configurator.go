@@ -1,6 +1,6 @@
 package http
 
-import "github.com/osbits/gorgany/app/core"
+import "github.com/osbits/gorgany/v2/app/core"
 
 func NewMiddlewareConfigBuilder() core.IMiddlewareConfigBuilder {
 	return &MiddlewareConfigBuilder{

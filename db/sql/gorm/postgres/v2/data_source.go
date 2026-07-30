@@ -5,8 +5,8 @@ import (
 	"strconv"
 	"strings"
 
-	dsconfig "github.com/osbits/gorgany/db/sql/config"
-	"github.com/osbits/gorgany/db/sql/core"
+	dsconfig "github.com/osbits/gorgany/v2/db/sql/config"
+	"github.com/osbits/gorgany/v2/db/sql/core"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"

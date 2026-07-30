@@ -6,8 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	dsconfig "github.com/osbits/gorgany/db/sql/config"
-	dbCore "github.com/osbits/gorgany/db/sql/core"
+	dsconfig "github.com/osbits/gorgany/v2/db/sql/config"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"

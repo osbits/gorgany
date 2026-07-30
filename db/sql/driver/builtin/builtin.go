@@ -2,7 +2,7 @@
 //
 // It is the convenience import — both engines, one line:
 //
-//	import _ "github.com/osbits/gorgany/db/sql/driver/builtin"
+//	import _ "github.com/osbits/gorgany/v2/db/sql/driver/builtin"
 //
 // It no longer registers them itself; it imports driver/postgres and driver/mysql, each of
 // which registers one. The split exists because provider.DbProvider used to import this
@@ -16,8 +16,8 @@ package builtin
 
 import (
 	// Imported for their registration side effects.
-	_ "github.com/osbits/gorgany/db/sql/driver/mysql"
-	_ "github.com/osbits/gorgany/db/sql/driver/postgres"
+	_ "github.com/osbits/gorgany/v2/db/sql/driver/mysql"
+	_ "github.com/osbits/gorgany/v2/db/sql/driver/postgres"
 )
 
 // Driver names as written under `databases.<name>.driver` in the app config.

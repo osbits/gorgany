@@ -5,7 +5,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/osbits/gorgany/util"
+	"github.com/osbits/gorgany/v2/util"
 	"gorm.io/gorm/schema"
 )
 

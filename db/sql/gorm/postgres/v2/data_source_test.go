@@ -3,7 +3,7 @@ package v2
 import (
 	"testing"
 
-	dsconfig "github.com/osbits/gorgany/db/sql/config"
+	dsconfig "github.com/osbits/gorgany/v2/db/sql/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"reflect"
 
-	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/v2/app/core"
 )
 
 // FieldFilteredDto wraps a DTO and provides field filtering based on access control

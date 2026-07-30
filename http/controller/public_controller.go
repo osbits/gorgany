@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/http/router"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/http/router"
 )
 
 func NewPublicController() *PublicController {

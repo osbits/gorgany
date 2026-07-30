@@ -1,8 +1,8 @@
 package v2
 
 import (
-	"github.com/osbits/gorgany/db/sql/builder"
-	"github.com/osbits/gorgany/db/sql/core"
+	"github.com/osbits/gorgany/v2/db/sql/builder"
+	"github.com/osbits/gorgany/v2/db/sql/core"
 )
 
 // transactionImpl implements the IDBTransaction interface

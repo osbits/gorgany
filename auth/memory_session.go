@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/v2/app/core"
 )
 
 func NewSession(id string, expiry time.Time) *Session {

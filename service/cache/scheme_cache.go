@@ -1,7 +1,7 @@
 package cache
 
 import (
-	err2 "github.com/osbits/gorgany/err"
+	err2 "github.com/osbits/gorgany/v2/err"
 	"gorm.io/gorm/schema"
 	"sync"
 )

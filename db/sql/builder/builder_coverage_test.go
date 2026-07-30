@@ -11,10 +11,10 @@ package builder_test
 import (
 	"testing"
 
-	"github.com/osbits/gorgany/db/sql/builder"
-	dbCore "github.com/osbits/gorgany/db/sql/core"
-	mysql "github.com/osbits/gorgany/db/sql/gorm/mysql/v2"
-	postgres "github.com/osbits/gorgany/db/sql/gorm/postgres/v2"
+	"github.com/osbits/gorgany/v2/db/sql/builder"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
+	mysql "github.com/osbits/gorgany/v2/db/sql/gorm/mysql/v2"
+	postgres "github.com/osbits/gorgany/v2/db/sql/gorm/postgres/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

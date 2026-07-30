@@ -1,8 +1,8 @@
 package db
 
 import (
-	"github.com/osbits/gorgany/app/core"
-	dbCore "github.com/osbits/gorgany/db/sql/core"
+	"github.com/osbits/gorgany/v2/app/core"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
 )
 
 var (

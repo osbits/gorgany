@@ -7,14 +7,14 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/http/middleware"
-	"github.com/osbits/gorgany/http/router"
-	"github.com/osbits/gorgany/service/dto"
-	"github.com/osbits/gorgany/util"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/http/middleware"
+	"github.com/osbits/gorgany/v2/http/router"
+	"github.com/osbits/gorgany/v2/service/dto"
+	"github.com/osbits/gorgany/v2/util"
 	"github.com/spf13/viper"
 
-	fixtureservice "github.com/osbits/gorgany/e2e/fixture-app/pkg/service"
+	fixtureservice "github.com/osbits/gorgany/v2/e2e/fixture-app/pkg/service"
 )
 
 func NewWebController() *WebController {

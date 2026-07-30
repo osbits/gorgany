@@ -3,8 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/util"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/util"
 	"math"
 	"net/url"
 	"strconv"

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/db"
-	"github.com/osbits/gorgany/log"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/db"
+	"github.com/osbits/gorgany/v2/log"
 )
 
 type SeedCommand struct {

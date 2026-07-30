@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/osbits/gorgany/app/core"
-	error2 "github.com/osbits/gorgany/err"
-	grghttp "github.com/osbits/gorgany/http"
+	"github.com/osbits/gorgany/v2/app/core"
+	error2 "github.com/osbits/gorgany/v2/err"
+	grghttp "github.com/osbits/gorgany/v2/http"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

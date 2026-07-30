@@ -3,7 +3,7 @@ package v2
 import (
 	"testing"
 
-	dbCore "github.com/osbits/gorgany/db/sql/core"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

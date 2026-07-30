@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/v2/app/core"
 	"gorm.io/gorm"
 )
 

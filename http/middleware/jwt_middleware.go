@@ -3,10 +3,10 @@ package middleware
 import (
 	"strings"
 
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/auth"
-	error2 "github.com/osbits/gorgany/err"
-	"github.com/osbits/gorgany/service/dto"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/auth"
+	error2 "github.com/osbits/gorgany/v2/err"
+	"github.com/osbits/gorgany/v2/service/dto"
 	"github.com/spf13/viper"
 )
 

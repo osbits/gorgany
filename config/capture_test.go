@@ -6,8 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/log"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/log"
 )
 
 // The resolver's warnings are part of its contract — they are the only place an unresolved

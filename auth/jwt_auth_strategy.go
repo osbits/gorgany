@@ -2,11 +2,11 @@ package auth
 
 import (
 	"context"
-	"github.com/osbits/gorgany/util"
+	"github.com/osbits/gorgany/v2/util"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/osbits/gorgany/app/core"
-	err2 "github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/v2/app/core"
+	err2 "github.com/osbits/gorgany/v2/err"
 	"github.com/spf13/viper"
 )
 

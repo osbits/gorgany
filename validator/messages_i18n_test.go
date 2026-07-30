@@ -11,9 +11,9 @@ package validator
 import (
 	"testing"
 
-	"github.com/osbits/gorgany/app/core"
-	error2 "github.com/osbits/gorgany/err"
-	"github.com/osbits/gorgany/i18n"
+	"github.com/osbits/gorgany/v2/app/core"
+	error2 "github.com/osbits/gorgany/v2/err"
+	"github.com/osbits/gorgany/v2/i18n"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

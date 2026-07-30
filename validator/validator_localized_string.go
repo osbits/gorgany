@@ -3,7 +3,7 @@ package validator
 import (
 	"encoding/json"
 	goValidator "github.com/go-playground/validator/v10"
-	"github.com/osbits/gorgany/model"
+	"github.com/osbits/gorgany/v2/model"
 	"reflect"
 )
 

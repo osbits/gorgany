@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/v2/app/core"
 )
 
 // Test entities for validation

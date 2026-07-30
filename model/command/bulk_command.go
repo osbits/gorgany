@@ -1,6 +1,6 @@
 package command
 
-import "github.com/osbits/gorgany/app/core"
+import "github.com/osbits/gorgany/v2/app/core"
 
 type BulkCommand struct {
 	Requests []SpecificRequestCommand `json:"requests" validate:"required,dive,min=1,max=10"`

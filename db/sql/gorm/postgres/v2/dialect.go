@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	dbCore "github.com/osbits/gorgany/db/sql/core"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
 )
 
 // DialectName is the registry key and error-message name for this dialect.

@@ -3,10 +3,10 @@ package middleware
 import (
 	"net/http"
 
-	"github.com/osbits/gorgany/app/core"
-	grghttp "github.com/osbits/gorgany/http"
-	"github.com/osbits/gorgany/log"
-	"github.com/osbits/gorgany/service/dto"
+	"github.com/osbits/gorgany/v2/app/core"
+	grghttp "github.com/osbits/gorgany/v2/http"
+	"github.com/osbits/gorgany/v2/log"
+	"github.com/osbits/gorgany/v2/service/dto"
 	"github.com/spf13/viper"
 )
 

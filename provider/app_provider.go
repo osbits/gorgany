@@ -3,12 +3,12 @@ package provider
 import (
 	"time"
 
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/auth"
-	"github.com/osbits/gorgany/err"
-	"github.com/osbits/gorgany/model"
-	"github.com/osbits/gorgany/service"
-	"github.com/osbits/gorgany/validator"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/auth"
+	"github.com/osbits/gorgany/v2/err"
+	"github.com/osbits/gorgany/v2/model"
+	"github.com/osbits/gorgany/v2/service"
+	"github.com/osbits/gorgany/v2/validator"
 	"github.com/spf13/viper"
 )
 

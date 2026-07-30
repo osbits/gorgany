@@ -3,7 +3,7 @@
 //
 // Import it for its side effects:
 //
-//	import _ "github.com/osbits/gorgany/db/sql/driver/postgres"
+//	import _ "github.com/osbits/gorgany/v2/db/sql/driver/postgres"
 //
 // It exists so a Postgres-only app does not link the MySQL driver. driver/builtin
 // registers both, and provider.DbProvider used to import builtin unconditionally — so
@@ -16,10 +16,10 @@
 package postgres
 
 import (
-	dsconfig "github.com/osbits/gorgany/db/sql/config"
-	dbCore "github.com/osbits/gorgany/db/sql/core"
-	"github.com/osbits/gorgany/db/sql/driver"
-	postgres "github.com/osbits/gorgany/db/sql/gorm/postgres/v2"
+	dsconfig "github.com/osbits/gorgany/v2/db/sql/config"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
+	"github.com/osbits/gorgany/v2/db/sql/driver"
+	postgres "github.com/osbits/gorgany/v2/db/sql/gorm/postgres/v2"
 )
 
 // Name is the driver name as written under `databases.<name>.driver`.

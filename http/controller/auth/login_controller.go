@@ -2,10 +2,10 @@ package auth
 
 import (
 	"fmt"
-	"github.com/osbits/gorgany/app/core"
-	err2 "github.com/osbits/gorgany/err"
-	"github.com/osbits/gorgany/http/router"
-	"github.com/osbits/gorgany/util"
+	"github.com/osbits/gorgany/v2/app/core"
+	err2 "github.com/osbits/gorgany/v2/err"
+	"github.com/osbits/gorgany/v2/http/router"
+	"github.com/osbits/gorgany/v2/util"
 	"net/http"
 	"net/url"
 )

@@ -17,15 +17,15 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
-	err2 "github.com/osbits/gorgany/err"
-	"github.com/osbits/gorgany/util"
+	err2 "github.com/osbits/gorgany/v2/err"
+	"github.com/osbits/gorgany/v2/util"
 
 	"github.com/go-chi/chi"
 	"github.com/spf13/viper"
 
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/decoder"
-	"github.com/osbits/gorgany/model"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/decoder"
+	"github.com/osbits/gorgany/v2/model"
 )
 
 type ResponseWriterWrapper struct {

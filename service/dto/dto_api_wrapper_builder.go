@@ -1,9 +1,9 @@
 package dto
 
 import (
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/model"
-	"github.com/osbits/gorgany/util"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/model"
+	"github.com/osbits/gorgany/v2/util"
 	"reflect"
 )
 

@@ -5,11 +5,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/osbits/gorgany/auth"
+	"github.com/osbits/gorgany/v2/auth"
 
-	"github.com/osbits/gorgany/app/core"
-	err2 "github.com/osbits/gorgany/err"
-	"github.com/osbits/gorgany/model"
+	"github.com/osbits/gorgany/v2/app/core"
+	err2 "github.com/osbits/gorgany/v2/err"
+	"github.com/osbits/gorgany/v2/model"
 )
 
 // SessionKey is the context key for storing the session

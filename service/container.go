@@ -9,8 +9,8 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/log"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/log"
 	"github.com/spf13/viper"
 )
 
@@ -211,7 +211,7 @@ func containerWarnf(format string, args ...any) {
 
 // coreAbstractionPkg is the import path whose interfaces are the framework's
 // extension points.
-const coreAbstractionPkg = "github.com/osbits/gorgany/app/core"
+const coreAbstractionPkg = "github.com/osbits/gorgany/v2/app/core"
 
 // isCoreAbstraction reports whether t is one of the framework's core interfaces.
 //

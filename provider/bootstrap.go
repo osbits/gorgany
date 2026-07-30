@@ -1,7 +1,7 @@
 package provider
 
 import (
-	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/v2/app/core"
 )
 
 type Bootstrapper struct {

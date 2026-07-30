@@ -1,6 +1,6 @@
 package fixturehttp
 
-import "github.com/osbits/gorgany/app/core"
+import "github.com/osbits/gorgany/v2/app/core"
 
 type SessionLoginRequest struct {
 	Username string `scheme:"username" validate:"required"`

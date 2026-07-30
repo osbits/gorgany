@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/osbits/gorgany/db/sql/driver"
-	_ "github.com/osbits/gorgany/db/sql/driver/builtin"
+	"github.com/osbits/gorgany/v2/db/sql/driver"
+	_ "github.com/osbits/gorgany/v2/db/sql/driver/builtin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -53,13 +53,13 @@ func TestASingleEngineImportDoesNotLinkTheOther(t *testing.T) {
 		return string(out)
 	}
 
-	postgresOnly := deps("github.com/osbits/gorgany/db/sql/driver/postgres")
+	postgresOnly := deps("github.com/osbits/gorgany/v2/db/sql/driver/postgres")
 	assert.Contains(t, postgresOnly, "gorm.io/driver/postgres")
 	assert.NotContains(t, postgresOnly, "gorm.io/driver/mysql",
 		"importing driver/postgres must not link the MySQL driver")
 	assert.NotContains(t, postgresOnly, "github.com/go-sql-driver/mysql")
 
-	mysqlOnly := deps("github.com/osbits/gorgany/db/sql/driver/mysql")
+	mysqlOnly := deps("github.com/osbits/gorgany/v2/db/sql/driver/mysql")
 	assert.Contains(t, mysqlOnly, "gorm.io/driver/mysql")
 	assert.NotContains(t, mysqlOnly, "gorm.io/driver/postgres",
 		"and the reverse holds too")
@@ -69,7 +69,7 @@ func TestASingleEngineImportDoesNotLinkTheOther(t *testing.T) {
 // engine-agnostic, or the split achieves nothing for an app that uses the standard
 // bootstrap.
 func TestDbProviderLinksNeitherEngine(t *testing.T) {
-	out, err := exec.Command("go", "list", "-deps", "github.com/osbits/gorgany/provider").CombinedOutput()
+	out, err := exec.Command("go", "list", "-deps", "github.com/osbits/gorgany/v2/provider").CombinedOutput()
 	if err != nil {
 		t.Skipf("go list unavailable: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestDbProviderLinksNeitherEngine(t *testing.T) {
 // single-engine packages expose their own.
 func TestTheDriverNameConstantsAgree(t *testing.T) {
 	out, err := exec.Command("go", "list", "-f", "{{.Name}}",
-		"github.com/osbits/gorgany/db/sql/driver/postgres").CombinedOutput()
+		"github.com/osbits/gorgany/v2/db/sql/driver/postgres").CombinedOutput()
 	if err != nil {
 		t.Skipf("go list unavailable: %v", err)
 	}

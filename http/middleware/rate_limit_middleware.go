@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/osbits/gorgany/app/core"
-	grghttp "github.com/osbits/gorgany/http"
-	"github.com/osbits/gorgany/service/dto"
+	"github.com/osbits/gorgany/v2/app/core"
+	grghttp "github.com/osbits/gorgany/v2/http"
+	"github.com/osbits/gorgany/v2/service/dto"
 )
 
 // RateLimitStore is the seam a distributed backend plugs into.

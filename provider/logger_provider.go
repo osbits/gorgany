@@ -1,8 +1,8 @@
 package provider
 
 import (
-	"github.com/osbits/gorgany/app/core"
-	logpkg "github.com/osbits/gorgany/log"
+	"github.com/osbits/gorgany/v2/app/core"
+	logpkg "github.com/osbits/gorgany/v2/log"
 )
 
 type LoggerProvider struct{}

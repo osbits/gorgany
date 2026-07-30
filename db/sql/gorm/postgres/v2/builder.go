@@ -1,8 +1,8 @@
 package v2
 
 import (
-	"github.com/osbits/gorgany/db/sql/builder"
-	dbCore "github.com/osbits/gorgany/db/sql/core"
+	"github.com/osbits/gorgany/v2/db/sql/builder"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
 )
 
 // The query builder used to live in this package with &PostgresDialect{} welded

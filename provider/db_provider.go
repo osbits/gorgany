@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"sort"
 
-	dbCmd "github.com/osbits/gorgany/command/db"
-	"github.com/osbits/gorgany/db/migration"
-	dsconfig "github.com/osbits/gorgany/db/sql/config"
-	dbCore "github.com/osbits/gorgany/db/sql/core"
-	"github.com/osbits/gorgany/db/sql/driver"
-	"github.com/osbits/gorgany/log"
+	dbCmd "github.com/osbits/gorgany/v2/command/db"
+	"github.com/osbits/gorgany/v2/db/migration"
+	dsconfig "github.com/osbits/gorgany/v2/db/sql/config"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
+	"github.com/osbits/gorgany/v2/db/sql/driver"
+	"github.com/osbits/gorgany/v2/log"
 
 	// No driver package is imported here on purpose (F7). This provider used to
 	// blank-import db/sql/driver/builtin, which registers both engines — so every app
@@ -19,17 +19,17 @@ import (
 	//
 	// The app now chooses, with one blank import next to its own provider:
 	//
-	//	_ "github.com/osbits/gorgany/db/sql/driver/postgres"
-	//	_ "github.com/osbits/gorgany/db/sql/driver/mysql"
-	//	_ "github.com/osbits/gorgany/db/sql/driver/builtin"  // both
+	//	_ "github.com/osbits/gorgany/v2/db/sql/driver/postgres"
+	//	_ "github.com/osbits/gorgany/v2/db/sql/driver/mysql"
+	//	_ "github.com/osbits/gorgany/v2/db/sql/driver/builtin"  // both
 	//
 	// This is compile-clean and shows up only at boot, so driver.New has a dedicated
 	// message for an empty registry that names those import lines.
 
 	"github.com/spf13/viper"
 
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/db"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/db"
 )
 
 type DbProvider struct {

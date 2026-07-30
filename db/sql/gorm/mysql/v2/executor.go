@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/osbits/gorgany/db/sql/core"
+	"github.com/osbits/gorgany/v2/db/sql/core"
 
 	"gorm.io/gorm"
 )

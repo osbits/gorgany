@@ -2,8 +2,8 @@ package auth
 
 import (
 	"fmt"
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/db/orm"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/db/orm"
 )
 
 type ISessionRepository interface {

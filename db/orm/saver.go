@@ -7,8 +7,8 @@ import (
 	"reflect"
 	"sync"
 
-	dbCore "github.com/osbits/gorgany/db/sql/core"
-	"github.com/osbits/gorgany/log"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
+	"github.com/osbits/gorgany/v2/log"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 )

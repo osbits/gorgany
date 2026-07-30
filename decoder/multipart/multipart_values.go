@@ -1,11 +1,11 @@
 package multipart
 
 import (
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/decoder"
-	"github.com/osbits/gorgany/model"
-	"github.com/osbits/gorgany/util"
 	"github.com/gorilla/schema"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/decoder"
+	"github.com/osbits/gorgany/v2/model"
+	"github.com/osbits/gorgany/v2/util"
 	"reflect"
 	"strings"
 	"time"

@@ -9,9 +9,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/osbits/gorgany/app/core"
-	error2 "github.com/osbits/gorgany/err"
-	grglog "github.com/osbits/gorgany/log"
+	"github.com/osbits/gorgany/v2/app/core"
+	error2 "github.com/osbits/gorgany/v2/err"
+	grglog "github.com/osbits/gorgany/v2/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

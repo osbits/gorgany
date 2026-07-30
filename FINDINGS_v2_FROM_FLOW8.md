@@ -25,7 +25,7 @@ installs, which calls `c.Resolve` / `c.NamedResolve` → `Container.resolve` →
 `c.mu.RLock()` on the same mutex. `sync.RWMutex` is not reentrant, so this is an
 unconditional self-deadlock.
 
-**Trigger:** any rebinding of a `github.com/osbits/gorgany/app/core` interface that
+**Trigger:** any rebinding of a `github.com/osbits/gorgany/v2/app/core` interface that
 happens *after* `LoggerProvider.Register` has installed the container-backed factory.
 
 **Repro — framework only, no app involved:**

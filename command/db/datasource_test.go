@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/osbits/gorgany/app/core"
-	dbCore "github.com/osbits/gorgany/db/sql/core"
+	"github.com/osbits/gorgany/v2/app/core"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"

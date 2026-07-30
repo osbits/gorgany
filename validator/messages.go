@@ -5,7 +5,7 @@ import (
 	"strings"
 
 	goValidator "github.com/go-playground/validator/v10"
-	"github.com/osbits/gorgany/i18n"
+	"github.com/osbits/gorgany/v2/i18n"
 )
 
 // MessageCodePrefix is prepended to a rule name to form the i18n code a message is

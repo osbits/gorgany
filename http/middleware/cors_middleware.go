@@ -3,7 +3,7 @@ package middleware
 import (
 	"errors"
 
-	"github.com/osbits/gorgany/app/core"
+	"github.com/osbits/gorgany/v2/app/core"
 	"github.com/spf13/viper"
 	"log"
 	"net/http"

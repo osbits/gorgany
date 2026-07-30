@@ -3,8 +3,8 @@ package driver
 import (
 	"testing"
 
-	dsconfig "github.com/osbits/gorgany/db/sql/config"
-	dbCore "github.com/osbits/gorgany/db/sql/core"
+	dsconfig "github.com/osbits/gorgany/v2/db/sql/config"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

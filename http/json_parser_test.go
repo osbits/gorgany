@@ -11,8 +11,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/osbits/gorgany/app/core"
-	error2 "github.com/osbits/gorgany/err"
+	"github.com/osbits/gorgany/v2/app/core"
+	error2 "github.com/osbits/gorgany/v2/err"
 )
 
 // JSONTestStruct represents a simple struct for testing basic JSON parsing

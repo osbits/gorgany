@@ -2,9 +2,9 @@ package command
 
 import (
 	"flag"
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/log"
 	goValidator "github.com/go-playground/validator/v10"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/log"
 	"os"
 	"reflect"
 	"regexp"

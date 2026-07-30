@@ -1,10 +1,10 @@
 package controller
 
 import (
-	"github.com/osbits/gorgany/app/core"
-	"github.com/osbits/gorgany/auth"
-	"github.com/osbits/gorgany/http/router"
-	"github.com/osbits/gorgany/service/dto"
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/auth"
+	"github.com/osbits/gorgany/v2/http/router"
+	"github.com/osbits/gorgany/v2/service/dto"
 )
 
 // CsrfController hands a CSRF token to a client that asks for one.

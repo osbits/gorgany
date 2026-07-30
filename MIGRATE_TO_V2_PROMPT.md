@@ -666,8 +666,8 @@ diff before.json after.json
 # "version v2.0.0 invalid: should be v0 or v1, not v2".
 #
 # Rewrite every import first, then swap the requirement.
-grep -rl '"github.com/osbits/gorgany' --include="*.go" . \
-  | xargs sed -i '' 's|"github.com/osbits/gorgany/|"github.com/osbits/gorgany/v2/|g; s|"github.com/osbits/gorgany"|"github.com/osbits/gorgany/v2"|g'
+grep -rl '"github.com/osbits/gorgany/v2' --include="*.go" . \
+  | xargs sed -i '' 's|"github.com/osbits/gorgany/v2/|"github.com/osbits/gorgany/v2/|g; s|"github.com/osbits/gorgany/v2"|"github.com/osbits/gorgany/v2"|g'
 gofmt -w .
 
 go mod edit -droprequire=github.com/osbits/gorgany
@@ -735,7 +735,7 @@ dbProvider.AddConnectionE("reports", func() (dbCore.IDataSource, error) {
 })
 ```
 
-with `dsconfig "github.com/osbits/gorgany/db/sql/config"`.
+with `dsconfig "github.com/osbits/gorgany/v2/db/sql/config"`.
 
 `log` and `prefer_simple_protocol` are now optional. An **unknown** key is now
 reported, so a typo that used to be ignored will fail at boot — read the message,

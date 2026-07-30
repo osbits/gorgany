@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/osbits/gorgany/app/core"
-	dsconfig "github.com/osbits/gorgany/db/sql/config"
-	dbCore "github.com/osbits/gorgany/db/sql/core"
-	"github.com/osbits/gorgany/db/sql/driver"
-	_ "github.com/osbits/gorgany/db/sql/driver/builtin" // register the framework's drivers
+	"github.com/osbits/gorgany/v2/app/core"
+	dsconfig "github.com/osbits/gorgany/v2/db/sql/config"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
+	"github.com/osbits/gorgany/v2/db/sql/driver"
+	_ "github.com/osbits/gorgany/v2/db/sql/driver/builtin" // register the framework's drivers
 	"gorm.io/gorm"
 )
 

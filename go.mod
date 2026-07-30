@@ -1,4 +1,4 @@
-module github.com/osbits/gorgany
+module github.com/osbits/gorgany/v2
 
 go 1.24.0
 

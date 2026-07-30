@@ -74,7 +74,7 @@ import (
     "fmt"
     "strings"
 
-    dbCore "github.com/osbits/gorgany/db/sql/core"
+    dbCore "github.com/osbits/gorgany/v2/db/sql/core"
 )
 
 const DialectName = "sqlite"
@@ -206,9 +206,9 @@ Return `("", nil, nil)` when a clause has nothing to render, and let
 package mydrivers
 
 import (
-    dsconfig "github.com/osbits/gorgany/db/sql/config"
-    dbCore "github.com/osbits/gorgany/db/sql/core"
-    "github.com/osbits/gorgany/db/sql/driver"
+    dsconfig "github.com/osbits/gorgany/v2/db/sql/config"
+    dbCore "github.com/osbits/gorgany/v2/db/sql/core"
+    "github.com/osbits/gorgany/v2/db/sql/driver"
 )
 
 func init() {
