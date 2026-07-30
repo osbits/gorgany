@@ -106,9 +106,20 @@ func TestNoHardCodedPostgresBuilderOutsideDialectPackages(t *testing.T) {
 		strings.Join(offenders, "\n  "))
 }
 
+// shouldSkipDir reports whether a directory is outside the module's own source.
+//
+// Every hidden directory is skipped, not just .git. A git *worktree* under .claude/
+// holds a full checkout at some other commit, so walking into one had this test
+// reporting pre-fix code in a sibling checkout as an offence in this one — a failure
+// with nothing to do with the tree under test. The same applies to any tool cache or
+// vendored copy that happens to live under a dot-directory.
 func shouldSkipDir(name string) bool {
+	if strings.HasPrefix(name, ".") && name != "." {
+		return true
+	}
+
 	switch name {
-	case ".git", "vendor", "node_modules", "resource":
+	case "vendor", "node_modules", "resource":
 		return true
 	}
 	return false
