@@ -209,3 +209,118 @@ func (r *failingSessionRepository) DeleteExpired() error {
 }
 
 var _ core.ISessionStorage = (*MemorySession)(nil)
+
+// ------------------------ the backend H4 forgot
+
+// H4 registered the scheduled sweep for `auth.session.storage: database` only, reasoning that
+// memory sessions "are collected when the process exits, so the sweep would be busywork". That
+// is not a bound for a server that runs for weeks, and it left
+// MemorySession.ClearExpiredSessions with no caller anywhere — the same hole H4 set out to
+// close, for the other backend, and for the *default* one: AppProvider treats anything that is
+// not "database" as memory.
+//
+// SessionMiddleware creates a session for every non-OPTIONS request that arrives without one,
+// so on a public app the map grows per crawler hit, per scanner probe, per health check. Those
+// clients never come back, so the read-through eviction in SessionMiddleware never reaches
+// their sessions and only a sweep can.
+//
+// These tests pin the property rather than the mechanism: expired sessions must go away
+// without anything external being wired.
+
+func TestTheMemoryStoreBoundsItselfWithNoSchedulerWired(t *testing.T) {
+	// The interval is a performance guard, not the mechanism: it decides how often the pass
+	// runs, not whether anything runs it. Collapsing it here makes the bound observable
+	// without a test that waits a minute; in production the same eviction happens once per
+	// MemorySweepInterval.
+	previous := MemorySweepInterval
+	MemorySweepInterval = 0
+	t.Cleanup(func() { MemorySweepInterval = previous })
+
+	storage := NewMemorySession(time.Hour)
+
+	// A crowd of clients that never come back, all already past expiry. Before this fix the
+	// map kept every one of them for the life of the process.
+	for i := 0; i < 500; i++ {
+		storage.AddSession(NewSession(fmt.Sprintf("abandoned-%d", i), time.Now().Add(-time.Hour)))
+	}
+
+	storage.AddSession(NewSession("live", time.Now().Add(time.Hour)))
+
+	assert.Equal(t, 1, storage.Len(),
+		"500 abandoned sessions must not accumulate, with no job and no command involved")
+	assert.NotNil(t, storage.GetSessionById("live"))
+}
+
+// TestTheSweepIsRateLimitedNotPerAdd. The pass is O(n) under the store's lock, so running it on
+// every session creation would put a scan of the whole map on a request path.
+func TestTheSweepIsRateLimitedNotPerAdd(t *testing.T) {
+	previous := MemorySweepInterval
+	MemorySweepInterval = time.Hour
+	t.Cleanup(func() { MemorySweepInterval = previous })
+
+	storage := NewMemorySession(time.Hour)
+
+	// The first add sweeps — lastSweep is the zero time — so this one is absorbed.
+	storage.AddSession(NewSession("warm", time.Now().Add(time.Hour)))
+
+	storage.AddSession(NewSession("stale", time.Now().Add(-time.Hour)))
+	storage.AddSession(NewSession("also-stale", time.Now().Add(-time.Hour)))
+
+	assert.Equal(t, 3, storage.Len(),
+		"within the interval the expired entries stay; the next sweep collects them")
+
+	MemorySweepInterval = 0
+	storage.AddSession(NewSession("trigger", time.Now().Add(time.Hour)))
+
+	assert.Equal(t, 2, storage.Len(), "warm and trigger")
+}
+
+// TestAnExplicitSweepIgnoresTheInterval, so the scheduled job and `session:gc` are never
+// silently skipped by a recent automatic pass.
+func TestAnExplicitSweepIgnoresTheInterval(t *testing.T) {
+	previous := MemorySweepInterval
+	MemorySweepInterval = time.Hour
+	t.Cleanup(func() { MemorySweepInterval = previous })
+
+	storage := NewMemorySession(time.Hour)
+	storage.AddSession(NewSession("warm", time.Now().Add(time.Hour)))
+	storage.AddSession(NewSession("stale", time.Now().Add(-time.Hour)))
+	require.Equal(t, 2, storage.Len())
+
+	storage.ClearExpiredSessions()
+
+	assert.Equal(t, 1, storage.Len())
+}
+
+// TestTheAutomaticSweepIsRaceFree. It runs inside AddSession's critical section, which is the
+// same lock every other method takes — so it must not have reintroduced the unguarded
+// iteration H4 fixed. Meaningful only under -race.
+func TestTheAutomaticSweepIsRaceFree(t *testing.T) {
+	previous := MemorySweepInterval
+	MemorySweepInterval = 0 // sweep on every add, to maximise the overlap
+	t.Cleanup(func() { MemorySweepInterval = previous })
+
+	storage := NewMemorySession(time.Hour)
+
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 300; i++ {
+			storage.AddSession(NewSession(fmt.Sprintf("a-%d", i), time.Now().Add(-time.Hour)))
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 300; i++ {
+			storage.GetSessionById(fmt.Sprintf("a-%d", i))
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 300; i++ {
+			storage.ClearExpiredSessions()
+		}
+	}()
+	wg.Wait()
+}

@@ -121,6 +121,9 @@ type MemorySession struct {
 
 	sessionRotationInterval time.Duration
 	sessionActivityTimeout  time.Duration
+
+	// lastSweep is when AddSession last evicted expired sessions. Guarded by mu.
+	lastSweep time.Time
 }
 
 func NewMemorySession(sessionLifetime time.Duration) *MemorySession {
@@ -175,17 +178,78 @@ func (thiz *MemorySession) ClearExpiredSessions() {
 	thiz.mu.Lock()
 	defer thiz.mu.Unlock()
 
+	thiz.evictExpiredLocked()
+}
+
+// MemorySweepInterval bounds how often AddSession evicts expired sessions.
+//
+// Short and *not* derived from the session lifetime, unlike the scheduled job's interval. A
+// sweep can only remove sessions that have already expired, so the map necessarily holds
+// everything created within one lifetime — that part is inherent to memory storage and no
+// sweep frequency changes it. What the interval controls is how far past that bound the map
+// drifts, so a small fixed value is right, and the pass is cheap precisely because sweeping
+// keeps the map small.
+var MemorySweepInterval = time.Minute
+
+// AddSession stores a session and occasionally evicts expired ones.
+//
+// The eviction is here because this is the only method that grows the map, and because a
+// memory store has to bound itself. H4 registered the scheduled sweep for
+// `auth.session.storage: database` only, on the reasoning that memory sessions "are collected
+// when the process exits" — which is not a bound for a server that runs for weeks. It left
+// MemorySession.ClearExpiredSessions with no caller at all: the same hole H4 set out to close,
+// for the other backend, and for the *default* one, since AppProvider treats anything that is
+// not "database" as memory.
+//
+// Fixing that by registering the job for memory storage would have been wrong. It would make
+// an in-process bound depend on an app remembering to wire JobProvider, and an app that does
+// not would still leak. The store owns its own memory.
+//
+// SessionMiddleware already deletes an expired session when its client comes back
+// (session_middleware.go:79), so this is specifically about sessions whose client never
+// returns — a crawler, a scanner, a client that discards cookies. Those are never read again,
+// so read-through eviction cannot reach them and only a sweep can.
+func (thiz *MemorySession) AddSession(session core.ISession) {
+	thiz.mu.Lock()
+	thiz.sessions[session.GetId()] = session
+	thiz.sweepLocked(time.Now())
+	thiz.mu.Unlock()
+}
+
+// sweepLocked evicts expired sessions at most once per MemorySweepInterval.
+//
+// The caller holds thiz.mu. The time guard means the O(n) pass costs one request per interval
+// rather than every session creation.
+func (thiz *MemorySession) sweepLocked(now time.Time) {
+	if now.Sub(thiz.lastSweep) < MemorySweepInterval {
+		return
+	}
+	thiz.lastSweep = now
+
+	thiz.evictExpiredLocked()
+}
+
+// Len is the number of sessions currently held.
+//
+// Exported because it is the only way to observe that the store bounds itself — the property
+// H4 got wrong — and because an app running memory sessions has no other way to see the size
+// of the thing living in its heap. MemoryRateLimitStore.Len exists for the same reason.
+func (thiz *MemorySession) Len() int {
+	thiz.mu.Lock()
+	defer thiz.mu.Unlock()
+	return len(thiz.sessions)
+}
+
+// evictExpiredLocked removes every expired session. The caller holds thiz.mu.
+//
+// session.IsExpired() takes the *session's* mutex, not this one, so calling it from inside the
+// critical section cannot deadlock.
+func (thiz *MemorySession) evictExpiredLocked() {
 	for key, session := range thiz.sessions {
 		if session.IsExpired() {
 			delete(thiz.sessions, key)
 		}
 	}
-}
-
-func (thiz *MemorySession) AddSession(session core.ISession) {
-	thiz.mu.Lock()
-	thiz.sessions[session.GetId()] = session
-	thiz.mu.Unlock()
 }
 
 func (thiz *MemorySession) DeleteSession(session core.ISession) {

@@ -622,6 +622,21 @@ usable.
     and Postgres has no equivalent, so the statement wraps its subquery in a derived table —
     which is also what MySQL needs to avoid error 1093 on its own DELETE target. Verified
     against live Postgres 16 and MySQL 8.4.
+- **Memory session storage never reclaimed anything.** `SessionMiddleware` creates a session
+  for every non-OPTIONS request that arrives without one, so on a public app the store grows
+  per crawler hit, scanner probe and health check. Those clients never come back, so the
+  read-through eviction in `SessionMiddleware` cannot reach their sessions — and the scheduled
+  sweep above was registered for `database` storage only, on the reasoning that memory sessions
+  are collected when the process exits. That is not a bound for a server that runs for weeks,
+  and it left `MemorySession.ClearExpiredSessions` with no caller at all: the same defect one
+  entry up, on the **default** backend, since `AppProvider` treats anything that is not
+  `database` as memory. `MemorySession` now evicts expired entries inside `AddSession` — the
+  only method that grows the map — at most once per `auth.MemorySweepInterval`. Deliberately
+  not by registering the job for memory storage: that would make an in-process bound depend on
+  an app wiring `JobProvider`, and an app that does not would still leak. Note what remains
+  inherent: a memory store holds every session created within one lifetime, so a long
+  `auth.session.lifeTime` plus public session creation is a large heap by construction, and
+  `database` storage is the answer to that rather than a shorter sweep.
 - **A validator that silently ignored your `validation.*` translations.** `validator.message`
   skips the i18n lookup when no manager is installed, so every message comes back as the
   framework's English. The skip is deliberate — a CLI app validates its command DTOs without

@@ -128,9 +128,16 @@ func (p *JobProvider) Boot(c core.IContainer) {
 
 // addSessionGc adds the framework's session sweep for a database-backed app.
 //
-// Only for `database` storage: memory sessions live in this process's heap and are collected
-// when it exits, so the sweep would be busywork — and MemorySession's own map is bounded by
-// the process's lifetime, not by the sessions table.
+// Only for `database` storage, because that is the backend an external sweep is the only way
+// to bound. MemorySession evicts expired entries itself inside AddSession, so it needs no
+// scheduler and no provider — see MemorySweepInterval.
+//
+// This comment used to say memory sessions "are collected when the process exits, so the sweep
+// would be busywork", which is not a bound for a server that runs for weeks: it left
+// MemorySession.ClearExpiredSessions with no caller anywhere, on the *default* backend, so
+// every session created for a client that never returned stayed in the map. Registering this
+// job for memory storage would have been the wrong repair — it would make an in-process bound
+// depend on an app wiring JobProvider, and an app that does not would still leak.
 //
 // It is appended rather than prepended so an app's own registration of the same job is seen
 // first and wins, and it goes through the return value rather than AddJob so calling Boot
