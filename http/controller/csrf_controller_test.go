@@ -3,6 +3,8 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -34,9 +36,21 @@ func (s *stubSession) SetExpiry(time.Time)       {}
 type stubStrategy struct {
 	core.IAuthStrategy
 	session core.ISession
+
+	// created is what NewSessionWithoutUser hands back, and createdErr its failure. Both
+	// zero by default, which models JwtAuthStrategy: it returns (nil, nil) because a bearer
+	// token carries no CSRF exposure.
+	created    core.ISession
+	createdErr error
+	newCalls   int
 }
 
 func (s *stubStrategy) CurrentSession(context.Context) core.ISession { return s.session }
+
+func (s *stubStrategy) NewSessionWithoutUser(context.Context) (core.ISession, error) {
+	s.newCalls++
+	return s.created, s.createdErr
+}
 
 type stubAuthContext struct {
 	core.IAuthContext
@@ -72,16 +86,31 @@ func (r *stubResponse) Header() http.Header {
 
 type stubMessage struct {
 	core.HttpMessage
-	res *stubResponse
-	rec *recorded
+	res     *stubResponse
+	rec     *recorded
+	session *stubSessionScope
 }
+
+// stubSessionScope is the request's session slot. The controller sets it after creating a
+// session so the rest of the request sees one, as it would have had the middleware run.
+type stubSessionScope struct {
+	core.IEditableSessionScope
+	set core.ISession
+}
+
+func (s *stubSessionScope) Set(session core.ISession) { s.set = session }
 
 func (m *stubMessage) Response() core.IResponseScope { return m.res }
 func (m *stubMessage) Context() context.Context      { return context.Background() }
+func (m *stubMessage) Session() core.ISessionScope   { return m.session }
 
 func newStubMessage() *stubMessage {
 	rec := &recorded{}
-	return &stubMessage{res: &stubResponse{rec: rec}, rec: rec}
+	return &stubMessage{
+		res:     &stubResponse{rec: rec},
+		rec:     rec,
+		session: &stubSessionScope{},
+	}
 }
 
 // envelope decodes a recorded body the way a client would receive it.
@@ -97,10 +126,26 @@ func envelope(t *testing.T, body any) map[string]any {
 }
 
 func controllerWith(session core.ISession) *CsrfController {
+	return controllerForStrategy(&stubStrategy{session: session})
+}
+
+func controllerForStrategy(strategy *stubStrategy) *CsrfController {
 	c := NewCsrfController()
-	c.AuthContext = &stubAuthContext{strategy: &stubStrategy{session: session}}
+	c.AuthContext = &stubAuthContext{strategy: strategy}
 	c.CsrfService = &auth.CsrfService{}
+	c.SessionStorage = &stubSessionStorage{}
 	return c
+}
+
+// stubSessionStorage records the upsert. It matters because ISession.SetItem is in-memory
+// only for the DB-backed store, so a token that is never AddSession'd is lost.
+type stubSessionStorage struct {
+	core.ISessionStorage
+	added []core.ISession
+}
+
+func (s *stubSessionStorage) AddSession(session core.ISession) {
+	s.added = append(s.added, session)
 }
 
 // -------------------------------------------------------------------- tests
@@ -149,17 +194,98 @@ func TestTokenReturnsTheExistingTokenRatherThanRotating(t *testing.T) {
 	assert.Equal(t, tokenA, tokenB)
 }
 
-// TestTokenWithoutASessionIsRefusedNotFabricated. SessionMiddleware creates a session
-// for any request lacking one, so reaching this means the endpoint was mounted outside
-// that filter — worth saying rather than returning a token bound to nothing.
-func TestTokenWithoutASessionIsRefusedNotFabricated(t *testing.T) {
-	message := newStubMessage()
-	controllerWith(nil).Token(message)
+// TestTokenWithoutASessionStartsOne is H2, and it replaces a test that pinned the defect.
+//
+// The endpoint used to answer 403 "the CSRF endpoint must be covered by the session
+// middleware" for a request carrying no session — which is the *first* request every client
+// makes, and precisely the one this endpoint exists to serve. GetRoutes mounts it at the root
+// with no middleware while an app's session middleware is scoped to the namespace it protects,
+// so the framework's own default registration could never satisfy its own precondition: the
+// 403 was permanent, and the documented escape was DisableCsrfController() plus a
+// hand-registered copy.
+//
+// The old test asserted that 403 and passed, which is how the endpoint shipped unusable.
+func TestTokenWithoutASessionStartsOne(t *testing.T) {
+	fresh := &stubSession{items: map[string]string{}}
+	strategy := &stubStrategy{session: nil, created: fresh}
 
-	assert.Equal(t, http.StatusForbidden, message.rec.status)
+	message := newStubMessage()
+	controllerForStrategy(strategy).Token(message)
+
+	require.Equal(t, http.StatusOK, message.rec.status,
+		"the first call a client ever makes must succeed")
+	assert.Equal(t, 1, strategy.newCalls,
+		"the session comes from the strategy, the same call SessionMiddleware makes")
 
 	body := envelope(t, message.rec.body)
-	assert.Contains(t, body["errors"], "No active session; the CSRF endpoint must be covered by the session middleware")
+	payload, ok := body["body"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, fresh.GetItem(core.CSRFSessionKey), payload["csrf_token"],
+		"the token is bound to the session that was created, not to nothing")
+	assert.Same(t, core.ISession(fresh), message.session.set,
+		"the new session is published on the request scope, as the middleware would")
+}
+
+// TestAnExistingSessionIsNotReplaced — the create path must be reached only when there is
+// genuinely no session, or every call to this endpoint would rotate the caller's session.
+func TestAnExistingSessionIsNotReplaced(t *testing.T) {
+	existing := &stubSession{items: map[string]string{}}
+	strategy := &stubStrategy{session: existing, created: &stubSession{items: map[string]string{}}}
+
+	controllerForStrategy(strategy).Token(newStubMessage())
+
+	assert.Zero(t, strategy.newCalls)
+}
+
+// TestTheTokenIsPersisted. ISession.SetItem writes DbSessionEntity's Attributes map and
+// nothing else, so a token that is not AddSession'd survives only until the response ends —
+// and the next request's CSRF check then rejects it. SessionMiddleware upserts for the same
+// reason.
+func TestTheTokenIsPersisted(t *testing.T) {
+	session := &stubSession{items: map[string]string{}}
+	strategy := &stubStrategy{session: session}
+	controller := controllerForStrategy(strategy)
+	storage := controller.SessionStorage.(*stubSessionStorage)
+
+	controller.Token(newStubMessage())
+
+	require.Len(t, storage.added, 1, "the session carrying the new token must be persisted")
+	assert.Same(t, core.ISession(session), storage.added[0])
+}
+
+// TestASessionlessStrategySaysSoRatherThanFailing. JwtAuthStrategy.NewSessionWithoutUser
+// returns (nil, nil) by design: a bearer token is not sent automatically by the browser, so
+// there is no CSRF exposure and no token to issue. Reported as a client error naming the
+// reason — ResolveAuthStrategyByContext picks per request, so this is a property of the
+// request, not a misconfigured app.
+func TestASessionlessStrategySaysSoRatherThanFailing(t *testing.T) {
+	message := newStubMessage()
+	controllerForStrategy(&stubStrategy{}).Token(message)
+
+	assert.Equal(t, http.StatusBadRequest, message.rec.status)
+	assert.Contains(t, fmt.Sprint(envelope(t, message.rec.body)["errors"]),
+		"does not use sessions")
+}
+
+// TestAFailedSessionCreationIsAnInternalError, not a token bound to nothing.
+func TestAFailedSessionCreationIsAnInternalError(t *testing.T) {
+	message := newStubMessage()
+	controllerForStrategy(&stubStrategy{createdErr: errors.New("storage down")}).Token(message)
+
+	assert.Equal(t, http.StatusInternalServerError, message.rec.status)
+}
+
+// TestTheEndpointWorksWithoutSessionStorage — the field is injected, and an app running
+// memory sessions with no storage bound must still get a token rather than a nil panic.
+func TestTheEndpointWorksWithoutSessionStorage(t *testing.T) {
+	c := NewCsrfController()
+	c.AuthContext = &stubAuthContext{strategy: &stubStrategy{session: &stubSession{items: map[string]string{}}}}
+	c.CsrfService = &auth.CsrfService{}
+	c.SessionStorage = nil
+
+	message := newStubMessage()
+	require.NotPanics(t, func() { c.Token(message) })
+	assert.Equal(t, http.StatusOK, message.rec.status)
 }
 
 // TestTokenWithoutAStrategyIsAnInternalError, not a panic: the field is injected, so a

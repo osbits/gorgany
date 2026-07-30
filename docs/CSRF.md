@@ -44,6 +44,16 @@ is the one route that appears in your app without you asking for it, so it is wo
 it is there and that it answers unconditionally. It returns nothing but a token bound to the
 caller's own session.
 
+Being outside your patterns also means it is outside your **session** middleware, so the
+endpoint starts a session itself when the request carries none — the same
+`NewSessionWithoutUser` call `SessionMiddleware` makes, `Set-Cookie` included. You do not have
+to arrange middleware coverage for it, and you should not: the first call any client makes
+carries no session, which is precisely the call this endpoint exists to answer.
+
+If your app authenticates with bearer tokens only, `GET /csrf` answers **400** naming the
+reason. A JWT is not sent automatically by the browser, so there is no CSRF exposure and no
+token to issue.
+
 If a gate genuinely must cover it — or you want it on a different path, or replaced with your
 own handler — turn the framework's off and mount your own:
 
