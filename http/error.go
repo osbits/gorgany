@@ -7,6 +7,7 @@ import (
 	"github.com/osbits/gorgany/app/core"
 	error2 "github.com/osbits/gorgany/err"
 	"github.com/osbits/gorgany/service/dto"
+	gohttp "net/http"
 	"reflect"
 )
 
@@ -79,18 +80,75 @@ func processDefaultError(err error, message core.HttpMessage) {
 	message.Response().Text(reason, core.InternalErrorHttpStatus.Status)
 }
 
-func processValidationErrors(error error, message core.HttpMessage) {
-	concreteError := error.(*error2.ValidationErrors)
-	req := message.Request().RawRequest()
-	message.RedirectWithFlash(req.Referer(), 301, map[string]any{"validation": concreteError})
+// processValidationErrors answers a DTO that failed validation.
+//
+// Three defects, all of them in the four lines this replaces.
+//
+// It answered *every* caller with a redirect, API clients included — so B2's whole point,
+// a validation payload a client can read, was unobservable through the framework default.
+// docs/VALIDATION.md and MIGRATE_TO_V2_PROMPT.md both already documented the 422 this now
+// returns. The reason nothing caught it is that e2e/fixture-app registers its own handler
+// for ValidationErrors, so the e2e harness never reached this one, and C2 negotiated the
+// other four default handlers but not this one.
+//
+// The redirect was a 301, which is permanently cacheable and which browsers rewrite to a
+// GET — so a browser could cache "POST this URL → GET that one" for good. 303 See Other is
+// the post-redirect-get status, and it is not cacheable by default.
+//
+// And it passed Referer() straight through, so a client that sends no Referer — a privacy
+// setting, a direct POST — got Location: "" and a redirect to nowhere. There is nothing to
+// go back to in that case, so the errors are returned instead.
+func processValidationErrors(err error, message core.HttpMessage) {
+	validationErrors, ok := err.(*error2.ValidationErrors)
+	if !ok {
+		// Catch dispatches on the error's bare type name, so any type named
+		// ValidationErrors from any package reaches this handler. The unchecked
+		// assertion this replaces panicked on one.
+		processDefaultError(err, message)
+		return
+	}
+
+	if WantsJSON(message) {
+		respondWithValidationErrors(message, validationErrors)
+		return
+	}
+
+	target := refererOf(message)
+	if target == "" {
+		respondWithValidationErrors(message, validationErrors)
+		return
+	}
+
+	message.RedirectWithFlash(target, gohttp.StatusSeeOther,
+		map[string]any{"validation": validationErrors})
 }
 
-func processValidationError(error error, message core.HttpMessage) {
-	concreteError := error.(*error2.ValidationError)
-	validationErrors := &error2.ValidationErrors{
-		*concreteError,
+func processValidationError(err error, message core.HttpMessage) {
+	validationError, ok := err.(*error2.ValidationError)
+	if !ok {
+		processDefaultError(err, message)
+		return
 	}
-	processValidationErrors(validationErrors, message)
+
+	processValidationErrors(&error2.ValidationErrors{*validationError}, message)
+}
+
+// respondWithValidationErrors writes the 422 envelope docs/VALIDATION.md documents.
+func respondWithValidationErrors(message core.HttpMessage, validationErrors *error2.ValidationErrors) {
+	message.Response().JSON(
+		dto.ReturnObject(nil, core.ValidationHttpStatus, *validationErrors),
+		core.ValidationHttpStatus.Status)
+}
+
+// refererOf reads the Referer header, tolerating a message with no raw request.
+func refererOf(message core.HttpMessage) string {
+	if message == nil || message.Request() == nil {
+		return ""
+	}
+	if raw := message.Request().RawRequest(); raw != nil {
+		return raw.Referer()
+	}
+	return ""
 }
 
 // processInputParsingError answers a path or query parameter that could not be
