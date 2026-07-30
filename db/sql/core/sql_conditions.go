@@ -492,10 +492,11 @@ func buildSubquerySQL(query *Query) (string, []interface{}) {
 // result when there is more than one.
 //
 // It lives here with the rest of the condition set, and it did not always: an identical
-// type sat in db/sql/gorm/gorm/postgres/v2 alongside a set of duplicates of the conditions
-// above. Nothing engine-specific was ever in it — no quoting, `?` placeholders throughout —
-// so it was only there because the whole condition family predated the split of the builder
-// out of the Postgres package (T2.1) and this file was where the rest of it landed.
+// type sat in db/sql/gorm/postgres/v2 alongside a set of duplicates of the conditions
+// above, which have since been deleted. Nothing engine-specific was ever in them — no
+// quoting, `?` placeholders throughout — so they were only there because the whole
+// condition family predated the split of the builder out of the Postgres package (T2.1)
+// and this file was where the rest of it landed.
 //
 // The consequence was not cosmetic. model/pagination.go used the Postgres copy, which put
 // gorm.io/driver/postgres on the dependency path of every package that imports model — so

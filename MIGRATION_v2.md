@@ -882,6 +882,87 @@ one of them.
 do. New code should prefer `builder.New(dialect)` or
 `v2.NewBuilderWithDialect(dialect)`.
 
+### The duplicate condition family in `postgres/v2` is removed
+
+`db/sql/gorm/postgres/v2/conditions.go` held `SimpleCondition`, `InCondition`,
+`BetweenCondition`, `RawCondition` and `CompositeCondition`, plus `Equal`,
+`NotEqual`, `GreaterThan`, `LessThan`, `In`, `Between`, `And`, `Or` and `Raw`.
+Every one was engine-agnostic — `?` placeholders throughout, no engine-specific
+quoting — and duplicated what `db/sql/core` already provided. The conditions were
+never part of the builder, so moving the builder out of this package left them
+behind. `model/pagination.go` was the last caller, which is what put
+`gorm.io/driver/postgres` on the import path of every package that imports
+`model`, and why making the engines opt-in could remove MySQL from a
+Postgres-only binary but not Postgres from a MySQL-only one.
+
+Unlike `v2.Builder`, these were **not** aliases. The `dbCore` equivalents are
+distinct types with different field names, so this is a rename, not a re-import:
+
+| Removed | Replacement |
+|---|---|
+| `v2.SimpleCondition{Field, Operator, Value}` | `dbCore.BinaryCondition{Left, Operator, Right}` |
+| `v2.InCondition{Field, Values}` | `dbCore.InCondition{Field, Values}` — also gains `Not`, `IsSubquery`, `Subquery` |
+| `v2.BetweenCondition{Field, Start, End}` | `dbCore.BetweenCondition{Field, Lower, Upper}` — also gains `Not` |
+| `v2.RawCondition{SQL, Args}` | `dbCore.RawCondition{SQL, Args}` |
+| `v2.CompositeCondition{Operator, Conditions}` | `dbCore.CompositeCondition{Operator, Conditions}` |
+| `v2.Equal(f, v)` … `v2.Raw(sql, args...)` | none — `dbCore` has no constructor helpers; build the struct |
+
+`dbCore` additionally offers `UnaryCondition`, `ExistsCondition`, `LikeCondition`
+and `IsNullCondition`, which the removed copy never had.
+
+#### Before / after
+
+```go
+// Before
+builder = builder.Where(v2.And(
+    v2.Equal("status", "active"),
+    v2.Between("age", 18, 65),
+))
+
+// After
+builder = builder.Where(&dbCore.CompositeCondition{
+    Operator: "AND",
+    Conditions: []dbCore.Condition{
+        &dbCore.BinaryCondition{Left: "status", Operator: "=", Right: "active"},
+        &dbCore.BetweenCondition{Field: "age", Lower: 18, Upper: 65},
+    },
+})
+```
+
+#### One difference that is not a rename
+
+`dbCore.BetweenCondition` treats a `string` bound as a literal SQL fragment,
+where the removed `v2.Between` always bound it as a parameter:
+
+```go
+v2.Between("age", "18", "65")
+// age BETWEEN ? AND ?    args: ["18", "65"]
+
+&dbCore.BetweenCondition{Field: "age", Lower: "18", Upper: "65"}
+// age BETWEEN 18 AND 65  args: []
+```
+
+If your bounds are strings — a date arriving from a query parameter is the common
+case — pass them as a non-string type (`time.Time`, `int`, `float64`) so they bind,
+or the value is interpolated into the SQL text instead of a placeholder. That
+matters beyond correctness for anything user-supplied. `dbCore.BinaryCondition`
+does not share the behaviour: its `Right` binds a string, and only `Left` is
+treated as an identifier.
+
+`dbCore.RawCondition` also understands identifier placeholders that the removed
+copy passed through verbatim: `"?.id"` consumes one argument and renders
+`<arg>.id`, and `"?.?"` consumes two and renders `<arg0>.<arg1>`. Raw SQL that
+does not contain the sequence `?.` is unaffected.
+
+#### How to detect whether you are affected
+
+```bash
+grep -rnE "v2\.(Simple|In|Between|Raw|Composite)Condition|v2\.(Equal|NotEqual|GreaterThan|LessThan|In|Between|And|Or|Raw)\(" --include="*.go" .
+```
+
+**Mechanical**, with one exception: `Between` with string bounds needs
+**judgement**, because it compiles after the rename and changes the SQL.
+
 ### Config keys with new behaviour
 
 | Key | Default | Note |

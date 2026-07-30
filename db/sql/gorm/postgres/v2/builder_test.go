@@ -486,25 +486,31 @@ func TestBuilder_ToSQL_PreservesNestedConditionGrouping(t *testing.T) {
 	builder := NewBuilder().
 		Select("id").
 		From("users").
-		Where(And(
-			&dbCore.BinaryCondition{
-				Left:     "user_id",
-				Operator: "=",
-				Right:    1,
-			},
-			Or(
+		Where(&dbCore.CompositeCondition{
+			Operator: "AND",
+			Conditions: []dbCore.Condition{
 				&dbCore.BinaryCondition{
-					Left:     "status",
+					Left:     "user_id",
 					Operator: "=",
-					Right:    "confirmed",
+					Right:    1,
 				},
-				&dbCore.BinaryCondition{
-					Left:     "date",
-					Operator: ">",
-					Right:    "2026-01-01",
+				&dbCore.CompositeCondition{
+					Operator: "OR",
+					Conditions: []dbCore.Condition{
+						&dbCore.BinaryCondition{
+							Left:     "status",
+							Operator: "=",
+							Right:    "confirmed",
+						},
+						&dbCore.BinaryCondition{
+							Left:     "date",
+							Operator: ">",
+							Right:    "2026-01-01",
+						},
+					},
 				},
-			),
-		))
+			},
+		})
 
 	sql, args, err := builder.ToSQL()
 	require.NoError(t, err)

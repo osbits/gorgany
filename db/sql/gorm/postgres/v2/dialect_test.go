@@ -340,36 +340,3 @@ func TestPostgresOrderByMultipleFieldsSingleKeyword(t *testing.T) {
 		sql)
 	assert.Empty(t, args)
 }
-
-// TestPostgresConditionHelperFunctions covers the And/Or/Equal/... helpers this
-// package exports alongside the dialect.
-func TestPostgresConditionHelperFunctions(t *testing.T) {
-	tests := []struct {
-		name string
-		cond dbCore.Condition
-		want string
-	}{
-		{"Equal", Equal("a", 1), "a = ?"},
-		{"NotEqual", NotEqual("a", 1), "a != ?"},
-		{"GreaterThan", GreaterThan("a", 1), "a > ?"},
-		{"LessThan", LessThan("a", 1), "a < ?"},
-		{"In", In("a", 1, 2), "a IN (?, ?)"},
-		{"Between", Between("a", 1, 2), "a BETWEEN ? AND ?"},
-		{"Raw", Raw("a = 1"), "a = 1"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			sql, _ := tt.cond.ToSQL()
-			assert.Equal(t, tt.want, sql)
-		})
-	}
-
-	sql, args := And(Equal("a", 1), Equal("b", 2)).ToSQL()
-	assert.Equal(t, "(a = ? AND b = ?)", sql)
-	assert.Equal(t, []any{1, 2}, args)
-
-	sql, args = Or(Equal("a", 1), Equal("b", 2)).ToSQL()
-	assert.Equal(t, "(a = ? OR b = ?)", sql)
-	assert.Equal(t, []any{1, 2}, args)
-}

@@ -68,6 +68,16 @@ work.
   build, if the configured cap is a stale guess. See MIGRATION_v2.md §4a.
 - **`v2.NewDataSource` returns `(IDataSource, error)`** rather than panicking on a
   missing or mistyped config key.
+- **The duplicate condition family in `db/sql/gorm/postgres/v2` is removed.**
+  `SimpleCondition`, `InCondition`, `BetweenCondition`, `RawCondition`,
+  `CompositeCondition` and the `Equal` / `NotEqual` / `GreaterThan` / `LessThan` /
+  `In` / `Between` / `And` / `Or` / `Raw` constructors were an engine-agnostic copy
+  of `db/sql/core` — `?` placeholders, no quoting — left behind when the builder
+  moved out of the Postgres package. Use the `dbCore` types directly. They are
+  **not** drop-in replacements: field names differ (`BetweenCondition.Start`/`End`
+  → `Lower`/`Upper`, `SimpleCondition` → `BinaryCondition{Left, Right}`), there are
+  no constructor helpers, and `dbCore.BetweenCondition` renders a `string` bound as
+  raw SQL where the removed copy bound it as a parameter. See MIGRATION_v2.md §10.
 - **`EventProvider.Boot(core.IContainer)`** no longer returns an error, so
   `*EventProvider` finally satisfies `core.IProvider`.
 - **`RecoveryMiddleware` is registered automatically** as the first `/**` filter
