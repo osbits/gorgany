@@ -487,3 +487,49 @@ func buildSubquerySQL(query *Query) (string, []interface{}) {
 
 	return sqlBuilder.String(), args
 }
+
+// CompositeCondition joins conditions with a single boolean operator, parenthesising the
+// result when there is more than one.
+//
+// It lives here with the rest of the condition set, and it did not always: an identical
+// type sat in db/sql/gorm/gorm/postgres/v2 alongside a set of duplicates of the conditions
+// above. Nothing engine-specific was ever in it — no quoting, `?` placeholders throughout —
+// so it was only there because the whole condition family predated the split of the builder
+// out of the Postgres package (T2.1) and this file was where the rest of it landed.
+//
+// The consequence was not cosmetic. model/pagination.go used the Postgres copy, which put
+// gorm.io/driver/postgres on the dependency path of every package that imports model — so
+// making the engines opt-in (F7) removed MySQL from a Postgres-only app's binary but could
+// not remove Postgres from a MySQL-only app's.
+type CompositeCondition struct {
+	// Operator joins the conditions — "AND" or "OR".
+	Operator string
+	// Conditions are the operands. One is rendered bare; several are parenthesised.
+	Conditions []Condition
+}
+
+// ToSQL returns the SQL representation of the composite condition.
+func (c *CompositeCondition) ToSQL() (string, []interface{}) {
+	if c == nil || len(c.Conditions) == 0 {
+		return "", nil
+	}
+
+	var args []interface{}
+	conditions := make([]string, len(c.Conditions))
+
+	for i, condition := range c.Conditions {
+		sql, conditionArgs := condition.ToSQL()
+		conditions[i] = sql
+		args = append(args, conditionArgs...)
+	}
+
+	joined := strings.Join(conditions, " "+c.Operator+" ")
+
+	// A single condition needs no parentheses, and adding them would change nothing but
+	// the SQL a test has to match.
+	if len(c.Conditions) == 1 {
+		return joined, args
+	}
+
+	return "(" + joined + ")", args
+}

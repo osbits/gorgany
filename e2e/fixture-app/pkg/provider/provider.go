@@ -8,6 +8,12 @@ import (
 	"github.com/osbits/gorgany/app/core"
 	error2 "github.com/osbits/gorgany/err"
 	grghttp "github.com/osbits/gorgany/http"
+
+	// The engine this app uses, imported for its registration side effect. DbProvider no
+	// longer registers any driver itself, so a Postgres-only app links only Postgres —
+	// which is the point of the split, and the reason this is the single-engine package
+	// rather than driver/builtin.
+	_ "github.com/osbits/gorgany/db/sql/driver/postgres"
 	"github.com/osbits/gorgany/http/middleware"
 	"github.com/osbits/gorgany/provider"
 	"github.com/osbits/gorgany/service/dto"

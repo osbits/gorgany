@@ -10,7 +10,6 @@ import (
 	"github.com/osbits/gorgany/app/core"
 	sqlbuilder "github.com/osbits/gorgany/db/sql/builder"
 	dbCore "github.com/osbits/gorgany/db/sql/core"
-	v2 "github.com/osbits/gorgany/db/sql/gorm/postgres/v2"
 	err2 "github.com/osbits/gorgany/err"
 	"github.com/osbits/gorgany/log"
 	"github.com/osbits/gorgany/service/cache"
@@ -385,7 +384,7 @@ func ApplyDBFiltersToQueryBuilder(builder dbCore.IQueryBuilder, dbFilters []DBFi
 		for _, filter := range orFilters {
 			// Create a temporary builder to build the condition
 			tempBuilder := sqlbuilder.NewLike(builder)
-			tempBuilder = applyDBFilterToQueryBuilder(tempBuilder, filter).(*v2.Builder)
+			tempBuilder = applyDBFilterToQueryBuilder(tempBuilder, filter).(*sqlbuilder.Builder)
 			// Extract the condition from the builder
 			query := tempBuilder.Build()
 			if query.Where != nil && len(query.Where.Conditions) > 0 {
@@ -394,7 +393,7 @@ func ApplyDBFiltersToQueryBuilder(builder dbCore.IQueryBuilder, dbFilters []DBFi
 			}
 		}
 		if len(orConditions) > 0 {
-			builder = builder.Where(&v2.CompositeCondition{
+			builder = builder.Where(&dbCore.CompositeCondition{
 				Operator:   "OR",
 				Conditions: orConditions,
 			})
@@ -455,16 +454,16 @@ func applySubqueryToQueryBuilder(builder dbCore.IQueryBuilder, filter DBFilter) 
 
 	// Build subquery
 	subqueryBuilder := sqlbuilder.NewLike(builder)
-	subqueryBuilder = subqueryBuilder.Select(subquery.Select).From(subquery.Table).(*v2.Builder)
+	subqueryBuilder = subqueryBuilder.Select(subquery.Select).From(subquery.Table).(*sqlbuilder.Builder)
 
 	// Apply joins to subquery
 	for _, join := range subquery.Join {
-		subqueryBuilder = applyJoinToQueryBuilder(subqueryBuilder, join).(*v2.Builder)
+		subqueryBuilder = applyJoinToQueryBuilder(subqueryBuilder, join).(*sqlbuilder.Builder)
 	}
 
 	// Apply where conditions to subquery
 	for _, whereFilter := range subquery.Where {
-		subqueryBuilder = applyDBFilterToQueryBuilder(subqueryBuilder, whereFilter).(*v2.Builder)
+		subqueryBuilder = applyDBFilterToQueryBuilder(subqueryBuilder, whereFilter).(*sqlbuilder.Builder)
 	}
 
 	// Build the subquery to get the Query object

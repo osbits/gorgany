@@ -73,13 +73,35 @@ func Names() []string {
 // An unregistered driver is an error naming what is available, rather than a
 // silently skipped connection.
 func New(cfg dsconfig.DataSource) (dbCore.IDataSource, error) {
+	registered := Names()
+
+	// The two failures below are independent, so each is reported for its own cause and
+	// the missing-import hint is appended when it also applies. Checking the registry
+	// first made a config missing its `driver:` key report an import problem instead.
 	if cfg.Driver == "" {
-		return nil, fmt.Errorf("datasource config: 'driver' is required (registered drivers: %v)", Names())
+		return nil, fmt.Errorf("datasource config: 'driver' is required (registered drivers: %v)%s",
+			registered, importHint(registered))
 	}
 
 	ctor, ok := Lookup(cfg.Driver)
 	if !ok {
-		return nil, fmt.Errorf("datasource config: unknown driver %q (registered drivers: %v)", cfg.Driver, Names())
+		// An empty registry is its own diagnosis. Since the engine packages became opt-in
+		// (F7) the most likely reason a driver cannot be found is that nothing imported
+		// one, and `unknown driver "postgres_gorm" (registered drivers: [])` tells that
+		// reader nothing. The change is compile-clean and shows up only at boot, so this
+		// message is the migration instruction.
+		if len(registered) == 0 {
+			return nil, fmt.Errorf(
+				"datasource config: no datasource drivers are registered, so %q cannot be "+
+					"resolved.%s", cfg.Driver, importHint(registered))
+		}
+
+		return nil, fmt.Errorf(
+			"datasource config: unknown driver %q (registered drivers: %v). If the engine you "+
+				"want is missing, import its package for its side effects: "+
+				"_ \"github.com/osbits/gorgany/db/sql/driver/postgres\" or "+
+				"_ \"github.com/osbits/gorgany/db/sql/driver/mysql\"",
+			cfg.Driver, registered)
 	}
 
 	ds, err := ctor(cfg)
@@ -90,6 +112,22 @@ func New(cfg dsconfig.DataSource) (dbCore.IDataSource, error) {
 		return nil, fmt.Errorf("datasource config: driver %q returned a nil datasource", cfg.Driver)
 	}
 	return ds, nil
+}
+
+// importHint names the blank imports that populate the registry, and is empty when
+// something is already registered.
+//
+// Kept separate so the same wording reaches every failure that an absent import can cause,
+// rather than only the one it was first noticed on.
+func importHint(registered []string) string {
+	if len(registered) > 0 {
+		return ""
+	}
+	return " Import the engine you use for its side effects — " +
+		"_ \"github.com/osbits/gorgany/db/sql/driver/postgres\" or " +
+		"_ \"github.com/osbits/gorgany/db/sql/driver/mysql\", or " +
+		"_ \"github.com/osbits/gorgany/db/sql/driver/builtin\" for both — " +
+		"typically next to your provider package's imports."
 }
 
 // reset clears the registry. Test-only.

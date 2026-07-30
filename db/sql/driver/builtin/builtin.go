@@ -1,35 +1,31 @@
-// Package builtin registers the datasource drivers that ship with the framework.
+// Package builtin registers every datasource driver that ships with the framework.
 //
-// It exists as its own package so the registry (db/sql/driver) stays free of any
-// dependency on the concrete drivers, and the drivers stay free of any dependency
-// on the registry. Importing it for side effects registers everything:
+// It is the convenience import — both engines, one line:
 //
 //	import _ "github.com/osbits/gorgany/db/sql/driver/builtin"
 //
-// provider.DbProvider does that already, so an app using the standard bootstrap
-// needs no import of its own. An app adding its own engine calls
-// driver.Register("<name>", ctor) from its provider's Register phase.
+// It no longer registers them itself; it imports driver/postgres and driver/mysql, each of
+// which registers one. The split exists because provider.DbProvider used to import this
+// package unconditionally, so a Postgres-only app linked gorm.io/driver/mysql,
+// go-sql-driver/mysql and filippo.io/edwards25519 with no way to opt out. DbProvider now
+// imports nothing and the app chooses: the one engine it uses, or this package for both.
+//
+// An app adding an engine of its own calls driver.Register("<name>", ctor) from its
+// provider's Register phase; it does not need this package.
 package builtin
 
 import (
-	dsconfig "github.com/osbits/gorgany/db/sql/config"
-	dbCore "github.com/osbits/gorgany/db/sql/core"
-	"github.com/osbits/gorgany/db/sql/driver"
-	mysql "github.com/osbits/gorgany/db/sql/gorm/mysql/v2"
-	postgres "github.com/osbits/gorgany/db/sql/gorm/postgres/v2"
+	// Imported for their registration side effects.
+	_ "github.com/osbits/gorgany/db/sql/driver/mysql"
+	_ "github.com/osbits/gorgany/db/sql/driver/postgres"
 )
 
 // Driver names as written under `databases.<name>.driver` in the app config.
+//
+// Kept here for anything that referenced them before the split. driver/postgres.Name and
+// driver/mysql.Name are the same values, and are the ones to reach for now: they are
+// available without linking the other engine.
 const (
 	PostgresGorm = "postgres_gorm"
 	MySQLGorm    = "mysql_gorm"
 )
-
-func init() {
-	driver.Register(PostgresGorm, func(cfg dsconfig.DataSource) (dbCore.IDataSource, error) {
-		return postgres.NewDataSourceWithConfig(cfg)
-	})
-	driver.Register(MySQLGorm, func(cfg dsconfig.DataSource) (dbCore.IDataSource, error) {
-		return mysql.NewDataSourceWithConfig(cfg)
-	})
-}

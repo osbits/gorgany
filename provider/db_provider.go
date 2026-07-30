@@ -11,10 +11,20 @@ import (
 	"github.com/osbits/gorgany/db/sql/driver"
 	"github.com/osbits/gorgany/log"
 
-	// Registers the drivers that ship with the framework (postgres_gorm,
-	// mysql_gorm). An app adding its own engine calls driver.Register from its
-	// own provider.
-	_ "github.com/osbits/gorgany/db/sql/driver/builtin"
+	// No driver package is imported here on purpose (F7). This provider used to
+	// blank-import db/sql/driver/builtin, which registers both engines — so every app
+	// using the standard bootstrap linked gorm.io/driver/mysql, go-sql-driver/mysql and
+	// filippo.io/edwards25519 whether or not it would ever speak MySQL, with no way to
+	// opt out.
+	//
+	// The app now chooses, with one blank import next to its own provider:
+	//
+	//	_ "github.com/osbits/gorgany/db/sql/driver/postgres"
+	//	_ "github.com/osbits/gorgany/db/sql/driver/mysql"
+	//	_ "github.com/osbits/gorgany/db/sql/driver/builtin"  // both
+	//
+	// This is compile-clean and shows up only at boot, so driver.New has a dedicated
+	// message for an empty registry that names those import lines.
 
 	"github.com/spf13/viper"
 
