@@ -125,11 +125,15 @@ func processInputParsingError(err error, message core.HttpMessage) {
 // InputBodyParseError, so a malformed body arrived as an empty ValidationErrors and
 // processValidationErrors redirected to the Referer with a 301 (B3).
 //
-// The response never echoes the body back. InputBodyParseError carries it for the log,
-// and a body that failed to parse is exactly the kind that might contain a password
-// halfway through.
+// Neither the response nor the log echoes the body. That was not true of the log until
+// F2: InputBodyParseError.Error() included the body, and this function opens by logging
+// the error, so every malformed body was written verbatim at Error level — a truncated
+// POST to a login route put a cleartext password in `docker logs`. The body stays on the
+// struct for a caller who reaches for it deliberately; see err.InputBodyParseError.Body.
 func processBodyParsingError(err error, message core.HttpMessage) {
-	error2.PrintError(err)
+	// Log the request line rather than the body. Without it the entry says only that
+	// *something* sent bad JSON, which is not enough to find the caller.
+	error2.PrintError(fmt.Errorf("%s: %w", requestLine(message), err))
 
 	reason := "The request body could not be parsed"
 	if parseError, ok := err.(*error2.InputBodyParseError); ok && parseError.RawError != nil {
@@ -164,4 +168,26 @@ func processJwtAuthError(err error, message core.HttpMessage) {
 	}
 
 	message.Response().Text(reason, core.NotAuthorizedHttpStatus.Status)
+}
+
+// requestLine renders "METHOD /path" for a log entry, or "<unknown request>" when the
+// message has no raw request — which the error handlers can be reached with, since they
+// also serve failures from before the request scope was built.
+func requestLine(message core.HttpMessage) string {
+	if message == nil || message.Request() == nil {
+		return "<unknown request>"
+	}
+
+	raw := message.Request().RawRequest()
+	if raw == nil {
+		return "<unknown request>"
+	}
+
+	path := ""
+	if raw.URL != nil {
+		// URL.Path, not RequestURI: a query string is caller-supplied and often carries
+		// a token, and this is a log line.
+		path = raw.URL.Path
+	}
+	return raw.Method + " " + path
 }

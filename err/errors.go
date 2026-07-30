@@ -119,14 +119,38 @@ func NewInputBodyParseError(body string, kind string, err error) *InputBodyParse
 	}
 }
 
+// InputBodyParseError is a request body the framework could not parse.
 type InputBodyParseError struct {
-	Body     string
-	Type     string
+	// Body is the raw request body, kept so a caller that genuinely needs it can reach
+	// it — and deliberately NOT included in Error().
+	//
+	// A body that failed to parse is exactly the kind that carries a half-typed
+	// password: a truncated POST to a login route puts a cleartext credential here.
+	// Error() strings end up in logs by default in most codebases, so anything in
+	// Error() is effectively logged. Reading this field is an explicit choice; do not
+	// make it in a log line or a response.
+	Body string
+	// Type is the content type the parser was working in.
+	Type string
+	// RawError is why parsing failed. Safe to log and to show a client: the framework's
+	// own parsers put only offsets, sizes, limits and type names here.
+	//
+	// One nuance, since overclaiming would be worse than stating it: a wrapped
+	// *json.SyntaxError renders its own message, which for some inputs names the single
+	// offending character ("invalid character 'q' after object key"). One byte, and it
+	// is what makes the error diagnosable.
 	RawError error
 }
 
+// Error describes the failure without reproducing the body.
+//
+// It used to be "Unable to convert body from %s. Error: %v\nBody: %s". The framework's
+// own handler opens with PrintError(err), so every malformed body was written verbatim to
+// the log at Error level — and from there to `docker logs` and any aggregator. That was
+// new exposure: before InputBodyParseError was constructed at all, the parse path
+// produced an empty ValidationErrors and logged nothing.
 func (thiz InputBodyParseError) Error() string {
-	return fmt.Sprintf("Unable to convert body from %s. Error: %v\nBody: %s", thiz.Type, thiz.RawError, thiz.Body)
+	return fmt.Sprintf("unable to parse body as %s: %v", thiz.Type, thiz.RawError)
 }
 
 // JwtAuthError
