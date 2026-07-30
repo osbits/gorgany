@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/spf13/viper"
+
 	"github.com/osbits/gorgany/v2/app/core"
 	grgerr "github.com/osbits/gorgany/v2/err"
 	"github.com/osbits/gorgany/v2/job"
@@ -18,10 +20,22 @@ type JobProvider struct {
 	// scheduler is created in Register and started in Boot, so an app can reach it
 	// through the container to inspect or stop it.
 	scheduler *job.Scheduler
+
+	// sessionGcDisabled opts out of the framework's own session sweep.
+	sessionGcDisabled bool
 }
 
 func NewJobProvider() *JobProvider {
 	return &JobProvider{ctors: make([]func() core.IJob, 0)}
+}
+
+// DisableSessionGc stops this provider adding job.ClearExpiredSessionsJob.
+//
+// Use it when the app sweeps some other way — the `session:gc` command from an external
+// cron, a database-side job, a TTL policy. Mirrors RouteProvider.DisableCsrfController: the
+// framework's default should work without being asked for, and opting out should be one call.
+func (p *JobProvider) DisableSessionGc() {
+	p.sessionGcDisabled = true
 }
 
 func (p *JobProvider) AddJob(ctor func() core.IJob) {
@@ -70,12 +84,20 @@ func (p *JobProvider) Register(c core.IContainer) {
 //
 // A job that fails to register is now fatal, for the same reason: a silently
 // unscheduled job is close to undetectable.
+//
+// H4 fixed the other half. Making the scheduler work did not make the session GC run,
+// because nothing added ClearExpiredSessionsJob to any provider — its own doc comment claimed
+// it was "registered by the standard setup" and no such registration existed anywhere in the
+// framework, while DbProvider adds the sessions migration unconditionally. So a
+// database-backed app got the table and never got the sweep. It is added here now.
 func (p *JobProvider) Boot(c core.IContainer) {
 	if p.scheduler == nil {
 		p.scheduler = job.NewScheduler()
 	}
 
-	for _, ctor := range p.ctors {
+	registered := make(map[string]bool, len(p.ctors)+1)
+
+	for _, ctor := range p.addSessionGc(p.ctors) {
 		instance := ctor()
 
 		if err := injectJobDependencies(c, instance); err != nil {
@@ -83,6 +105,16 @@ func (p *JobProvider) Boot(c core.IContainer) {
 		}
 
 		name := util.IndirectType(reflect.TypeOf(instance)).Name()
+
+		// An app that already added the framework's session GC by hand — which the docs
+		// used to be the only way — must not now fail to boot on
+		// `job "ClearExpiredSessionsJob" is already registered`. Skipping the framework's
+		// copy here means the app's own registration wins, keeping any Schedule override
+		// it made.
+		if registered[name] {
+			continue
+		}
+		registered[name] = true
 
 		if err := p.scheduler.Add(name, instance.Schedule(), instance.Run); err != nil {
 			panic(fmt.Errorf("job Boot: %w", err))
@@ -92,6 +124,30 @@ func (p *JobProvider) Boot(c core.IContainer) {
 	if err := p.scheduler.Start(context.Background()); err != nil {
 		grgerr.HandleError(fmt.Errorf("job Boot: cannot start the scheduler: %w", err))
 	}
+}
+
+// addSessionGc adds the framework's session sweep for a database-backed app.
+//
+// Only for `database` storage: memory sessions live in this process's heap and are collected
+// when it exits, so the sweep would be busywork — and MemorySession's own map is bounded by
+// the process's lifetime, not by the sessions table.
+//
+// It is appended rather than prepended so an app's own registration of the same job is seen
+// first and wins, and it goes through the return value rather than AddJob so calling Boot
+// twice does not accumulate copies.
+//
+// Consulted in Boot rather than the constructor so the config has been parsed by the time it
+// is read, and so DisableSessionGc can be called in between.
+func (p *JobProvider) addSessionGc(ctors []func() core.IJob) []func() core.IJob {
+	if p.sessionGcDisabled {
+		return ctors
+	}
+	if viper.GetString("auth.session.storage") != "database" {
+		return ctors
+	}
+
+	return append(append([]func() core.IJob{}, ctors...),
+		func() core.IJob { return &job.ClearExpiredSessionsJob{} })
 }
 
 // injectJobDependencies fills a job's `container:"inject"` fields.

@@ -103,15 +103,28 @@ func (s *DbSessionEntity) SetUserId(id string) {
 	s.UserID = id
 }
 
+// IsExpired, SetExpiry and GetExpiry take mu, for the same reason the memory session's do.
+//
+// DbSessionMediator caches *DbSessionEntity by id and hands the same pointer to every
+// request for that session, so two concurrent requests both call SetExpiry on it — and the
+// sweep reads it through IsExpired while holding the *mediator's* mutex, not this one. A
+// time.Time is three words, so the unguarded read could see a value that never existed.
+//
+// Taking s.mu inside the mediator's critical section is safe: nothing acquires them in the
+// opposite order.
 func (s *DbSessionEntity) IsExpired() bool {
-	return s.Expiry.Before(time.Now())
+	return s.GetExpiry().Before(time.Now())
 }
 
 func (s *DbSessionEntity) SetExpiry(t time.Time) {
+	s.mu.Lock()
 	s.Expiry = t
+	s.mu.Unlock()
 }
 
 func (s *DbSessionEntity) GetExpiry() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.Expiry
 }
 
@@ -124,7 +137,9 @@ func (s *DbSessionEntity) GetLastActivity() time.Time {
 }
 
 func (s *DbSessionEntity) SetLastActivity(t time.Time) {
+	s.mu.Lock()
 	s.LastActivity = t
+	s.mu.Unlock()
 }
 
 func (s *DbSessionEntity) SetItem(key string, value string) {
@@ -207,10 +222,17 @@ func (thiz *DbSessionStorage) GetSessionActivityTimeout() time.Duration {
 	return thiz.sessionActivityTimeout
 }
 
+// ClearExpiredSessions deletes every expired row.
+//
+// The error used to be assigned and then discarded with `_ = err`, alone in this file —
+// AddSession, DeleteSession and the rest all report through grgErr.HandleError. So a sweep
+// that failed every time (a revoked GRANT, a lock timeout, a dropped table) was
+// indistinguishable from one that worked, and the only visible symptom was the table growing
+// — which is the symptom of the sweep not running at all. H4 gives this a caller, both a
+// scheduled job and the `session:gc` command, and neither can report a failure it never sees.
 func (d *DbSessionStorage) ClearExpiredSessions() {
-	err := d.mediator.ClearExpired()
-	if err != nil {
-		_ = err
+	if err := d.mediator.ClearExpired(); err != nil {
+		grgErr.HandleError(fmt.Errorf("Error clearing expired sessions: %v", err))
 	}
 }
 

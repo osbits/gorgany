@@ -1048,6 +1048,29 @@ Note the **pointer** receiver and the pointer at registration. A job registered 
 *value* that carries `container:"inject"` tags is now a loud error rather than a silently
 unfilled struct — the container cannot fill fields of a value it does not own.
 
+### If your `CleanupJob` was sweeping the framework's sessions table
+
+`JobProvider` now registers `job.ClearExpiredSessionsJob` itself when
+`auth.session.storage` is `database`, so you can delete your own copy. If you keep it,
+registering a job of that same type is fine — the framework skips its own when yours is
+already there, so yours wins along with any `Schedule()` you had tuned.
+
+Two other ways to sweep, if a scheduled job is the wrong shape:
+
+```bash
+# a sixth built-in command, for external cron
+go run . session:gc
+```
+
+```go
+// and turn the framework's job off, so it is not doing the same work
+jobProvider.DisableSessionGc()
+```
+
+The command is worth knowing about because `core.JobSchedule` is interval-only: it can
+express "every 24h" but not "daily at 09:00 Europe/Kyiv", and `Every: 24h` re-anchors on
+every deploy. Wall-clock maintenance belongs in cron with an explicit `CRON_TZ`.
+
 `GetUnit()`'s `gocron.Unit` becomes a `time.Duration`:
 
 | Before | After |

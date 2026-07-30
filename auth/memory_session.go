@@ -58,15 +58,29 @@ func (thiz *Session) SetUserId(id string) {
 	thiz.userId = id
 }
 
+// IsExpired, SetExpiry and GetExpiry all take mu.
+//
+// They did not, and expiry is written on every single request — SessionMiddleware calls
+// SetExpiry to slide the window — while the session sweep reads it through IsExpired. The
+// race detector reports it at memory_session.go:62 against :137. A time.Time is three words,
+// so a torn read can produce a timestamp that never existed and expire a live session or keep
+// a dead one.
+//
+// It went unseen because nothing swept on a schedule: ClearExpiredSessions had no caller.
+// H4 gives it one, which is exactly why this had to be fixed in the same change.
 func (thiz *Session) IsExpired() bool {
-	return thiz.expiry.Before(time.Now())
+	return thiz.GetExpiry().Before(time.Now())
 }
 
 func (thiz *Session) SetExpiry(t time.Time) {
+	thiz.mu.Lock()
 	thiz.expiry = t
+	thiz.mu.Unlock()
 }
 
 func (thiz *Session) GetExpiry() time.Time {
+	thiz.mu.Lock()
+	defer thiz.mu.Unlock()
 	return thiz.expiry
 }
 
@@ -132,12 +146,38 @@ func (thiz *MemorySession) SetSessionLifetime(lifetime time.Duration) {
 	thiz.sessionLifetime = lifetime
 }
 
+// ClearExpiredSessions deletes every expired session.
+//
+// It used to range over thiz.sessions with **no lock held**, taking the lock only around each
+// individual delete:
+//
+//	for key, session := range thiz.sessions {   // unguarded read
+//	    if session.IsExpired() {
+//	        thiz.mu.Lock()
+//	        delete(thiz.sessions, key)
+//	        thiz.mu.Unlock()
+//	    }
+//	}
+//
+// Every other method on this type locks correctly, so the sweep raced against all of them.
+// On a Go map a concurrent iteration and write is not merely a torn value: the runtime
+// detects it and raises `fatal error: concurrent map iteration and map write`, which
+// RecoveryMiddleware cannot catch — it takes the process down rather than the request. Same
+// failure mode as the event bus race (G1).
+//
+// It survived because nothing called it. H4 schedules it, so the race became reachable in
+// the same change that made the sweep run.
+//
+// The expired set is collected under the lock and the deletes happen under the same
+// acquisition. session.IsExpired() takes the *session's* mutex, not this one, so calling it
+// from inside the critical section cannot deadlock.
 func (thiz *MemorySession) ClearExpiredSessions() {
+	thiz.mu.Lock()
+	defer thiz.mu.Unlock()
+
 	for key, session := range thiz.sessions {
 		if session.IsExpired() {
-			thiz.mu.Lock()
 			delete(thiz.sessions, key)
-			thiz.mu.Unlock()
 		}
 	}
 }

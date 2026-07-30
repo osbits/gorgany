@@ -1227,6 +1227,29 @@ Only if useful to you.
   success and did nothing, so verify your `Down()` methods actually work before
   relying on it.
 
+- **`session:gc`, and an automatic session sweep.** If `auth.session.storage` is
+  `database`, your `sessions` table has been growing without bound: the framework's
+  `ClearExpiredSessionsJob` claimed to be "registered by the standard setup" and was
+  registered by nothing, while `DbProvider` adds the sessions migration unconditionally.
+  `JobProvider` now adds the job itself, so a scheduler-running process sweeps without
+  being asked. If you wrote your own cleanup job you can delete it — and if you keep it,
+  the framework skips its own copy rather than failing to boot on a duplicate.
+
+  For a web tier that does not run the scheduler, or wall-clock scheduling that
+  interval-only `core.JobSchedule` cannot express, use the command from cron instead and
+  turn the job off:
+
+  ```bash
+  go run cmd/cli.go session:gc
+  ```
+
+  ```go
+  jobProvider.DisableSessionGc()
+  ```
+
+  Check your table before you deploy this — the first sweep on a long-running app may
+  delete a very large number of rows at once.
+
 - **`ROLLUP` / `CUBE` / `GROUPING SETS`** now render. They were silently dropped
   before — and with no plain `GroupBy()` fields the framework emitted a bare
   `GROUP BY `, which is a syntax error. If you worked around that with raw SQL,

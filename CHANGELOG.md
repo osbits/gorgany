@@ -584,6 +584,33 @@ the behaviour the code had, so being green proved nothing about being usable.
   **`databases.<name>.allow_unfaithful_upsert`**, threaded through to the dialect; the
   message now names it. MySQL-only, ignored by Postgres, which expresses the construct
   exactly.
+- **Nothing swept the `sessions` table.** `ClearExpiredSessionsJob`'s own doc comment said
+  it was "registered by the standard setup for apps using `auth.session.storage:
+  database`", and no such registration existed anywhere in the framework — while
+  `DbProvider` adds the sessions migration unconditionally. Every database-backed app got
+  the table and no sweep, and the symptom (a table that only grows) is indistinguishable
+  from a sweep that runs and finds nothing. A2 had fixed the *other* half, the scheduler
+  that could not have ticked it. `JobProvider.Boot` now adds the job for `database`
+  storage, with `DisableSessionGc()` to opt out; an app that already added the job by hand
+  keeps its own registration rather than failing to boot on the duplicate. Plus a sixth
+  built-in command, **`session:gc`**, for a web tier that does not run the scheduler or for
+  wall-clock scheduling that interval-only `core.JobSchedule` cannot express.
+
+  Scheduling the sweep exposed three defects in the code it newly reaches, all fixed here:
+
+  - `MemorySession.ClearExpiredSessions` ranged over the session map with **no lock
+    held**, taking the lock only around each individual delete, while every other method
+    on the type locks correctly. A concurrent map iteration and write is a runtime *fatal*
+    error — `RecoveryMiddleware` cannot catch it, so it takes the process down rather than
+    the request. Same failure mode as the event bus race.
+  - `Session.expiry` and `DbSessionEntity.Expiry` were written unguarded by `SetExpiry`,
+    which `SessionMiddleware` calls on **every request**, and read unguarded by the
+    sweep's `IsExpired`. A `time.Time` is three words, so a torn read could expire a live
+    session or keep a dead one. `DbSessionMediator` caches one entity pointer per session
+    and hands it to every concurrent request for that session.
+  - `DbSessionStorage.ClearExpiredSessions` discarded its error with `_ = err`, alone in a
+    file where every other method reports through `HandleError`. A sweep failing every
+    time looked exactly like one that worked.
 
 ### Corrections to the briefs
 

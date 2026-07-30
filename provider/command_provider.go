@@ -5,6 +5,7 @@ import (
 	"github.com/osbits/gorgany/v2/command"
 	"github.com/osbits/gorgany/v2/command/db"
 	"github.com/osbits/gorgany/v2/command/domain"
+	"github.com/osbits/gorgany/v2/command/session"
 	"github.com/osbits/gorgany/v2/err"
 )
 
@@ -20,6 +21,11 @@ func NewCommandProvider() *CommandProvider {
 			&db.MigrateCommand{},
 			&db.SeedCommand{},
 			&domain.RegisterDomainsCommand{},
+			// H4. The sixth built-in. Nothing in the framework swept the sessions table:
+			// ClearExpiredSessionsJob claimed to be "registered by the standard setup" and
+			// was registered by nothing, while DbProvider adds the sessions migration
+			// unconditionally — so every database-backed app had a table that only grew.
+			&session.GcCommand{},
 		},
 	}
 }
