@@ -9,6 +9,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -128,7 +129,7 @@ func Parse(rawInput map[string]any) (DataSource, error) {
 	raw := foldKeys(rawInput)
 
 	if unknown := unknownKeys(rawInput, knownKeys); len(unknown) > 0 {
-		return cfg, fmt.Errorf("datasource config: unknown key(s) %s", strings.Join(unknown, ", "))
+		return cfg, unknownKeyError(unknown)
 	}
 
 	var err error
@@ -193,7 +194,11 @@ func parsePool(raw map[string]any) (Pool, error) {
 	props := foldKeys(propsInput)
 
 	if unknown := unknownKeys(propsInput, knownPoolKeys); len(unknown) > 0 {
-		return pool, fmt.Errorf("datasource config: unknown key(s) %s under 'properties'", strings.Join(unknown, ", "))
+		// Quoted here rather than by unknownKeys, which returns bare names so
+		// unknownKeyError can also feed them to the suggester.
+		return pool, fmt.Errorf("datasource config: unknown key(s) %s under 'properties' — "+
+			"recognised keys are %s",
+			strings.Join(quoteAll(unknown), ", "), strings.Join(sortedKeysOf(knownPoolKeys), ", "))
 	}
 
 	var err error
@@ -259,11 +264,173 @@ func unknownKeys(raw map[string]any, known map[string]bool) []string {
 	var unknown []string
 	for k := range raw {
 		if !known[strings.ToLower(k)] {
-			unknown = append(unknown, "'"+k+"'")
+			unknown = append(unknown, k)
 		}
 	}
 	sort.Strings(unknown)
 	return unknown
+}
+
+// unknownKeyError explains an unrecognised key under `databases.<name>` well enough to act
+// on, because rejecting it is a boot panic that a `go build`/`go vet` migration check does
+// not catch.
+//
+// The rejection itself stays strict: it is what turns a typo like `databse` into a boot
+// failure instead of a setting silently ignored, which is the defect it was added for. But
+// a deliberate app-owned key lands here too, and the bare "unknown key(s) 'pool'" gave no
+// hint that the framework now owns this namespace. A real app carried an app-owned `pool:`
+// block here *because* the framework's own `properties` path was dead before v2 — so v2
+// fixed `properties` and made the workaround fatal in the same release.
+//
+// A near-miss gets a suggestion; anything else gets the two ways out.
+func unknownKeyError(unknown []string) error {
+	var parts []string
+	parts = append(parts, fmt.Sprintf("datasource config: unknown key(s) %s under this database",
+		strings.Join(quoteAll(unknown), ", ")))
+
+	for _, key := range unknown {
+		if nearest, ok := nearestKnownKey(key); ok {
+			parts = append(parts, fmt.Sprintf("did you mean '%s' instead of '%s'?", nearest, key))
+		}
+	}
+
+	// The remedy is appended even when a suggestion was found, because the two answer
+	// different questions and a boot-failure message has to be self-sufficient. 'pool' gets
+	// "did you mean 'properties'?" — useful — but an app whose 'pool' block holds its own
+	// settings needs to be told it can move them, not to rename them.
+	parts = append(parts, fmt.Sprintf(
+		"recognised keys are %s; if the key is your app's own, move it under 'properties' "+
+			"(passed through untouched) or out from under 'databases.<name>' entirely",
+		strings.Join(sortedKnownKeys(), ", ")))
+
+	return errors.New(strings.Join(parts, " — "))
+}
+
+// keyAliases maps names a reasonable person writes instead of ours to the real key.
+//
+// Edit distance cannot catch these: they are vocabulary confusions, not typos. Someone
+// arriving from a libpq connection string writes `sslmode` and `dbname`; someone from a
+// MySQL DSN writes `user` and `pass`. Each is far enough from our spelling that no
+// threshold would match, and close enough in intent that the reader is certain they got it
+// right.
+var keyAliases = map[string]string{
+	"sslmode":     "ssl",
+	"ssl_mode":    "ssl",
+	"dbname":      "db",
+	"db_name":     "db",
+	"database":    "db",
+	"user":        "username",
+	"pass":        "password",
+	"passwd":      "password",
+	"searchpath":  "search_path",
+	"schema":      "search_path",
+	"hostname":    "host",
+	"addr":        "host",
+	"address":     "host",
+	"params":      "options",
+	"parameters":  "options",
+	"props":       "properties",
+	"pool":        "properties",
+	"connections": "properties",
+}
+
+// nearestKnownKey returns the known key closest to input, when one is close enough to be a
+// likely typo or a known confusion.
+//
+// The edit-distance threshold is deliberately tight. Suggesting 'db' for 'pool' on distance
+// alone would be worse than saying nothing: it reads as authoritative and sends the reader
+// to rename a key that was never meant to be one of ours. (`pool` does get a suggestion, but
+// from keyAliases, where it is a deliberate entry rather than a coincidence of spelling.)
+func nearestKnownKey(input string) (string, bool) {
+	lowered := strings.ToLower(input)
+
+	if alias, ok := keyAliases[lowered]; ok {
+		return alias, true
+	}
+
+	best := ""
+	bestDistance := 0
+	for _, known := range sortedKnownKeys() {
+		distance := editDistance(lowered, known)
+
+		// At most a third of the shorter name may differ, and never more than two edits.
+		limit := len(known)
+		if len(lowered) < limit {
+			limit = len(lowered)
+		}
+		limit /= 3
+		if limit > 2 {
+			limit = 2
+		}
+		if limit < 1 {
+			continue
+		}
+
+		if distance <= limit && (best == "" || distance < bestDistance) {
+			best, bestDistance = known, distance
+		}
+	}
+
+	return best, best != ""
+}
+
+// editDistance is Damerau-Levenshtein, counting a transposition as one edit rather than
+// two.
+//
+// Plain Levenshtein scores `prot` against `port` as 2, which a one-edit threshold rejects —
+// and a transposed pair of adjacent letters is one of the most common typos there is. The
+// full matrix is kept rather than two rows, because the transposition case needs the row
+// before last.
+func editDistance(a, b string) int {
+	if a == b {
+		return 0
+	}
+
+	rows := make([][]int, len(a)+1)
+	for i := range rows {
+		rows[i] = make([]int, len(b)+1)
+		rows[i][0] = i
+	}
+	for j := 0; j <= len(b); j++ {
+		rows[0][j] = j
+	}
+
+	for i := 1; i <= len(a); i++ {
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+
+			rows[i][j] = min(rows[i-1][j]+1, min(rows[i][j-1]+1, rows[i-1][j-1]+cost))
+
+			// Adjacent transposition.
+			if i > 1 && j > 1 && a[i-1] == b[j-2] && a[i-2] == b[j-1] {
+				rows[i][j] = min(rows[i][j], rows[i-2][j-2]+1)
+			}
+		}
+	}
+
+	return rows[len(a)][len(b)]
+}
+
+func sortedKnownKeys() []string { return sortedKeysOf(knownKeys) }
+
+func sortedKeysOf(set map[string]bool) []string {
+	keys := make([]string, 0, len(set))
+	for key := range set {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func quoteAll(names []string) []string {
+	quoted := make([]string, 0, len(names))
+	for _, name := range names {
+		quoted = append(quoted, "'"+name+"'")
+	}
+	return quoted
 }
 
 func toStringMap(v any) (map[string]any, bool) {
