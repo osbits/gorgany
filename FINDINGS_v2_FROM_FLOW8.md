@@ -16,6 +16,33 @@ existing tests structurally cannot reach.
 
 ---
 
+## STATUS — all resolved as of `0361df3`
+
+Everything below was recorded against `0246e02` and has since been addressed by F1–F12.
+Kept as a record of what was found and how it was verified; **the numbered sections are
+history, not open issues.** Re-verified against `0361df3` from the app side:
+
+| # | issue | fixed by | re-verified |
+|---|-------|----------|-------------|
+| 1 | container deadlock on core rebind | F1 | repro now prints `no deadlock`; a rebind warning logs and returns |
+| 2 | module path lacks `/v2` | F10 | `require github.com/osbits/gorgany/v2 v2.0.0-edge` now parses and builds |
+| 3 | raw request body written to the log | F2 | `Error()` no longer interpolates `Body`; a malformed body with a secret leaves 0 occurrences in the log |
+| 4 | `omitempty` ≠ `encoding/json` | F4 | all five cases (empty/nil slice, empty map, zero `time.Time`, zero struct) now match |
+| 5 | embed/outer collision order-dependent | F4 | outer field wins in both declaration orders |
+| 6 | "its default applies" was false | F5 | unresolved placeholders are blanked; the warning now says so accurately |
+| 7 | validation errors never reached a client | F3 | `422` with `field`/`err`/`rule`/`path`, wire names, readable messages — no more `301` |
+| 8 | unknown datasource key undiagnosable | F6 | error now does did-you-mean, lists recognised keys, and says what to do with an app-owned key |
+| 9 | Postgres-only app linked MySQL | F7 | `driver/postgres` links one engine; `DbProvider` no longer imports `builtin` |
+| 10 | `viper.Set` sibling-wipe still trips apps | F9 docs | the app hit exactly this and the guide now covers it |
+| 11 | `OPTIONS` enumeration / `GET /csrf` scope | — | notes only, unchanged by design |
+
+Two of my own claims were wrong and are corrected in place below: §5 (I first wrote "the
+embedded value always wins"; it was order-dependent) and the `${VAR}` item, which an
+adversarial re-check refuted *as an app-visible issue* because the app-side blanking
+already neutralised it — the framework half stood and is what F5 fixed.
+
+---
+
 ## 1. BLOCKER — `Container.bind` deadlocks the process on any core-interface rebind
 
 `service/container.go:131` takes `c.mu.Lock()` with a deferred unlock, and then at

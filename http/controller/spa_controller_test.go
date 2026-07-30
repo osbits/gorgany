@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/osbits/gorgany/v2/app/core"
+	grghttp "github.com/osbits/gorgany/v2/http"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -23,6 +26,7 @@ type spaRecorder struct {
 	status  int
 	body    []byte
 	text    string
+	json    any
 	headers http.Header
 }
 
@@ -33,6 +37,7 @@ type spaResponse struct {
 
 func (r *spaResponse) Bytes(b []byte, code int) { r.rec.status, r.rec.body = code, b }
 func (r *spaResponse) Text(s string, code int)  { r.rec.status, r.rec.text = code, s }
+func (r *spaResponse) JSON(v any, code int)     { r.rec.status, r.rec.json = code, v }
 func (r *spaResponse) SetHeader(key, value string) {
 	if r.rec.headers == nil {
 		r.rec.headers = http.Header{}
@@ -46,6 +51,12 @@ type spaRequest struct {
 }
 
 func (r *spaRequest) RawRequest() *http.Request { return r.raw }
+
+// PathParam and Header exist because http.WantsJSON consults both. The harness embeds a nil
+// core.IRequestScope, so an unimplemented method on the negotiation path is a nil panic
+// rather than a compile error — hence implementing them here rather than discovering it.
+func (r *spaRequest) PathParam(string) string { return "" }
+func (r *spaRequest) Header() http.Header     { return r.raw.Header }
 
 type spaMessage struct {
 	core.HttpMessage
@@ -64,6 +75,13 @@ func spaRequestFor(path string) *spaMessage {
 		res: &spaResponse{rec: rec},
 		rec: rec,
 	}
+}
+
+// spaAPIRequestFor is the same request an API client makes: it asks for JSON.
+func spaAPIRequestFor(path string) *spaMessage {
+	message := spaRequestFor(path)
+	message.req.raw.Header.Set("Accept", core.ApplicationJson.String())
+	return message
 }
 
 // builtApp writes a plausible bundler output tree and returns its root.
@@ -409,4 +427,124 @@ func TestBundlerContentTypes(t *testing.T) {
 	manifest := spaRequestFor("/manifest.webmanifest")
 	controller.Serve(manifest)
 	assert.Contains(t, manifest.rec.headers.Get("Content-Type"), "manifest+json")
+}
+
+// ------------------------------------------------------- H1: the shadowed 404
+
+// H1. SpaController registers a `/*` catch-all, and chi matches a catch-all in preference to
+// falling through to NotFound — so mounting the SPA replaces the router's negotiated 404
+// (C2) for every GET the app has no route for.
+//
+// The observed symptom in flow8-be: `GET /api/v1/widgetz` with `Accept: application/json`
+// answered **200 with an HTML document**. A client checking the status code saw success and
+// then failed parsing JSON, which is the worst of both. `DELETE /api/v1/widgetz` still
+// answered the 405 envelope, because the SPA registers GET only — so the shape of a
+// not-found depended on the verb.
+//
+// The fix is not "exclude more paths": an excluded path answered text/plain where the router
+// answers the envelope, so excluding merely traded one divergence for another. Both of the
+// SPA's refusals now go through the same http.WriteNegotiatedError the router uses, which is
+// the property worth pinning — an app's 404 must not depend on whether a SPA is mounted.
+
+func TestAnExcludedApiPathAnswersTheNegotiatedEnvelope(t *testing.T) {
+	controller := NewSpaController(builtApp(t))
+
+	message := spaAPIRequestFor("/api/v1/widgetz")
+	controller.Serve(message)
+
+	// Not 200, and not HTML: this is the assertion the defect failed.
+	assert.Equal(t, http.StatusNotFound, message.rec.status)
+	assert.Empty(t, message.rec.body, "an API client must not receive index.html")
+	assert.Empty(t, message.rec.text, "an API client must not receive text/plain")
+
+	require.NotNil(t, message.rec.json, "expected the standard envelope")
+	assert.Contains(t, envelopeStatusCode(t, message.rec.json), "NOT_FOUND")
+}
+
+// TestAnExcludedPathStillAnswersTextForABrowser — negotiation cuts both ways, and a browser
+// following a stale link should not be handed a JSON body.
+//
+// The path is /csrf rather than an /api one on purpose: WantsJSON treats an /api/ prefix as
+// an API client whatever the Accept header says (T3.4), so every /api path here would be
+// JSON and the test would prove nothing about negotiation. /csrf is the excluded prefix that
+// is not under /api.
+func TestAnExcludedPathStillAnswersTextForABrowser(t *testing.T) {
+	controller := NewSpaController(builtApp(t))
+
+	message := spaRequestFor("/csrf")
+	// A browser's Accept lists text/html and then */*; matching the wildcard would turn
+	// every one of these into JSON, which is why WantsJSON looks for JSON specifically.
+	message.req.raw.Header.Set("Accept", "text/html,application/xhtml+xml,*/*;q=0.8")
+	controller.Serve(message)
+
+	assert.Equal(t, http.StatusNotFound, message.rec.status)
+	assert.Nil(t, message.rec.json)
+	assert.NotEmpty(t, message.rec.text)
+}
+
+// TestTheSpaDoesNotShadowTheRoutersAnswer is the invariant behind H1, stated directly: for a
+// path the SPA refuses, its response must be byte-identical to the one the router produces
+// with no SPA mounted. Asserting the envelope's shape in the test above would drift the
+// moment the router's changed; comparing against the router itself cannot.
+func TestTheSpaDoesNotShadowTheRoutersAnswer(t *testing.T) {
+	// Both an /api path (always JSON) and /csrf under a browser Accept (text), so the
+	// comparison covers each branch of the negotiation rather than only the one.
+	for _, probe := range []struct{ path, accept string }{
+		{"/api/v1/widgetz", core.ApplicationJson.String()},
+		{"/csrf", "text/html,application/xhtml+xml,*/*;q=0.8"},
+	} {
+		t.Run(probe.path, func(t *testing.T) {
+			viaSpa := spaRequestFor(probe.path)
+			viaSpa.req.raw.Header.Set("Accept", probe.accept)
+			NewSpaController(builtApp(t)).Serve(viaSpa)
+
+			viaRouter := spaRequestFor(probe.path)
+			viaRouter.req.raw.Header.Set("Accept", probe.accept)
+			grghttp.WriteNegotiatedError(viaRouter, core.NotFoundHttpStatus,
+				"No route matches this request")
+
+			assert.Equal(t, viaRouter.rec.status, viaSpa.rec.status)
+			assert.Equal(t, viaRouter.rec.text, viaSpa.rec.text)
+			assert.Equal(t, viaRouter.rec.json, viaSpa.rec.json)
+		})
+	}
+}
+
+// TestAMissingIndexIsNegotiatedToo. The misconfiguration paths matter less, but an API client
+// that gets text/plain from one branch and an envelope from another has to handle both.
+func TestAMissingIndexIsNegotiatedToo(t *testing.T) {
+	controller := NewSpaController(t.TempDir())
+
+	message := spaAPIRequestFor("/settings")
+	controller.Serve(message)
+
+	assert.Equal(t, http.StatusNotFound, message.rec.status)
+	require.NotNil(t, message.rec.json)
+	assert.Contains(t, envelopeError(t, message.rec.json), "is the app built?")
+}
+
+// envelopeStatusCode and envelopeError read the envelope back through encoding/json, so the
+// assertions above are about the wire shape a client sees rather than dto's field names.
+
+func envelopeStatusCode(t *testing.T, envelope any) string {
+	t.Helper()
+	return envelopeField(t, envelope, "status_code")
+}
+
+func envelopeError(t *testing.T, envelope any) string {
+	t.Helper()
+	return envelopeField(t, envelope, "errors")
+}
+
+func envelopeField(t *testing.T, envelope any, field string) string {
+	t.Helper()
+
+	encoded, err := json.Marshal(envelope)
+	require.NoError(t, err)
+
+	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	require.Contains(t, decoded, field, "envelope was %s", encoded)
+
+	return fmt.Sprint(decoded[field])
 }

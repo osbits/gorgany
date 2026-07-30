@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/osbits/gorgany/v2/app/core"
+	grghttp "github.com/osbits/gorgany/v2/http"
 	"github.com/osbits/gorgany/v2/http/router"
 )
 
@@ -106,27 +107,37 @@ func (thiz *SpaController) immutablePattern() *regexp.Regexp {
 // Serve answers one request.
 func (thiz *SpaController) Serve(message core.HttpMessage) {
 	if thiz.Root == "" {
-		message.Response().Text("SPA controller has no Root configured", http.StatusInternalServerError)
+		grghttp.WriteNegotiatedError(message, core.InternalErrorHttpStatus,
+			"SPA controller has no Root configured")
 		return
 	}
 
 	req := message.Request().RawRequest()
 	if req == nil || req.URL == nil {
-		message.Response().Text("Bad request", http.StatusBadRequest)
+		grghttp.WriteNegotiatedError(message, core.BadRequestHttpStatus, "Bad request")
 		return
 	}
 
 	requestPath := req.URL.Path
 
 	if thiz.isExcluded(requestPath) {
-		// Deliberately not index.html. See ExcludedPrefixes.
-		message.Response().Text("Not found", http.StatusNotFound)
+		// Deliberately not index.html, and deliberately the *router's* 404 rather than a
+		// plain-text one.
+		//
+		// This route is a `/*` catch-all, and chi matches a catch-all in preference to
+		// falling through to NotFound — so mounting the SPA shadows the router's negotiated
+		// 404 for every GET. Before H1 that meant a mistyped /api/v1/widget answered 200
+		// with an HTML document, and an excluded path answered text/plain where the router
+		// would have answered the envelope. Same reason, same message, same shape: an app's
+		// 404 must not depend on whether a SPA happens to be mounted.
+		grghttp.WriteNegotiatedError(message, core.NotFoundHttpStatus,
+			"No route matches this request")
 		return
 	}
 
 	resolved, ok := thiz.resolve(requestPath)
 	if !ok {
-		message.Response().Text("Invalid path", http.StatusBadRequest)
+		grghttp.WriteNegotiatedError(message, core.BadRequestHttpStatus, "Invalid path")
 		return
 	}
 
@@ -134,7 +145,8 @@ func (thiz *SpaController) Serve(message core.HttpMessage) {
 		thiz.writeAsset(message, resolved, content)
 		return
 	} else if !os.IsNotExist(err) {
-		message.Response().Text("Internal server error", http.StatusInternalServerError)
+		grghttp.WriteNegotiatedError(message, core.InternalErrorHttpStatus,
+			"Internal server error")
 		return
 	}
 
@@ -224,12 +236,13 @@ func (thiz *SpaController) writeIndex(message core.HttpMessage) {
 		if os.IsNotExist(err) {
 			// Say which file is missing. "404" here means the app was never built, or
 			// Root points at the wrong directory, and that is worth naming.
-			message.Response().Text(
-				fmt.Sprintf("SPA entry document not found at %s; is the app built?", indexPath),
-				http.StatusNotFound)
+			grghttp.WriteNegotiatedError(message, core.NotFoundHttpStatus,
+				fmt.Sprintf("SPA entry document not found at %s; is the app built?", indexPath))
 			return
 		}
-		message.Response().Text("Internal server error", http.StatusInternalServerError)
+
+		grghttp.WriteNegotiatedError(message, core.InternalErrorHttpStatus,
+			"Internal server error")
 		return
 	}
 
