@@ -25,6 +25,11 @@ const (
 // gormMySQLDataSource implements dbCore.IDataSource over gorm.io/driver/mysql.
 type gormMySQLDataSource struct {
 	db *gorm.DB
+
+	// allowUnfaithfulUpsert carries databases.<name>.allow_unfaithful_upsert through to
+	// the dialect. See dsconfig.DataSource.AllowUnfaithfulUpsert for why the config is
+	// the only route: everything downstream builds its builder from Dialect().
+	allowUnfaithfulUpsert bool
 }
 
 // NewDataSource creates a MySQL datasource from a raw `databases.<name>` map.
@@ -79,7 +84,10 @@ func NewDataSourceWithConfig(cfg dsconfig.DataSource) (dbCore.IDataSource, error
 		db = db.Debug()
 	}
 
-	return &gormMySQLDataSource{db: db}, nil
+	return &gormMySQLDataSource{
+		db:                    db,
+		allowUnfaithfulUpsert: cfg.AllowUnfaithfulUpsert,
+	}, nil
 }
 
 // BuildDSN renders cfg as a go-sql-driver/mysql DSN:
@@ -233,8 +241,13 @@ func validateDSNParam(key string) error {
 }
 
 // Dialect returns the SQL dialect this connection speaks.
+//
+// The upsert flag is threaded from the config here rather than left at its zero value,
+// which is what made the opt-in unreachable: NewSession and Transaction both build their
+// builders from this method, so a hard-coded &MySQLDialect{} meant no ORM caller could ever
+// set it.
 func (ds *gormMySQLDataSource) Dialect() dbCore.SQLDialect {
-	return &MySQLDialect{}
+	return &MySQLDialect{AllowUnfaithfulUpsert: ds.allowUnfaithfulUpsert}
 }
 
 // GetDriver returns the underlying *gorm.DB.

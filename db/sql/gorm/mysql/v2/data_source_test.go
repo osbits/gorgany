@@ -244,3 +244,73 @@ func TestCanonicalisationDoesNotProduceDuplicateParams(t *testing.T) {
 	assert.NotContains(t, dsn, "parsetime=")
 	assert.Contains(t, dsn, "parseTime=false", "an explicit option must win")
 }
+
+// ---------------------------------------------- H3: the reachable upsert opt-in
+
+// H3. MySQLDialect.AllowUnfaithfulUpsert was documented in four places — CHANGELOG,
+// MIGRATION_v2 §, MIGRATE_TO_V2_PROMPT and docs/DIALECTS.md — and settable from none of
+// them by an app using the ORM. Dialect() returned a hard-coded &MySQLDialect{}, and
+// NewSession/Transaction build every builder from Dialect(), so the only way to take the
+// opt-in was NewBuilderWithDialect: construct a builder by hand and bypass the ORM. The
+// refusal message named a field the caller could not reach.
+//
+// The tests below assert the flag arrives at the SQL, through the same session and
+// transaction path an app uses, rather than merely that Parse decodes the key.
+
+func TestTheUpsertOptInReachesTheDialect(t *testing.T) {
+	ds := &gormMySQLDataSource{allowUnfaithfulUpsert: true}
+
+	dialect, ok := ds.Dialect().(*MySQLDialect)
+	require.True(t, ok)
+	assert.True(t, dialect.AllowUnfaithfulUpsert)
+}
+
+func TestTheUpsertOptInIsOffUnlessAskedFor(t *testing.T) {
+	dialect, ok := (&gormMySQLDataSource{}).Dialect().(*MySQLDialect)
+	require.True(t, ok)
+	assert.False(t, dialect.AllowUnfaithfulUpsert,
+		"the translation is valid but wrong SQL; it must stay opt-in")
+}
+
+// TestTheUpsertOptInReachesSessionAndTransactionSQL is the assertion that matters: a
+// builder obtained the way an app obtains one must honour the flag. Both paths are
+// covered because transactionImpl carries its own dialect field.
+func TestTheUpsertOptInReachesSessionAndTransactionSQL(t *testing.T) {
+	ds := &gormMySQLDataSource{allowUnfaithfulUpsert: true}
+
+	builders := map[string]func() dbCore.IQueryBuilder{
+		"session":     (&sessionImpl{dialect: ds.Dialect()}).Query,
+		"transaction": (&transactionImpl{dialect: ds.Dialect()}).Query,
+	}
+
+	for name, newBuilder := range builders {
+		t.Run(name, func(t *testing.T) {
+			sql, _, err := newBuilder().
+				Insert("users").
+				Values(map[string]any{"email": "a@b.c"}).
+				OnConflict("email").
+				DoUpdate(map[string]any{"email": "a@b.c"}).
+				ToSQL()
+
+			require.NoError(t, err, "the opt-in must be honoured through the ORM path")
+			assert.Contains(t, sql, "ON DUPLICATE KEY UPDATE")
+		})
+	}
+}
+
+// TestWithoutTheOptInTheOrmPathStillRefuses — the default has to stay the refusal, and it
+// has to arrive through the same path.
+func TestWithoutTheOptInTheOrmPathStillRefuses(t *testing.T) {
+	ds := &gormMySQLDataSource{}
+
+	_, _, err := (&sessionImpl{dialect: ds.Dialect()}).Query().
+		Insert("users").
+		Values(map[string]any{"email": "a@b.c"}).
+		OnConflict("email").
+		DoUpdate(map[string]any{"email": "a@b.c"}).
+		ToSQL()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "allow_unfaithful_upsert",
+		"the refusal must name the config key, which is the only route an ORM caller has")
+}

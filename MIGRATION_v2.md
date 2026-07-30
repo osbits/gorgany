@@ -1258,10 +1258,18 @@ executing.
 builder.OnConflict([]string{"email"}).DoUpdate(map[string]any{"name": "new"})
 ```
 
-```go
-// AFTER, option 1 — opt in, having read the caveat and confirmed one unique index
-dialect := mysqlv2.MySQLDialect{AllowUnfaithfulUpsert: true}
+```yaml
+# AFTER, option 1 — opt in, having read the caveat and confirmed one unique index
+databases:
+  main:
+    driver: mysql_gorm
+    allow_unfaithful_upsert: true
 ```
+
+This config key is the route to use. The dialect struct also carries
+`AllowUnfaithfulUpsert`, but setting it only helps a builder you construct yourself: the
+datasource builds its own dialect, and `session.Query()` and `Transaction()` build every
+builder from that — so through v2.0.0-edge the opt-in was unreachable from the ORM.
 
 ```go
 // AFTER, option 2 — express it in a way MySQL renders faithfully
@@ -1283,10 +1291,12 @@ Postgres only, there is nothing to do.
 Without the opt-in you get:
 
 ```
-mysql: ON CONFLICT ... DO UPDATE is not supported: MySQL's ON DUPLICATE KEY UPDATE
-keys off any unique index rather than the named conflict target, so the translation
-is not faithful; set MySQLDialect{AllowUnfaithfulUpsert: true} if your table has
-exactly one unique index
+mysql does not support ON CONFLICT ... DO UPDATE; MySQL's ON DUPLICATE KEY UPDATE
+fires on any unique index rather than the conflict target you named, so the
+translation is not faithful; set databases.<name>.allow_unfaithful_upsert: true (or
+MySQLDialect.AllowUnfaithfulUpsert, when you build the dialect yourself) if the table
+has exactly one unique constraint, or do the read-then-write explicitly in a
+transaction
 ```
 
 ### Mechanical or judgement?

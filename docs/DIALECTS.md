@@ -292,7 +292,7 @@ default). The dialect never emits SQL that relies on loose grouping.
 | Identifier quoting | `"tbl"."col"` | `` `tbl`.`col` `` — MySQL only accepts double quotes under `ANSI_QUOTES`, which is off by default and would break string literals. |
 | `ROLLUP` | `GROUP BY ROLLUP (a, b)` | `GROUP BY a, b WITH ROLLUP` — a trailing modifier, not a prefix function. Because it modifies the whole grouping list it cannot be combined with a separate plain field list the way Postgres allows. |
 | `ILIKE` | `ILIKE` | Rewritten to `LIKE`, which is case-insensitive under `utf8mb4_unicode_ci`. **On a `_bin` or `_cs` collation the comparison becomes case-sensitive** — that is a property of the column's collation, not of the rewrite. |
-| `ON CONFLICT (cols) DO UPDATE` | `ON CONFLICT (cols) DO UPDATE SET …` | **Refused by default.** Opt in with `MySQLDialect{AllowUnfaithfulUpsert: true}` — see the warning below. |
+| `ON CONFLICT (cols) DO UPDATE` | `ON CONFLICT (cols) DO UPDATE SET …` | **Refused by default.** Opt in with `databases.<name>.allow_unfaithful_upsert: true` — see the warning below. |
 | `ON CONFLICT DO NOTHING` | `ON CONFLICT DO NOTHING` | `ON DUPLICATE KEY UPDATE \`col\` = \`col\`` — the idiomatic MySQL no-op, self-assigning the first insert column. |
 | Bare `OFFSET` | `OFFSET 20` is legal on its own | MySQL rejects `OFFSET` without `LIMIT`, so `LIMIT 18446744073709551615` is synthesised — the sentinel MySQL's own documentation prescribes. |
 | Booleans | native `boolean` | `TINYINT(1)`; GORM handles the mapping. |
@@ -317,18 +317,38 @@ stop it executing — so it now errors:
 ```
 mysql does not support ON CONFLICT ... DO UPDATE; MySQL's ON DUPLICATE KEY UPDATE
 fires on any unique index rather than the conflict target you named, so the
-translation is not faithful; set MySQLDialect.AllowUnfaithfulUpsert if the table has
-exactly one unique constraint, or do the read-then-write explicitly in a transaction
+translation is not faithful; set databases.<name>.allow_unfaithful_upsert: true (or
+MySQLDialect.AllowUnfaithfulUpsert, when you build the dialect yourself) if the table
+has exactly one unique constraint, or do the read-then-write explicitly in a
+transaction
 ```
 
 A caller who has read the rest of this section and knows their table has exactly one
-unique constraint can opt in:
+unique constraint can opt in **per datasource**, in the config:
+
+```yaml
+databases:
+  main:
+    driver: mysql_gorm
+    host: localhost
+    db: app
+    allow_unfaithful_upsert: true
+```
+
+That is the setting an app using the ORM wants, and until v2.0.0 it did not exist. The
+flag lived only on the dialect struct, while `Dialect()` built the dialect itself and
+`session.Query()` / `Transaction()` build every builder from it — so the documented opt-in
+could be taken only by constructing a builder by hand and bypassing the ORM:
 
 ```go
+// Still available, for a builder you construct yourself.
 dialect := &mysql.MySQLDialect{AllowUnfaithfulUpsert: true}
 b := builder.New(dialect)
-// or, per datasource, by constructing the session's builder with it
 ```
+
+The key is MySQL-only. Postgres expresses `ON CONFLICT (cols) DO UPDATE` exactly, so a
+Postgres datasource ignores it — the same way it is the Postgres-only
+`prefer_simple_protocol` that MySQL ignores.
 
 `ON CONFLICT DO NOTHING` is unaffected. Its self-assignment translation
 (``ON DUPLICATE KEY UPDATE `col` = `col` ``) is faithful, so it needs no opt-in —

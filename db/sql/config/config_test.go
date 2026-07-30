@@ -227,3 +227,38 @@ func TestSortedOptionKeys(t *testing.T) {
 	cfg := config.DataSource{Options: map[string]string{"zeta": "1", "alpha": "2", "mid": "3"}}
 	assert.Equal(t, []string{"alpha", "mid", "zeta"}, cfg.SortedOptionKeys())
 }
+
+// TestAllowUnfaithfulUpsertIsRecognised. H3 added the key because it is the only route an
+// app using the ORM has to MySQLDialect.AllowUnfaithfulUpsert; knownKeys rejects anything
+// unrecognised, so omitting it here would have turned the documented setting into a boot
+// failure.
+func TestAllowUnfaithfulUpsertIsRecognised(t *testing.T) {
+	// Spelled camelCase to prove the Viper case-folding path works too: a YAML
+	// `allow_unfaithful_upsert` arrives lowercased, and a hand-built map may not be.
+	cfg, err := config.Parse(map[string]any{
+		"driver": "mysql_gorm", "host": "localhost", "db": "app",
+		"allow_unfaithful_upsert": true,
+	})
+
+	require.NoError(t, err)
+	assert.True(t, cfg.AllowUnfaithfulUpsert)
+}
+
+func TestAllowUnfaithfulUpsertDefaultsToOff(t *testing.T) {
+	cfg, err := config.Parse(map[string]any{
+		"driver": "mysql_gorm", "host": "localhost", "db": "app",
+	})
+
+	require.NoError(t, err)
+	assert.False(t, cfg.AllowUnfaithfulUpsert)
+}
+
+func TestAllowUnfaithfulUpsertRejectsANonBoolean(t *testing.T) {
+	_, err := config.Parse(map[string]any{
+		"driver": "mysql_gorm", "host": "localhost", "db": "app",
+		"allow_unfaithful_upsert": "yes-please",
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "allow_unfaithful_upsert")
+}

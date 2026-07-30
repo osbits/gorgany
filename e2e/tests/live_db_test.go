@@ -1063,3 +1063,69 @@ func ormEngines(t *testing.T) []ormEngine {
 
 	return engines
 }
+
+// TestTheUpsertOptInWorksThroughTheConfig is H3 against a real MySQL 8.
+//
+// TestMySQLQueriesRoundTripThroughTheDialect above proves the opted-in SQL is accepted, but
+// it takes the opt-in with NewBuilderWithDialect — a builder constructed by hand, bypassing
+// the ORM. That was the only route there was, and it is why the flag shipped unreachable:
+// gormMySQLDataSource.Dialect() returned a hard-coded &MySQLDialect{}, so session.Query()
+// could never honour it however the app was configured.
+//
+// This test takes the opt-in the way an app does — a key in the datasource config — and then
+// uses session.Query(), so what is verified is the path an app actually has.
+func TestTheUpsertOptInWorksThroughTheConfig(t *testing.T) {
+	requireMySQL(t)
+
+	config := mysqlConfig()
+	config["allow_unfaithful_upsert"] = true
+
+	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
+		return mysqlv2.NewDataSource(config)
+	})
+	defer ds.Close()
+
+	gormDb := gormOf(t, ds)
+	require.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS upsert_optin_probe`).Error)
+	require.NoError(t, gormDb.Exec(
+		"CREATE TABLE upsert_optin_probe (id INT PRIMARY KEY, amount INT)").Error)
+	t.Cleanup(func() { gormDb.Exec(`DROP TABLE IF EXISTS upsert_optin_probe`) })
+
+	session, err := ds.NewSession()
+	require.NoError(t, err)
+	defer session.Close()
+
+	upsert := func(amount int) dbCore.IQueryBuilder {
+		return session.Query().
+			Insert("upsert_optin_probe").
+			Columns("id", "amount").
+			Values(1, amount).
+			OnConflict("id").
+			DoUpdate(map[string]interface{}{"amount": amount})
+	}
+
+	// session.Query() — not a hand-built builder. This is the assertion that failed before
+	// H3: the session's own dialect had the flag off no matter what the config said.
+	_, _, err = upsert(10).ToSQL()
+	require.NoError(t, err, "the config opt-in must reach session.Query()'s dialect")
+
+	require.NoError(t, session.Executor().Exec(ctxBackground(), upsert(10)).Error)
+	require.NoError(t, session.Executor().Exec(ctxBackground(), upsert(20)).Error,
+		"the second statement must take the ON DUPLICATE KEY branch")
+
+	var amount int
+	require.NoError(t, gormDb.Raw(`SELECT amount FROM upsert_optin_probe WHERE id = 1`).Scan(&amount).Error)
+	assert.Equal(t, 20, amount)
+
+	// And a transaction, which carries its own dialect field.
+	require.NoError(t, session.Transaction(ctxBackground(), func(tx dbCore.IDBTransaction) error {
+		_, _, txErr := tx.Query().
+			Insert("upsert_optin_probe").
+			Columns("id", "amount").
+			Values(2, 5).
+			OnConflict("id").
+			DoUpdate(map[string]interface{}{"amount": 5}).
+			ToSQL()
+		return txErr
+	}), "a transaction's builder must honour the opt-in too")
+}

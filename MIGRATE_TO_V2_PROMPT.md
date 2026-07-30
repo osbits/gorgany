@@ -894,11 +894,18 @@ dropped the conflict-target columns, and MySQL keys off *any* unique index — s
 with more than one, the row that got updated was not yours to control. Either opt in, having
 confirmed the table has exactly one unique index:
 
-```go
-dialect := mysqlv2.MySQLDialect{AllowUnfaithfulUpsert: true}
+```yaml
+databases:
+  main:
+    driver: mysql_gorm
+    allow_unfaithful_upsert: true
 ```
 
 or use `DoNothing()` (unaffected) or an explicit read-then-write in a transaction.
+
+Use the config key, not `mysqlv2.MySQLDialect{AllowUnfaithfulUpsert: true}` — the struct
+field only affects a builder you construct yourself, and the datasource builds its own
+dialect.
 
 ### 5i. `no datasource drivers are registered` at boot
 

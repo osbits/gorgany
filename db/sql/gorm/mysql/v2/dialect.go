@@ -435,11 +435,16 @@ func (d *MySQLDialect) formatInsert(q *dbCore.Query) (string, []any, error) {
 
 		case "DO UPDATE":
 			if !d.AllowUnfaithfulUpsert {
+				// The remedy names the config key, not just the struct field. It used to
+				// name only MySQLDialect.AllowUnfaithfulUpsert — which an app using the
+				// ORM had no way to set, because Dialect() built the dialect itself (H3).
 				return "", nil, unsupported("ON CONFLICT ... DO UPDATE",
 					"MySQL's ON DUPLICATE KEY UPDATE fires on any unique index rather than the "+
 						"conflict target you named, so the translation is not faithful; set "+
-						"MySQLDialect.AllowUnfaithfulUpsert if the table has exactly one unique "+
-						"constraint, or do the read-then-write explicitly in a transaction")
+						"databases.<name>.allow_unfaithful_upsert: true (or "+
+						"MySQLDialect.AllowUnfaithfulUpsert, when you build the dialect yourself) "+
+						"if the table has exactly one unique constraint, or do the read-then-write "+
+						"explicitly in a transaction")
 			}
 			if len(q.Insert.OnConflict.SetValues) == 0 {
 				return "", nil, fmt.Errorf("mysql: ON DUPLICATE KEY UPDATE requires at least one assignment")

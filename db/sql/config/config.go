@@ -68,6 +68,23 @@ type DataSource struct {
 	// PgBouncer.
 	PreferSimpleProtocol bool
 
+	// AllowUnfaithfulUpsert permits the MySQL dialect to translate
+	// ON CONFLICT (cols) DO UPDATE into ON DUPLICATE KEY UPDATE, which fires on any
+	// unique index rather than the conflict target the caller named. MySQL only;
+	// Postgres expresses the construct exactly and ignores the key.
+	//
+	// It lives in the config because it is the only way an app using the ORM can reach
+	// MySQLDialect.AllowUnfaithfulUpsert. Before H3, gormMySQLDataSource.Dialect()
+	// returned a hard-coded &MySQLDialect{}, and session.Query() builds every builder
+	// from that — so the documented opt-in could only be taken by constructing a builder
+	// by hand with NewBuilderWithDialect and bypassing the ORM entirely. The flag was
+	// unsettable through the path every app actually uses.
+	//
+	// Read the caveat in docs/DIALECTS.md before setting it: on a table with more than
+	// one unique index MySQL's own manual advises against the clause, because which row
+	// is updated is not the caller's to control.
+	AllowUnfaithfulUpsert bool
+
 	// Log turns on statement logging for this connection.
 	Log bool
 
@@ -108,7 +125,7 @@ var knownKeys = map[string]bool{
 	"driver": true, "host": true, "port": true, "username": true,
 	"password": true, "db": true, "ssl": true, "search_path": true,
 	"options": true, "prefer_simple_protocol": true, "log": true,
-	"properties": true,
+	"properties": true, "allow_unfaithful_upsert": true,
 }
 
 // Parse decodes a raw `databases.<name>` map into a DataSource.
@@ -158,6 +175,9 @@ func Parse(rawInput map[string]any) (DataSource, error) {
 		return cfg, err
 	}
 	if cfg.PreferSimpleProtocol, err = optBool(raw, "prefer_simple_protocol"); err != nil {
+		return cfg, err
+	}
+	if cfg.AllowUnfaithfulUpsert, err = optBool(raw, "allow_unfaithful_upsert"); err != nil {
 		return cfg, err
 	}
 	if cfg.Log, err = optBool(raw, "log"); err != nil {

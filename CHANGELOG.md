@@ -116,7 +116,7 @@ work.
 - **MySQL `ON CONFLICT … DO UPDATE` is refused by default.** It translated to `ON
   DUPLICATE KEY UPDATE`, silently dropping the conflict-target columns — valid but
   wrong SQL, which is the failure mode the dialect rule exists to prevent. Opt in
-  with `MySQLDialect{AllowUnfaithfulUpsert: true}`. `DO NOTHING` is unaffected.
+  with `databases.<name>.allow_unfaithful_upsert: true`. `DO NOTHING` is unaffected.
   See MIGRATION_v2.md §16.
 - **`NewCorsMiddleware` refuses `AllowCredentials` together with a wildcard
   origin.** Browsers reject that pair, so it was a silent failure with no
@@ -545,7 +545,45 @@ Also documented rather than changed:
   break CORS entirely.
 - `GET /csrf` is registered at the root with no middleware, so an app whose gates
   are scoped to `/api/**` does not apply them to it. Correct by design — a client
-  needs a token before it can authenticate.
+  needs a token before it can authenticate. Being outside those patterns also puts it
+  outside the *session* middleware, which is why it now starts a session itself; see
+  the section below.
+
+### Features that were shipped unusable
+
+A review of the migration plan found four cases where a v2 feature was documented,
+tested and reachable by nobody — each one a default that could not work, or an opt-in
+with no route to it. They are grouped because they share a shape: the tests asserted
+the behaviour the code had, so being green proved nothing about being usable.
+
+- **`GET /csrf` answered `403` forever.** No session on the request meant "the CSRF
+  endpoint must be covered by the session middleware" — but the framework registers it
+  at the root with no middleware, and an app's session middleware is scoped to the
+  namespace it protects, so the default registration could not satisfy its own
+  precondition. The first call any client makes carries no session, which is exactly
+  the call the endpoint exists to answer. It now starts one itself, via the same
+  `NewSessionWithoutUser` call `SessionMiddleware` makes, `Set-Cookie` included, and
+  persists the token through `ISessionStorage` (`SetItem` alone does not survive the
+  response on a DB-backed store). A bearer-token request gets `400` naming the reason
+  instead of a `500`. `DisableCsrfController()` plus a hand-registered copy is no longer
+  the only way to get a token.
+- **A mounted SPA shadowed the negotiated `404`.** `SpaController` registers a `/*`
+  catch-all, and chi matches a catch-all in preference to falling through to `NotFound`,
+  so mounting the SPA replaced the router's negotiated `404` for every GET the app had no
+  route for: `GET /api/v1/widgetz` with `Accept: application/json` returned **`200` and an
+  HTML document**, while the same path under DELETE still returned the `405` envelope.
+  All of `SpaController`'s refusals now go through the same negotiated writer the router
+  uses (`http.WriteNegotiatedError`, moved out of `http/router` for the fourth caller), so
+  an app's `404` no longer depends on whether a SPA is mounted.
+- **The MySQL upsert opt-in could not be taken.** `MySQLDialect.AllowUnfaithfulUpsert`
+  was documented in four places and settable from none of them by an app using the ORM:
+  `Dialect()` returned a hard-coded `&MySQLDialect{}`, and `session.Query()` and
+  `Transaction()` build every builder from it, so the only route was constructing a
+  builder by hand with `NewBuilderWithDialect` and bypassing the ORM. The refusal message
+  named a field the caller could not reach. New config key
+  **`databases.<name>.allow_unfaithful_upsert`**, threaded through to the dialect; the
+  message now names it. MySQL-only, ignored by Postgres, which expresses the construct
+  exactly.
 
 ### Corrections to the briefs
 
