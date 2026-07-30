@@ -551,10 +551,11 @@ Also documented rather than changed:
 
 ### Features that were shipped unusable
 
-A review of the migration plan found four cases where a v2 feature was documented,
-tested and reachable by nobody — each one a default that could not work, or an opt-in
-with no route to it. They are grouped because they share a shape: the tests asserted
-the behaviour the code had, so being green proved nothing about being usable.
+A review of the migration plan found five cases where a v2 feature was documented, tested
+and reachable by nobody — each one a default that could not work, an opt-in with no route
+to it, or a silent skip with no diagnostic. They are grouped because they share a shape:
+the tests asserted the behaviour the code had, so being green proved nothing about being
+usable.
 
 - **`GET /csrf` answered `403` forever.** No session on the request meant "the CSRF
   endpoint must be covered by the session middleware" — but the framework registers it
@@ -611,6 +612,16 @@ the behaviour the code had, so being green proved nothing about being usable.
   - `DbSessionStorage.ClearExpiredSessions` discarded its error with `_ = err`, alone in a
     file where every other method reports through `HandleError`. A sweep failing every
     time looked exactly like one that worked.
+- **A validator that silently ignored your `validation.*` translations.** `validator.message`
+  skips the i18n lookup when no manager is installed, so every message comes back as the
+  framework's English. The skip is deliberate — a CLI app validates its command DTOs without
+  booting i18n, and `GetManager()` panics when none is installed, so a bad flag would become
+  a crash — but nothing distinguished it from the case that looks identical and is a bug: a
+  server app that ships the keys and never registers `I18nProvider`. Its catalog has no
+  visible effect and there is nothing to grep for. Now warned, once per process (a validation
+  failure is request-driven, so a line per rejected field would be a floodable log), naming
+  the keys and the provider. Gated on `i18n` being present in the config, so an app that is
+  not using the feature is not told about it.
 
 ### Corrections to the briefs
 

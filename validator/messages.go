@@ -3,9 +3,13 @@ package validator
 import (
 	"fmt"
 	"strings"
+	"sync"
 
 	goValidator "github.com/go-playground/validator/v10"
+	"github.com/spf13/viper"
+
 	"github.com/osbits/gorgany/v2/i18n"
+	"github.com/osbits/gorgany/v2/log"
 )
 
 // MessageCodePrefix is prepended to a rule name to form the i18n code a message is
@@ -138,6 +142,8 @@ func message(e goValidator.FieldError, fieldName, locale string) string {
 				return translated
 			}
 		}
+	} else {
+		warnTranslationsUnreachable()
 	}
 
 	template, ok := defaultMessages[e.Tag()]
@@ -175,4 +181,39 @@ func wireNamespace(e goValidator.FieldError) string {
 		return rest
 	}
 	return namespace
+}
+
+// translationWarning fires at most once per process.
+var translationWarning sync.Once
+
+// warnTranslationsUnreachable reports that step 1 of the resolution order above was skipped.
+//
+// The skip itself is deliberate and documented — a CLI app validates its command DTOs
+// without booting i18n, and panicking inside GetManager would turn a bad flag into a crash.
+// What was missing is any way to tell that case apart from the one that looks identical and
+// is a bug: a server app that ships `validation.*` keys and never installs the manager. Its
+// translations are silently ignored, every message comes back in the framework's English, and
+// the only symptom is that the overrides appear not to work. There is nothing to grep for,
+// because nothing is emitted.
+//
+// Gated on i18n being configured at all, so an app that has no locales does not get told
+// about a feature it is not using. An app that configured i18n and did not install the
+// manager is the misconfiguration worth naming.
+//
+// Once per process, not per message: a validation failure is request-driven, and a line per
+// rejected field would be a log flood an attacker could trigger.
+func warnTranslationsUnreachable() {
+	if !viper.IsSet("i18n") {
+		return
+	}
+
+	translationWarning.Do(func() {
+		log.Log().Warnf(
+			"validator: i18n is configured but no manager is installed, so `%s*` and `%s` "+
+				"translations cannot be consulted and every validation message will use the "+
+				"framework's built-in English. Register provider.NewI18nProvider() to use "+
+				"them. (Expected for a CLI run, which validates command DTOs without booting "+
+				"i18n.)",
+			MessageCodePrefix, FallbackMessageCode)
+	})
 }

@@ -89,6 +89,22 @@ So a partial catalog is fine: translate `required` and `email`, and every other 
 still produces a readable English message rather than a blank one. Supplying only
 `validation.default` covers every rule at once.
 
+### If your translations seem to be ignored
+
+Steps 1 and 2 need an i18n **manager**, which `provider.NewI18nProvider()` installs. Without
+one the lookup is skipped and every message comes back at step 3 — the framework's English —
+so a catalog full of `validation.*` keys has no visible effect and nothing appears to be
+wrong.
+
+Skipping is deliberate, not a bug: a CLI app validates its command DTOs without booting i18n,
+and `i18n.GetManager()` panics when none is installed, so a bad flag would become a crash.
+What the framework now does is say so. The first time a message is rendered with no manager
+installed *and* `i18n` present in your config, you get one warning naming the keys it could
+not read and the provider to register. Once per process, because a validation failure is
+request-driven and a line per rejected field would be a log flood any client could trigger.
+
+An app with no `i18n` config at all stays silent — it is not using the feature.
+
 ### Placeholders
 
 | Placeholder | Value |
