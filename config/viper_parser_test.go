@@ -24,22 +24,25 @@ func loadYAML(t *testing.T, yaml string) {
 	require.NoError(t, viper.ReadConfig(strings.NewReader(yaml)))
 }
 
-// TestUnsetPlaceholderIsLeftVisibleNotBlanked is the A5 headline, and it documents a
-// correction to the brief.
+// TestAnUnsetPlaceholderIsBlanked is the F5 correction, and it inverts what this test
+// used to assert.
 //
-// The brief prescribed: "If the variable is absent, leave the key alone so defaults
-// and IsSet behave." Leaving the key alone is right, but the stated reason does not
-// hold: a key written in config.yaml lives in viper's *config* layer, which outranks
-// SetDefault. IsSet is therefore true and GetString returns the literal "${VAR}" no
-// matter what this parser does — verified, not assumed.
+// A5 shipped "leave the key alone so defaults and IsSet behave". The first clause of the
+// reasoning was already known to be false and this test's own doc comment conceded it:
+// every key viper.AllKeys() reaches is in viper's *config* layer, which outranks
+// SetDefault, so the key stays set whatever the resolver does.
 //
-// So the value is deliberately left as the literal placeholder rather than blanked to
-// "". An app that misconfigures DB_HOST gets a connection error naming
-// "${DB_HOST}", which is instantly diagnosable; the old behaviour gave it an empty
-// host and no clue. Security-relevant keys do not rely on this at all — they stop the
-// boot (see TestAnUnsetSecurityRelevantPlaceholderStopsTheBoot), and their consumers
-// are independently hardened.
-func TestUnsetPlaceholderIsLeftVisibleNotBlanked(t *testing.T) {
+// What that left was a choice between an empty string and a literal `${VAR}`, and the
+// literal is the one no consumer accepts. Measured on a real app:
+// `auth.session.cookie.domain: ${COOKIE_DOMAIN}` unset became
+// `Domain: "${COOKIE_DOMAIN}"` on the session cookie, which is an invalid Domain
+// attribute — so the browser dropped Set-Cookie entirely and login failed with nothing
+// in any log. The same class of silent failure the secure-cookie work set out to
+// eliminate. That app carried ten optional placeholders.
+//
+// The diagnostic argument for the literal is served by the warning, which names every
+// unresolved key either way.
+func TestAnUnsetPlaceholderIsBlanked(t *testing.T) {
 	loadYAML(t, `
 databases:
   default:
@@ -48,9 +51,60 @@ databases:
 
 	require.NoError(t, ResolveEnvPlaceholders())
 
+	assert.Equal(t, "", viper.GetString("databases.default.host"),
+		"an unresolved placeholder is blanked, not left as a literal nothing accepts")
+}
+
+// TestTheCookieDomainCaseSpecifically pins the failure that prompted the change, in the
+// shape the app actually hit.
+func TestTheCookieDomainCaseSpecifically(t *testing.T) {
+	loadYAML(t, `
+auth:
+  session:
+    cookie:
+      domain: ${COOKIE_DOMAIN_NOT_SET}
+`)
+
+	require.NoError(t, ResolveEnvPlaceholders())
+
+	domain := viper.GetString("auth.session.cookie.domain")
+	assert.Equal(t, "", domain)
+	assert.NotContains(t, domain, "${",
+		"a literal here is an invalid cookie attribute, so the browser drops Set-Cookie")
+}
+
+// TestKeepUnresolvedLiteralsIsTheOptOut, for a key where the literal genuinely aids
+// diagnosis — a database host, where a connection error naming ${DB_HOST} beats one
+// naming the empty string.
+func TestKeepUnresolvedLiteralsIsTheOptOut(t *testing.T) {
+	loadYAML(t, `
+databases:
+  default:
+    host: ${DEFINITELY_NOT_SET_ANYWHERE}
+`)
+
+	require.NoError(t, ResolveEnvPlaceholders(KeepUnresolvedLiterals()))
+
 	assert.Equal(t, "${DEFINITELY_NOT_SET_ANYWHERE}",
-		viper.GetString("databases.default.host"),
-		"an unresolved placeholder stays visible instead of becoming an empty string")
+		viper.GetString("databases.default.host"))
+}
+
+// TestBlankingDoesNotMakeADefaultApply documents the part that is still true and is why
+// the old message was wrong: the key remains present either way, so SetDefault stays
+// inert for it. A reader deciding whether they still need to set the variable needs to
+// know this.
+func TestBlankingDoesNotMakeADefaultApply(t *testing.T) {
+	loadYAML(t, `
+some:
+  key: ${DEFINITELY_NOT_SET_ANYWHERE}
+`)
+	viper.SetDefault("some.key", "the-default")
+
+	require.NoError(t, ResolveEnvPlaceholders())
+
+	assert.Equal(t, "", viper.GetString("some.key"),
+		"the key is in the config layer, which outranks SetDefault — blanked, not unset")
+	assert.True(t, viper.IsSet("some.key"), "and it is still set")
 }
 
 // TestADefaultAppliesToAKeyAbsentFromTheFile is the part of the override-layer fix
@@ -282,9 +336,33 @@ databases:
 	assert.Equal(t, "postgres_gorm", viper.GetString("databases.default.driver"))
 }
 
-// TestAnUnresolvedPlaceholderAlsoLeavesSiblingsAlone: the untouched path must not
-// disturb the subtree either.
-func TestAnUnresolvedPlaceholderAlsoLeavesSiblingsAlone(t *testing.T) {
+// TestBlankingAnUnresolvedPlaceholderLeavesSiblingsAlone: blanking goes through the same
+// MergeConfigMap path as a real substitution, so it must not wipe the subtree either — the
+// hazard that took the fixture app's boot down.
+func TestBlankingAnUnresolvedPlaceholderLeavesSiblingsAlone(t *testing.T) {
+	loadYAML(t, `
+databases:
+  default:
+    driver: postgres_gorm
+    host: ${DEFINITELY_NOT_SET_ANYWHERE}
+    log: false
+    properties:
+      maxOpenConnections: 5
+`)
+
+	require.NoError(t, ResolveEnvPlaceholders())
+
+	defaults, ok := viper.GetStringMap("databases")["default"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "postgres_gorm", defaults["driver"])
+	assert.Equal(t, "", defaults["host"])
+	assert.Equal(t, false, defaults["log"])
+	assert.NotNil(t, defaults["properties"])
+}
+
+// TestKeepUnresolvedLiteralsAlsoLeavesSiblingsAlone: the opt-out writes nothing at all for
+// the key, which is a different code path.
+func TestKeepUnresolvedLiteralsAlsoLeavesSiblingsAlone(t *testing.T) {
 	loadYAML(t, `
 databases:
   default:
@@ -292,7 +370,7 @@ databases:
     host: ${DEFINITELY_NOT_SET_ANYWHERE}
 `)
 
-	require.NoError(t, ResolveEnvPlaceholders())
+	require.NoError(t, ResolveEnvPlaceholders(KeepUnresolvedLiterals()))
 
 	defaults, ok := viper.GetStringMap("databases")["default"].(map[string]any)
 	require.True(t, ok)
@@ -360,4 +438,58 @@ func TestSetNestedOverwritesAScalarInThePath(t *testing.T) {
 
 	require.NotPanics(t, func() { setNested(root, "a.b", 2) })
 	assert.Equal(t, map[string]any{"a": map[string]any{"b": 2}}, root)
+}
+
+// TestASecurityRelevantKeyIsNotBlankedEitherWay: the boot is about to fail, so writing
+// anything would matter only to a caller that ignored the error — and a blanked
+// `auth.session.cookie.secure` read by such a caller is `false`, which is the exact
+// failure A5 existed to stop.
+func TestASecurityRelevantKeyIsNotBlankedEitherWay(t *testing.T) {
+	loadYAML(t, buildNestedYAML("auth.session.cookie.secure", "${DEFINITELY_NOT_SET_ANYWHERE}"))
+
+	require.Error(t, ResolveEnvPlaceholders(), "the boot must still fail")
+
+	assert.Equal(t, "${DEFINITELY_NOT_SET_ANYWHERE}",
+		viper.GetString("auth.session.cookie.secure"),
+		"the value is left untouched, so nothing downstream reads it as a usable false")
+}
+
+// TestTheWarningDescribesWhatActuallyHappens. The old message claimed "leaving the key
+// unset so its default applies", and both clauses were false — which matters because the
+// reader is deciding whether they still need to set the variable.
+func TestTheWarningDescribesWhatActuallyHappens(t *testing.T) {
+	read := captureWarnings(t)
+
+	loadYAML(t, `
+some:
+  key: ${DEFINITELY_NOT_SET_ANYWHERE}
+`)
+	require.NoError(t, ResolveEnvPlaceholders())
+
+	warnings := read()
+	require.Len(t, warnings, 1)
+
+	assert.Contains(t, warnings[0], "some.key")
+	assert.Contains(t, warnings[0], "DEFINITELY_NOT_SET_ANYWHERE")
+	assert.Contains(t, warnings[0], "empty value", "it must say what it did")
+	assert.Contains(t, warnings[0], "will not apply", "and that a default will not rescue it")
+
+	assert.NotContains(t, warnings[0], "leaving the key unset",
+		"the key is not unset, and saying so sent people looking for a default that never applied")
+}
+
+// TestTheOptOutWarningSaysSomethingElse, since the outcome differs.
+func TestTheOptOutWarningSaysSomethingElse(t *testing.T) {
+	read := captureWarnings(t)
+
+	loadYAML(t, `
+some:
+  key: ${DEFINITELY_NOT_SET_ANYWHERE}
+`)
+	require.NoError(t, ResolveEnvPlaceholders(KeepUnresolvedLiterals()))
+
+	warnings := read()
+	require.Len(t, warnings, 1)
+	assert.Contains(t, warnings[0], "placeholder text")
+	assert.NotContains(t, warnings[0], "empty value")
 }

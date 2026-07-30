@@ -53,14 +53,29 @@ func envPlaceholder(value string) (string, bool) {
 // afterwards viper.IsSet was true for every key in config.yaml and viper.SetDefault
 // was inert for all of them — a trap for every default added from then on.
 //
-// Now: an absent variable leaves its key alone, so defaults and IsSet behave;
-// untouched keys are never rewritten; and a security-relevant key whose placeholder
-// cannot be resolved stops the boot.
+// Now: untouched keys are never rewritten, a security-relevant key whose placeholder
+// cannot be resolved stops the boot, and any other unresolved placeholder is blanked.
+//
+// Blanking, rather than leaving the literal in place, is a correction to the first fix
+// (F5). "Leave the key alone so its default applies" cannot work — every key
+// viper.AllKeys() reaches is already in viper's *config* layer, which outranks SetDefault,
+// so the key stays set whatever this function does. That left the realistic choice between
+// an empty string and a literal `${VAR}`, and only one of those is a value a consumer
+// accepts: an unresolved `auth.session.cookie.domain` became `Domain: "${COOKIE_DOMAIN}"`,
+// an invalid cookie attribute, so the browser dropped Set-Cookie and login failed silently.
+// See KeepUnresolvedLiterals for the opt-out.
 //
 // An explicitly-empty variable (`FOO=` in the environment) is a real value of "",
 // because an empty string is legitimate for some keys — a blank cookie domain, for
-// instance. Only an *absent* variable falls through to the default.
+// instance. It is indistinguishable from the blanked case in the config, but not in the
+// log: only an absent variable warns.
 func Parse(files ...string) error {
+	return ParseWithOptions(files, nil)
+}
+
+// ParseWithOptions is Parse with control over unresolved placeholders, for an app that
+// loads its own config and wants KeepUnresolvedLiterals.
+func ParseWithOptions(files []string, opts []ResolveOption) error {
 	for _, file := range files {
 		dir, fileName := parsePath(file)
 		viper.AddConfigPath(dir)
@@ -71,14 +86,48 @@ func Parse(files ...string) error {
 		}
 	}
 
-	return ResolveEnvPlaceholders()
+	return ResolveEnvPlaceholders(opts...)
+}
+
+// ResolveOption adjusts what ResolveEnvPlaceholders does with an unresolved placeholder.
+type ResolveOption func(*resolveOptions)
+
+type resolveOptions struct {
+	keepUnresolvedLiterals bool
+}
+
+// KeepUnresolvedLiterals leaves an unresolved `${VAR}` in place as the literal string
+// instead of blanking it.
+//
+// The default is to blank, because the literal is a value nothing accepts: an unresolved
+// `auth.session.cookie.domain` becomes `Domain: "${COOKIE_DOMAIN}"`, which is an invalid
+// cookie attribute, so the browser drops Set-Cookie and login fails with no error anywhere
+// — the same class of silent failure the secure-cookie work set out to eliminate. An app
+// carrying ten optional placeholders had ten of these.
+//
+// Use this when the literal genuinely aids diagnosis and an empty value would not — a
+// database host is the case, since a connection error naming ${DB_HOST} beats one naming
+// the empty string. Note that the warning already names every unresolved key either way,
+// so the diagnostic argument is weaker than it looks.
+func KeepUnresolvedLiterals() ResolveOption {
+	return func(o *resolveOptions) { o.keepUnresolvedLiterals = true }
 }
 
 // ResolveEnvPlaceholders substitutes `${VAR}` values in the loaded config.
 //
+// An unresolved placeholder is blanked by default; see KeepUnresolvedLiterals. A
+// security-relevant key whose placeholder cannot be resolved stops the boot either way.
+//
 // Exported so a test, or an app that loads config its own way, can apply the same
-// semantics.
-func ResolveEnvPlaceholders() error {
+// semantics. An app that substitutes placeholders itself should call this instead: a local
+// `viper.Set` loop reintroduces the sibling-wipe described below, and the symptom is a boot
+// panic naming an unrelated key.
+func ResolveEnvPlaceholders(opts ...ResolveOption) error {
+	options := resolveOptions{}
+	for _, opt := range opts {
+		opt(&options)
+	}
+
 	unresolved := make(map[string]string)
 	var unresolvedSecurityKeys []string
 
@@ -113,13 +162,25 @@ func ResolveEnvPlaceholders() error {
 
 		resolved, present := os.LookupEnv(name)
 		if !present {
-			// Leave the key untouched so any default still applies and IsSet stays
-			// false. Writing "" here is what made the secure-cookie guard fail open.
 			unresolved[key] = name
 			if isSecurityRelevant(key) {
 				unresolvedSecurityKeys = append(unresolvedSecurityKeys,
 					fmt.Sprintf("%s (${%s})", key, name))
+				// Do not substitute a security-relevant key at all: the boot is about to
+				// fail, and writing anything would matter only if a caller ignored the
+				// error.
+				continue
 			}
+
+			if options.keepUnresolvedLiterals {
+				continue
+			}
+
+			// Blank it. The key cannot be *unset* — every key AllKeys() returns is
+			// already in viper's config layer, which outranks SetDefault — so the
+			// realistic choice is between an empty string and a literal `${VAR}`, and
+			// only one of those is a value any consumer accepts.
+			setNested(substitutions, key, "")
 			continue
 		}
 
@@ -141,10 +202,23 @@ func ResolveEnvPlaceholders() error {
 			strings.Join(unresolvedSecurityKeys, ", "))
 	}
 
+	// The message used to say "leaving the key unset so its default applies". Neither
+	// clause was true, and its own test conceded as much: every key AllKeys() reaches is
+	// in viper's config layer, which outranks SetDefault, so the key stays set and no
+	// default ever applies. Saying what actually happens matters because the reader is
+	// deciding whether they still need to set the variable.
+	outcome := "using an empty value instead"
+	if options.keepUnresolvedLiterals {
+		outcome = "leaving the literal in place, so the key reads back as the placeholder " +
+			"text rather than a usable value"
+	}
+
 	for _, key := range sortedKeys(unresolved) {
 		log.Log().Warnf(
-			"config: %s references ${%s}, which is not set; leaving the key unset so its "+
-				"default applies", key, unresolved[key])
+			"config: %s references ${%s}, which is not set; %s. The key stays present, so a "+
+				"SetDefault for it will not apply — set the variable, or remove the "+
+				"placeholder to fall back to the framework default.",
+			key, unresolved[key], outcome)
 	}
 
 	return nil
