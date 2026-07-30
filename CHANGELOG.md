@@ -436,6 +436,20 @@ work.
 - **Two more unchecked type assertions**, in `processValidationErrors` and
   `processValidationError`. `Catch` dispatches on the error's *bare type name*, so a
   type called `ValidationErrors` from any package reached them and panicked.
+- **Query-string and multipart parse errors lost the field name.**
+  `checkAndAddIfValidationError` guarded on `errors.Is(err, &err.ValidationError{})`,
+  which is always false — no `Is` method, freshly allocated target — and tested the
+  singular type where the parsers produce the plural one; the assertion behind it
+  would have panicked had the branch been reachable. Both parsers also wrapped with
+  `fmt.Errorf("failed to process field %s: %w", …)`, putting the name in prose at the
+  one place it was known. So every such failure came back as `field: "GeneralError"`,
+  and the reshaped payload above did not reach two of the three input paths.
+- **The framework's own JWT login endpoint crashed on bad input.** `panic(err)` on a
+  malformed body (a 500 where every other body path is a 400), a discarded body-read
+  error, an unread error from `Login` followed by a nil dereference, and a nil
+  dereference when no `jwt` strategy is registered. It also served a Forbidden-coded
+  envelope under HTTP 200, and put its error message in the envelope's `body` rather
+  than `errors` — **response shape change** for anyone using it.
 
 #### Jobs
 
@@ -450,6 +464,27 @@ work.
 - Job dependencies are injected: a pointer job goes through `Make`, and a *value*
   job carrying `container:"inject"` tags is a loud error rather than a silently
   unfilled struct.
+
+#### The event bus
+
+- **`Publish` read the subscriber map with no lock held**, while every write took one.
+  The race detector reports it. On a Go map that can escalate to `fatal error:
+  concurrent map read and map write` — a runtime fatal, so `RecoveryMiddleware` cannot
+  catch it and it takes the process down rather than the request. The lock is now an
+  RWMutex and is released before the subscriber runs, so a slow handler cannot
+  serialise other publishes and a handler may subscribe from inside `Handle`.
+- **`Subscribe` and `SubscribeAsync` returned while holding the mutex** on the
+  non-pointer path, so one bad subscriber wedged every later `Subscribe`,
+  `SubscribeAsync` and `Unsubscribe` permanently. Validation now happens before the
+  lock is taken.
+- **`Subscribe(event, nil)` panicked**: `reflect.TypeOf(nil)` is nil and `Kind()` was
+  called on it.
+- `doPublishAsync` called `waitGroup.Done()` before recovering, so `WaitAsync` could
+  return while a panicking handler was still unwinding.
+
+  Note the contract, since "bus" invites the opposite assumption: there is **one
+  subscriber per event name** and subscribing twice replaces the first. Documented and
+  pinned by a test rather than changed.
 
 #### The IoC container
 
