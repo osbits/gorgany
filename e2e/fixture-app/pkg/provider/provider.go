@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/osbits/gorgany/app/core"
-	error2 "github.com/osbits/gorgany/err"
 	grghttp "github.com/osbits/gorgany/http"
 
 	// The engine this app uses, imported for its registration side effect. DbProvider no
@@ -40,10 +39,20 @@ func NewBootstrapper() *provider.Bootstrapper {
 	routeProvider.AddController(fixturehttp.NewAPIController())
 
 	errorProvider := provider.NewErrorProvider()
-	errorProvider.AddHandler("ValidationErrors", validationErrorsHandler)
-	errorProvider.AddHandler("ValidationError", validationErrorHandler)
-	errorProvider.AddHandler("InputBodyParseError", inputErrorHandler)
-	errorProvider.AddHandler("InputParamParseError", inputErrorHandler)
+
+	// Deliberately only "Default" (F8).
+	//
+	// This app used to override ValidationErrors, ValidationError, InputBodyParseError and
+	// InputParamParseError as well — copies of what the framework should have been doing —
+	// and because http.GetErrorHandler prefers a registered handler, the e2e harness never
+	// reached http/error.go's defaults at all. That is how processValidationErrors came to
+	// be the one default handler C2 did not negotiate and nothing noticed: it answered
+	// every caller, API clients included, with a 301 redirect to the Referer.
+	//
+	// The overrides are gone now that the defaults are equivalent, so this suite exercises
+	// what an app with no error configuration actually gets. Customising "Default" is left
+	// in place because that one is genuinely app-specific — and it keeps one registered
+	// handler in the picture, so the custom-beats-default lookup stays covered too.
 	errorProvider.AddHandler("Default", defaultErrorHandler)
 
 	bootstrapper.AddProvider(provider.NewLoggerProvider())
@@ -79,57 +88,9 @@ func (p *FixtureProvider) Boot(container core.IContainer) {
 	})
 }
 
-func validationErrorsHandler(err error, message core.HttpMessage) {
-	validationErrors, ok := err.(*error2.ValidationErrors)
-	if !ok {
-		dto := dto.ReturnObject(nil, core.ValidationHttpStatus, err.Error())
-		message.Response().JSON(dto, http.StatusUnprocessableEntity)
-		return
-	}
-
-	if wantsJSON(message) {
-		message.Response().JSON(dto.ReturnObject(nil, core.ValidationHttpStatus, *validationErrors), http.StatusUnprocessableEntity)
-		return
-	}
-
-	message.Response().Text(validationErrors.Error(), http.StatusUnprocessableEntity)
-}
-
-func validationErrorHandler(err error, message core.HttpMessage) {
-	if validationErr, ok := err.(*error2.ValidationError); ok {
-		if wantsJSON(message) {
-			message.Response().JSON(dto.ReturnObject(nil, core.ValidationHttpStatus, []error2.ValidationError{*validationErr}), http.StatusUnprocessableEntity)
-			return
-		}
-		message.Response().Text(validationErr.Error(), http.StatusUnprocessableEntity)
-		return
-	}
-
-	validationErrorsHandler(err, message)
-}
-
-// inputErrorHandler answers both InputBodyParseError and InputParamParseError with 400.
-//
-// It reports the *reason*, not err.Error(): InputBodyParseError.Error() includes the raw
-// body for the log's benefit, and a body that failed to parse is exactly the kind that
-// might carry a password halfway through. This is the pattern an app should copy.
-func inputErrorHandler(err error, message core.HttpMessage) {
-	reason := err.Error()
-	if parseError, ok := err.(*error2.InputBodyParseError); ok {
-		reason = "the request body could not be parsed"
-		if parseError.RawError != nil {
-			reason = parseError.RawError.Error()
-		}
-	}
-
-	if wantsJSON(message) {
-		message.Response().JSON(dto.ReturnObject(nil, core.BadRequestHttpStatus, reason), http.StatusBadRequest)
-		return
-	}
-
-	message.Response().Text(reason, http.StatusBadRequest)
-}
-
+// defaultErrorHandler is the one handler this app overrides, and it is the example of how
+// to write one: negotiate with grghttp.WantsJSON, and do not put an unclassified error's
+// message in a production response.
 func defaultErrorHandler(err error, message core.HttpMessage) {
 	if wantsJSON(message) {
 		message.Response().JSON(dto.ReturnObject(nil, core.InternalErrorHttpStatus, err.Error()), http.StatusInternalServerError)

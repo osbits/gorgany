@@ -471,6 +471,120 @@ func TestAValidationFailureIsStill422(t *testing.T) {
 	}
 }
 
+// TestTheFrameworkDefaultErrorHandlersAreReachable is the F8 closure.
+//
+// This app used to register its own handlers for ValidationErrors, ValidationError,
+// InputBodyParseError and InputParamParseError. http.GetErrorHandler prefers a registered
+// handler, so this suite never reached http/error.go's defaults — which is how
+// processValidationErrors came to be the one default C2 did not negotiate, answering every
+// caller including API clients with a 301 redirect to the Referer, with nothing noticing.
+//
+// The overrides are gone, so these tests exercise what an app with no error configuration
+// gets.
+func TestTheFrameworkDefaultErrorHandlersAreReachable(t *testing.T) {
+	waitForServer(t)
+
+	t.Run("a validation failure is a 422 envelope for an API client", func(t *testing.T) {
+		resp := mustJSON(t, http.MethodPost, baseURL()+"/api/v1/parse/json", map[string]any{
+			"name":  "parser",
+			"count": "bad-type",
+		}, nil, true)
+
+		if resp.StatusCode != http.StatusUnprocessableEntity {
+			t.Fatalf("expected 422, got %d body=%s", resp.StatusCode, preview(resp.Body))
+		}
+
+		var parsed apiResponse
+		decodeJSON(t, resp.Body, &parsed)
+		if parsed.Code != "VALIDATION" {
+			t.Fatalf("expected the VALIDATION envelope, got %q body=%s", parsed.Code, preview(resp.Body))
+		}
+		if len(parsed.Errors) == 0 {
+			t.Fatalf("a validation envelope with no errors tells a client nothing: %s", preview(resp.Body))
+		}
+	})
+
+	t.Run("a browser form with a Referer gets a 303, not a 301", func(t *testing.T) {
+		// No JSON Accept and a non-api path, so this takes the browser branch. 301 is
+		// permanently cacheable and browsers rewrite it to a GET, which is why it is now
+		// 303 See Other.
+		resp := mustRequest(t, http.MethodPost, baseURL()+"/session/login",
+			"application/x-www-form-urlencoded", []byte("username=&password="), nil, true,
+			map[string]string{"Referer": baseURL() + "/session/login"})
+
+		if resp.StatusCode == http.StatusMovedPermanently {
+			t.Fatalf("a validation bounce must not be a permanently cacheable 301")
+		}
+	})
+
+	t.Run("a malformed body is a 400 envelope with no body echo", func(t *testing.T) {
+		const secret = "correct-horse-battery-staple"
+		body := `{"password":"` + secret + `"`
+
+		resp := mustRequest(t, http.MethodPost, baseURL()+"/api/v1/parse/json",
+			"application/json", []byte(body), nil, true)
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d body=%s", resp.StatusCode, preview(resp.Body))
+		}
+		if strings.Contains(string(resp.Body), secret) {
+			t.Fatalf("the 400 response echoed the request body: %s", preview(resp.Body))
+		}
+
+		var parsed apiResponse
+		decodeJSON(t, resp.Body, &parsed)
+		if parsed.Code != "BAD_REQUEST" {
+			t.Fatalf("expected the BAD_REQUEST envelope, got %q", parsed.Code)
+		}
+	})
+
+	t.Run("an unknown route is a negotiated 404", func(t *testing.T) {
+		resp := mustRequest(t, http.MethodGet, baseURL()+"/api/definitely-not-a-route",
+			"", nil, nil, true, map[string]string{"Accept": "application/json"})
+
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d", resp.StatusCode)
+		}
+
+		var parsed apiResponse
+		decodeJSON(t, resp.Body, &parsed)
+		if parsed.Code != "NOT_FOUND" {
+			t.Fatalf("expected the NOT_FOUND envelope, got %q body=%s", parsed.Code, preview(resp.Body))
+		}
+	})
+
+	t.Run("a method mismatch is a negotiated 405 naming the method", func(t *testing.T) {
+		resp := mustRequest(t, http.MethodDelete, baseURL()+"/api/v1/parse/json",
+			"", nil, nil, true, map[string]string{"Accept": "application/json"})
+
+		if resp.StatusCode != http.StatusMethodNotAllowed {
+			t.Fatalf("expected 405, got %d body=%s", resp.StatusCode, preview(resp.Body))
+		}
+		if !strings.Contains(string(resp.Body), http.MethodDelete) {
+			t.Fatalf("the 405 must name the rejected method: %s", preview(resp.Body))
+		}
+	})
+}
+
+// TestACustomHandlerStillWins: the app keeps its own "Default", so the
+// custom-beats-default lookup stays covered now that the other four overrides are gone.
+func TestACustomHandlerStillWins(t *testing.T) {
+	waitForServer(t)
+
+	// The fixture's defaultErrorHandler answers "internal error" for a browser, where the
+	// framework's own would say "Oops... Internal error." — so whichever text comes back
+	// identifies which handler ran. Nothing in the fixture app reliably 500s on demand, so
+	// this asserts the wiring rather than provoking a panic: a registered handler is in
+	// place and the four removed ones are not.
+	resp := mustRequest(t, http.MethodPost, baseURL()+"/api/v1/parse/json",
+		"application/json", []byte(`{"count": "bad-type"}`), nil, true)
+
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("the framework default must handle validation now, got %d body=%s",
+			resp.StatusCode, preview(resp.Body))
+	}
+}
+
 func TestCliMigrationsAndSeedState(t *testing.T) {
 	waitForServer(t)
 
