@@ -6,16 +6,18 @@ affected, and states whether the fix is mechanical or needs judgement.
 
 > **Read “Behaviour changes the compiler will not catch” first.**
 >
-> Nine of these changes compile cleanly and change what your app *does*. They
+> Eleven of these changes compile cleanly and change what your app *does*. They
 > matter more than the signature changes, because `go build` will not point at
-> them and a passing test suite may not either. Four of them (`json:"-"`,
-> `OPTIONS`, the CSRF token, the CORS refusal) are security-relevant, and two
-> (`Query()` memoization, validation error shape) can change what a client sees
-> silently.
+> them and a passing test suite may not either. Five of them (`json:"-"`,
+> `OPTIONS`, the CSRF token, the CORS refusal, the body-in-log fix) are
+> security-relevant, and three (`Query()` memoization, the validation error shape
+> and delivery, `omitempty`) can change what a client sees silently.
 
-**Order of work.** Do §1–§4a and §12/§16/§17 first — they need judgement and
-testing. Then run `go build ./...` and let the compiler drive §5–§10 and
-§11/§13/§14/§15, which are mechanical.
+**Order of work.** Start with [§20](#20-the-module-path-gains-v2) — nothing else can be
+resolved until the import paths change, and it is one scripted sweep. Then do §1–§4a and
+§12/§16/§17/§22/§23, which need judgement and testing. Then run `go build ./...` and let the
+compiler drive §5–§10 and §11/§13/§14/§15. Finally boot the app once for §21, which compiles
+cleanly and only fails at runtime.
 
 ---
 
@@ -32,7 +34,13 @@ testing. Then run `go build ./...` and let the compiler drive §5–§10 and
 | [§16](#16-x-csrf-token-on-every-response-and-a-csrf-endpoint-behaviour-security) | `X-CSRF-Token` on every session response; `GET /csrf` registered | A route already at `/csrf` collides at boot |
 | [§17](#17-malformed-bodies-are-400-not-a-301-redirect-behaviour) | A malformed body is 400, not a 301 to the Referer | A client relying on the redirect sees a 400 envelope |
 | [§18](#18-404-405-and-error-handlers-are-content-negotiated-behaviour) | 404/405/500/401 negotiate JSON vs text | An API client gets an envelope where it got an empty body |
-| [§19](#19-var-substitution-what-a-missing-variable-now-does) | An unset `${VAR}` no longer becomes `""` | A security-relevant one now fails the boot instead of weakening the cookie |
+| [§19](#19-var-substitution-what-a-missing-variable-now-does) | An unresolved `${VAR}` is blanked | An optional key reads back as `""` rather than the literal, and a security-relevant one fails the boot |
+| [§22](#22-a-validation-failure-is-422-for-an-api-client-303-for-a-browser-behaviour) | Validation is 422 for an API client, 303 for a browser | A client that saw a 301 now gets a readable payload |
+| [§23](#23-omitempty-and-embed-collisions-now-match-encodingjson-behaviour) | `omitempty` and embed collisions match `encoding/json` | A zero `time.Time` reappears; a non-nil empty slice disappears |
+
+One that compiles cleanly and fails at **boot** rather than at request time:
+[§21](#21-dbprovider-no-longer-registers-a-database-driver) — `DbProvider` no longer
+registers a database driver, so the app needs one blank import.
 
 ---
 
@@ -1506,8 +1514,29 @@ and the session cookie shipped **without** `Secure`.
 |------|-----------|
 | `FOO=bar` | substituted, as before |
 | `FOO=` (explicitly empty) | substituted with `""` — an empty string is a legitimate value for a blank cookie domain |
-| `FOO` unset, ordinary key | left as the literal `${FOO}`, with a warning; a connection error naming `${DB_HOST}` is instantly diagnosable, where an empty host gave no clue |
+| `FOO` unset, ordinary key | **blanked**, with a warning naming the key and the variable |
 | `FOO` unset, security-relevant key | **the boot fails** |
+
+Blanking rather than retaining the literal is a correction to the first version of this fix.
+Retaining looked like the better diagnostic — a connection error naming `${DB_HOST}` beats one
+naming the empty string — but a literal is a value no consumer accepts, and the failure that
+matters is the silent one: an unresolved `auth.session.cookie.domain` became
+`Domain: "${COOKIE_DOMAIN}"`, an invalid cookie attribute, so the browser dropped
+`Set-Cookie` and login failed with nothing in any log. The warning already names every
+unresolved key, so nothing diagnostic is lost.
+
+`config.KeepUnresolvedLiterals()` opts back in, for a host key where the literal genuinely
+reads better in a connection error:
+
+```go
+config.ParseWithOptions([]string{"config/config"}, []config.ResolveOption{
+    config.KeepUnresolvedLiterals(),
+})
+```
+
+Note what is **not** available either way: the key cannot be *unset*. Every key
+`viper.AllKeys()` reaches is already in viper's config layer, which outranks `SetDefault`, so
+a default will not apply to it whichever option you choose.
 
 The security-relevant keys are `auth.jwt.secret` and `auth.session.cookie.secure`.
 
@@ -1535,15 +1564,268 @@ never silently weaken security
 Removing the placeholder entirely is a valid fix: the framework's default is
 `secure: true`.
 
-### One correction to the brief
+### Corrections to the brief
 
-`IMPROVEMENT_v2.1.md` prescribed "leave the key alone so defaults and `IsSet` behave".
-Leaving the key alone is right, but the stated reason does not hold: a key written in
-`config.yaml` lives in viper's *config* layer, which outranks `SetDefault`. `IsSet` stays
-true and `GetString` returns the literal `${VAR}` no matter what the parser does —
-verified, not assumed. That is why the real safety net is the hardened
-`SessionCookieSecure()`, which treats an unparseable or empty value as `true`, plus the
-boot failure above.
+`IMPROVEMENT_v2.1.md` prescribed "leave the key alone so defaults and `IsSet` behave", and
+both halves needed correcting.
+
+The stated reason never held: a key written in `config.yaml` lives in viper's *config* layer,
+which outranks `SetDefault`. `IsSet` stays true and `GetString` returns the literal `${VAR}`
+no matter what the parser does — verified with a probe, not assumed. That is why the real
+safety net is the hardened `SessionCookieSecure()`, which treats an unparseable or empty value
+as `true`, plus the boot failure above.
+
+And leaving the key alone turned out to be the wrong remedy too, for the reason in the table
+above. Corrected to blanking.
+
+---
+
+## 20. The module path gains `/v2`
+
+### What broke and why it had to
+
+Go requires a `/vN` suffix in the module path for major version 2 and above. Without it:
+
+```
+require github.com/osbits/gorgany v2.0.0
+→ go: errors parsing go.mod: require github.com/osbits/gorgany:
+  version "v2.0.0" invalid: should be v0 or v1, not v2
+```
+
+So v2.0.0 could not be required as v2.0.0 by any consumer. `+incompatible` does not apply,
+because the module has a `go.mod`. The only ways out were to rename the module, to renumber
+the release as v1.6.0 — which contradicts everything else in this document — or to make every
+consumer carry a `replace` directive forever.
+
+### Before / after
+
+```
+// go.mod, BEFORE
+require github.com/osbits/gorgany v1.5.1
+```
+
+```
+// go.mod, AFTER
+require github.com/osbits/gorgany/v2 v2.0.0
+```
+
+Every import path gains `/v2`:
+
+```go
+// BEFORE
+import (
+    "github.com/osbits/gorgany/app/core"
+    "github.com/osbits/gorgany/http/middleware"
+)
+```
+
+```go
+// AFTER
+import (
+    "github.com/osbits/gorgany/v2/app/core"
+    "github.com/osbits/gorgany/v2/http/middleware"
+)
+```
+
+### How to detect whether you are affected
+
+Every app is affected. It is one sweep:
+
+```bash
+grep -rl '"github.com/osbits/gorgany' --include="*.go" . \
+  | xargs sed -i '' 's|"github.com/osbits/gorgany/|"github.com/osbits/gorgany/v2/|g; s|"github.com/osbits/gorgany"|"github.com/osbits/gorgany/v2"|g'
+gofmt -w .
+go mod edit -require=github.com/osbits/gorgany/v2@v2.0.0 -droprequire=github.com/osbits/gorgany
+go mod tidy
+```
+
+On GNU sed, drop the `''` after `-i`.
+
+Check for the module path outside Go files too — a `replace` directive, a tool config, a
+generated file:
+
+```bash
+grep -rn "osbits/gorgany" --include="*.mod" --include="*.yml" --include="*.yaml" \
+  --include="Dockerfile*" --include="Makefile" .
+```
+
+### Mechanical or judgement?
+
+**Mechanical**, and the compiler finds anything the sweep missed.
+
+---
+
+## 21. `DbProvider` no longer registers a database driver
+
+### What broke and why it had to
+
+`provider.DbProvider` blank-imported `db/sql/driver/builtin`, which registers both engines.
+So every app using the standard bootstrap linked `gorm.io/driver/mysql`,
+`go-sql-driver/mysql` and `filippo.io/edwards25519` whether or not it would ever speak
+MySQL — dependency surface and attack surface the app never chose, and with no way to opt
+out.
+
+### Before / after
+
+Add one blank import, next to your own provider package's imports:
+
+```go
+// AFTER — Postgres only
+import (
+    _ "github.com/osbits/gorgany/v2/db/sql/driver/postgres"
+)
+
+// AFTER — MySQL only
+import (
+    _ "github.com/osbits/gorgany/v2/db/sql/driver/mysql"
+)
+
+// AFTER — both, or if you would rather not think about it
+import (
+    _ "github.com/osbits/gorgany/v2/db/sql/driver/builtin"
+)
+```
+
+`driver/builtin` behaves exactly as before, so importing it is a complete no-op change.
+
+### How to detect whether you are affected
+
+This one **compiles cleanly** and fails at boot, so `go build ./... && go vet ./...` will
+not find it:
+
+```
+datasource config: no datasource drivers are registered, so "postgres_gorm" cannot be
+resolved. Import the engine you use for its side effects —
+_ "github.com/osbits/gorgany/v2/db/sql/driver/postgres" or
+_ "github.com/osbits/gorgany/v2/db/sql/driver/mysql", or
+_ "github.com/osbits/gorgany/v2/db/sql/driver/builtin" for both — typically next to your
+provider package's imports.
+```
+
+Boot the app once. That is the check.
+
+After adding the single-engine import, confirm the other engine is gone:
+
+```bash
+go mod tidy
+go list -deps ./cmd/server | grep mysql   # should be empty for a Postgres-only app
+```
+
+### Mechanical or judgement?
+
+**Mechanical.** One import line, and the error message names it.
+
+---
+
+## 22. A validation failure is 422 for an API client, 303 for a browser (behaviour)
+
+### What broke and why it had to
+
+`processValidationErrors` answered **every** caller with a `301` redirect to the `Referer`,
+API clients included — so the reshaped validation payload from §12 was unobservable through
+the framework's own handler. `docs/VALIDATION.md` and this document both already described
+the `422`.
+
+Two more defects sat in the same four lines. A `301` is permanently *cacheable* and browsers
+rewrite it to a `GET`, so a browser could cache "POST this URL → GET that one" indefinitely;
+`303 See Other` is the post-redirect-get status and is not cacheable by default. And the
+`Referer` was passed through unchecked, so a client that sends none got `Location: ""`.
+
+### Before / after
+
+```
+# BEFORE — every caller
+HTTP/1.1 301 Moved Permanently
+Location: http://example.invalid/page
+```
+
+```
+# AFTER — API client (JSON Accept, JSON Content-Type, /api/ prefix, or api namespace)
+HTTP/1.1 422 Unprocessable Entity
+{"status":422,"status_code":"VALIDATION","body":null,
+ "errors":[{"field":"title","err":"title is required","rule":"required","path":"title"}]}
+
+# AFTER — browser form with a Referer
+HTTP/1.1 303 See Other
+Location: http://example.invalid/form
+
+# AFTER — no Referer: there is nowhere to go back to, so the errors are returned
+HTTP/1.1 422 Unprocessable Entity
+```
+
+The browser branch still flashes the errors into the session under the same key, so a
+server-rendered form renders them exactly as before.
+
+### How to detect whether you are affected
+
+```bash
+# A client that treats a 301 from a POST as meaningful
+grep -rn "301\|StatusMovedPermanently" --include="*.js" --include="*.ts" --include="*.go" . \
+  | grep -vi redirect
+
+# Your own ValidationErrors handler, which shadows this one and is unaffected
+grep -rn '"ValidationErrors"\|"ValidationError"' --include="*.go" .
+```
+
+If you registered your own handler to get a 422 — which was the only way to get one — you
+can now delete it. Compare it against the framework's first: the shapes are the same.
+
+### Mechanical or judgement?
+
+**Mechanical** if you had your own handler. **Judgement** for a client that relied on the
+redirect, though it is hard to see how one could have.
+
+---
+
+## 23. `omitempty` and embed collisions now match `encoding/json` (behaviour)
+
+### What broke and why it had to
+
+The envelope marshaller exists to serialise a DTO the way `encoding/json` would, and it
+diverged in two places.
+
+`omitempty` was gated on `reflect.Value.IsZero()`, which is a different predicate from
+`encoding/json`'s:
+
+| field with `,omitempty` | `encoding/json` | before | after |
+|---|---|---|---|
+| `[]string{}` (non-nil, len 0) | omitted | **emitted** | omitted |
+| `map[string]string{}` (len 0) | omitted | **emitted** | omitted |
+| `time.Time{}` | emitted | **omitted** | emitted |
+| zero nested struct | emitted | **omitted** | emitted |
+| nil slice/map/ptr, `""`, `0`, `false` | omitted | omitted | omitted |
+
+The `time.Time` row is the one to check for. A `CreatedAt time.Time` tagged
+`json:"created_at,omitempty"` on a not-yet-persisted record used to vanish from the response
+and now appears as `"0001-01-01T00:00:00Z"`.
+
+And when an inlined embed and an outer field shared a wire name, the winner depended on
+declaration order — the embed was merged with a map copy, the outer field assigned, so
+whichever came later won. `encoding/json` always prefers the shallower field.
+
+| declaration order | `encoding/json` | before | after |
+|---|---|---|---|
+| embed first, outer second | outer | outer | outer |
+| outer first, embed second | outer | **embed** | outer |
+
+### How to detect whether you are affected
+
+```bash
+# Response DTOs using omitempty on a struct or a slice/map field
+grep -rn 'omitempty' --include="*.go" . | grep -iE 'time\.|\[\]|map\['
+
+# DTOs with an anonymous embed and a field that might share one of its wire names
+grep -rn -B 3 -A 8 '^\s*[A-Z][A-Za-z0-9]*Dto$' --include="*.go" .
+```
+
+The reliable check is to diff a response capture against one from before the upgrade. If a
+client is strict about key presence, the `time.Time` row is where it will notice.
+
+### Mechanical or judgement?
+
+**Judgement**, per DTO — but only for the ones the table above actually touches. Dropping
+`,omitempty` from a `time.Time` field restores the old *intent* if that is what you wanted;
+keeping it now matches `encoding/json`.
 
 ---
 

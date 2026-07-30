@@ -38,6 +38,24 @@ A DTO that fails validation produces a `422` in the standard envelope:
 `rule`, `param` and `path` are `omitempty`, so a top-level `required` failure carries just
 `field` and `err`.
 
+### A browser gets a redirect instead
+
+The `422` above is what an **API client** receives — one that sends a JSON `Accept` or
+`Content-Type`, or whose path is under `/api/`, or that is in the `api` namespace. Anything
+else is treated as a server-rendered form and gets `303 See Other` back to the `Referer`,
+with the errors flashed into the session for the view to render.
+
+Two details worth knowing:
+
+- The status is `303`, not `301`. A `301` is permanently cacheable and browsers rewrite it to
+  a `GET`, so a browser could cache "POST this URL → GET that one" indefinitely. `303` is the
+  post-redirect-get status.
+- With **no** `Referer` there is nowhere to go back to, so the `422` is returned instead of a
+  redirect to nothing.
+
+Before v2.0 every caller got the `301`, API clients included, which is why the payload above
+was unobservable through the framework's own handler.
+
 ### Which tag names the field
 
 `json` is checked first, then `scheme`, then the Go name. A JSON body binds through

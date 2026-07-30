@@ -125,6 +125,38 @@ work.
   **Behaviour change, no compiler error.**
 - **A DTO whose `ContentType()` has no body parser now panics at route
   registration** rather than serving 500s. Compile-clean, boot-time break.
+- **The module path is `github.com/osbits/gorgany/v2`.** Go requires a `/vN`
+  suffix for major version 2 and above, so `require github.com/osbits/gorgany
+  v2.0.0` failed with *"version v2.0.0 invalid: should be v0 or v1, not v2"* —
+  v2.0.0 could not be required as v2.0.0 at all. `+incompatible` does not apply,
+  because the module has a `go.mod`. Every import path gains `/v2`; see
+  MIGRATION_v2.md §20.
+- **`DbProvider` no longer registers a database driver.** It blank-imported
+  `db/sql/driver/builtin`, which registers both engines, so a Postgres-only app
+  linked `gorm.io/driver/mysql`, `go-sql-driver/mysql` and
+  `filippo.io/edwards25519` with no way to opt out. Add one blank import —
+  `_ ".../db/sql/driver/postgres"`, `.../mysql`, or `.../builtin` for both.
+  Compile-clean, boot-time break; `driver.New`'s message names the import. See
+  MIGRATION_v2.md §21.
+- **A DTO validation failure is `422` for an API client and `303` for a browser**,
+  not a `301` redirect for everyone. **Behaviour change, no compiler error.** This
+  is what makes the reshaped payload above observable; see MIGRATION_v2.md §22.
+- **`err.InputBodyParseError.Error()` no longer contains the request body.** The
+  body is still on the `Body` field. **Behaviour change**, and a security fix: the
+  framework's own handler logs the error, so every malformed body was written
+  verbatim to the log at Error level.
+- **`omitempty` now uses `encoding/json`'s emptiness rule.** A non-nil empty slice
+  or map is omitted where it used to be emitted; a zero `time.Time` or nested
+  struct is emitted where it used to be omitted. **Behaviour change, no compiler
+  error** — response shapes move in both directions. See MIGRATION_v2.md §23.
+- **An embed/outer wire-name collision resolves to the outer field**, regardless
+  of declaration order. **Behaviour change, no compiler error.**
+- **An unresolved `${VAR}` is blanked rather than left as the literal.** A
+  correction to the first version of this fix: an unresolved
+  `auth.session.cookie.domain` became `Domain: "${COOKIE_DOMAIN}"`, an invalid
+  cookie attribute, so the browser dropped `Set-Cookie` and login failed
+  silently. `config.KeepUnresolvedLiterals()` opts out. **Behaviour change, no
+  compiler error.**
 
 ### Added
 
@@ -208,6 +240,16 @@ work.
 - **`RouteProvider.DisableCsrfController()`**.
 - **A build-failing guard test** (`db/sql/builder/no_hardcoded_dialect_test.go`)
   against any new hard-coded-Postgres builder outside the dialect packages.
+- **`db/sql/driver/postgres` and `db/sql/driver/mysql`**: single-engine
+  registration packages, so an app links only the engine it uses. `driver/builtin`
+  still registers both.
+- **`dbCore.CompositeCondition`**, moved from the Postgres driver package where it
+  was keeping `gorm.io/driver/postgres` on `model`'s dependency path.
+- **`model.IsEmptyValue`**: `encoding/json`'s emptiness rule, beside the tag
+  parsing that reads `omitempty`.
+- **`config.KeepUnresolvedLiterals()`** and `config.ParseWithOptions`.
+- **`err.InputBodyParseError.Body`** is documented as deliberately excluded from
+  `Error()`, since an error string reaches a log by default.
 - Test coverage went from 14 `_test.go` files to 47. Measured with no database
   running: `db/sql/builder` 96.6%, MySQL dialect 95.3%, Postgres dialect 96.6%.
   A `livedb`-tagged suite additionally verifies the Tier-1 fixes against real
@@ -360,6 +402,20 @@ work.
 - **Two fields of one struct sharing a wire name is now an error.** The body parser
   can bind only one of them, so the other silently stayed zero and validation
   reported a name matching neither.
+- **A malformed request body was written verbatim to the log.**
+  `InputBodyParseError.Error()` included it and `processBodyParsingError` logs the
+  error, so a truncated `POST /auth/login` put a cleartext password in `docker logs`
+  and any aggregator. New exposure from the same release that introduced the error
+  type. The log now carries the request line instead — `URL.Path`, not
+  `RequestURI`, because a query string routinely carries a token.
+- **Validation errors never reached an API client.** `processValidationErrors` was
+  the one default handler the negotiation work missed, and it answered every caller
+  with a `301` to the `Referer`. Two further defects in the same four lines: a `301`
+  is permanently cacheable and browsers rewrite it to a `GET`, and an empty
+  `Referer` produced `Location: ""`.
+- **Two more unchecked type assertions**, in `processValidationErrors` and
+  `processValidationError`. `Catch` dispatches on the error's *bare type name*, so a
+  type called `ValidationErrors` from any package reached them and panicked.
 
 #### Jobs
 
@@ -374,6 +430,19 @@ work.
 - Job dependencies are injected: a pointer job goes through `Make`, and a *value*
   job carrying `container:"inject"` tags is a loud error rather than a silently
   unfilled struct.
+
+#### The IoC container
+
+- **Rebinding a core interface deadlocked the process.** `bind` took the write lock
+  with a deferred unlock and then logged the rebind warning while still holding it;
+  `log.Log()` goes through the factory `LoggerProvider` installs, which resolves
+  `core.Logger` back out of the same container, and `sync.RWMutex` is not reentrant.
+  Unconditional, and triggered by the ordering the warning itself recommends. A real
+  app's boot printed four warnings and then hung forever.
+- The container's own diagnostics can no longer re-enter it. Releasing the lock
+  stops the deadlock but not the recursion: the logger factory's fallback branch
+  *binds* a logger when resolution fails, so a warning from `bind` could reach `bind`
+  again.
 
 #### Providers, routing, ergonomics
 
@@ -391,10 +460,42 @@ work.
 - **`Container.bind` overwrote silently.** Rebinding still works, but replacing a
   core interface now warns.
 
+### What a real migration found
+
+A separate round of work (`FINDINGS_v2_FROM_FLOW8.md`) came from migrating a real
+application — ~150 controllers, Postgres-only, SPA frontend — to `2.0.0-edge`. Every
+one of its eleven findings held up on inspection, and all of them survived the
+framework's own green suites: `go test ./...`, `go test -tags=livedb ./...` and
+`sh e2e/run.sh`.
+
+That is the part worth keeping. The gaps were where the tests structurally could not
+reach:
+
+- `service/container_warning_test.go` exercises the exact line that deadlocked and
+  passes, because its logger factory returns a logger directly rather than resolving
+  through the container. One line's difference from the real factory.
+- `http/error_negotiation_test.go` covered four of the five default error handlers,
+  and the one it omitted was the broken one — not a coincidence, since it covered
+  the four the negotiation work had changed.
+- `e2e/fixture-app` overrode all five handlers, so the e2e harness could never reach
+  a default. That override is now removed.
+
+Also documented rather than changed:
+
+- The `OPTIONS` preflight responder is registered without the route middleware
+  chain, which is what makes it side-effect-free — but it also means route-scoped
+  auth and audit middleware no longer apply, so a session-less `OPTIONS` on a
+  protected route returns `204` with an `Allow` header naming the methods. It has to
+  stay that way: browsers send preflight uncredentialed, so applying auth would
+  break CORS entirely.
+- `GET /csrf` is registered at the root with no middleware, so an app whose gates
+  are scoped to `/api/**` does not apply them to it. Correct by design — a client
+  needs a token before it can authenticate.
+
 ### Corrections to the briefs
 
-Five claims across `IMPROVEMENT_v2.md` and `IMPROVEMENT_v2.1.md` did not survive
-verification:
+Six claims across `IMPROVEMENT_v2.md`, `IMPROVEMENT_v2.1.md` and this work did not
+survive verification:
 
 1. **`DROP TABLE ... CASCADE` is not invalid MySQL.** MySQL 8 documents
    `RESTRICT` and `CASCADE` on `DROP TABLE` as accepted no-ops "to make porting
@@ -422,6 +523,11 @@ verification:
    deliberately not supported: they would need a parser dependency, and shipping a
    non-functional `Cron` field would repeat exactly the `core.MongoDb` problem the
    same brief asked to fix.
+6. **A5's fix was wrong in its remedy as well as its reasoning.** The v2.1 round
+   already recorded that "leave the key alone so its default applies" cannot work.
+   What it did not follow through on is that leaving the literal in place is
+   *actively worse* than blanking for an optional key, because a literal `${VAR}` is
+   a value no consumer accepts. Corrected in this round; see the Breaking entry.
 
 ---
 

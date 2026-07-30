@@ -32,11 +32,25 @@ body is there because a cross-origin `fetch` cannot read a response header unles
 server lists it in `Access-Control-Expose-Headers`; the header is there so a same-origin
 client can use one uniform code path for this response and every other one.
 
-The endpoint is registered automatically. To move it, or to replace it with your own:
+### It is mounted at the root, outside your middleware patterns
+
+`GET /csrf` is registered at the root with no middleware of its own, so an app whose gates
+are scoped to a pattern — an install gate on `/api/**`, a tenant gate, a maintenance gate —
+does not apply them to it.
+
+That is correct by design: a client needs a token *before* it can authenticate or pass most
+gates, so a token endpoint behind them would be unreachable exactly when it is needed. But it
+is the one route that appears in your app without you asking for it, so it is worth knowing
+it is there and that it answers unconditionally. It returns nothing but a token bound to the
+caller's own session.
+
+If a gate genuinely must cover it — or you want it on a different path, or replaced with your
+own handler — turn the framework's off and mount your own:
 
 ```go
 routeProvider.DisableCsrfController()
-// then mount controller.CsrfController yourself with a different Path, or your own handler
+// then mount controller.CsrfController yourself, with a different Path or inside a
+// middleware pattern, or serve your own handler
 ```
 
 ## Keeping the token current

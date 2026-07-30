@@ -23,11 +23,11 @@ If that finds nothing, stop and say so — this prompt does not apply to this re
 
 ## Ground rules
 
-1. Work through the phases in order. Phases 1–4d are behaviour changes that compile
+1. Work through the phases in order. Phases 1–4f are behaviour changes that compile
    cleanly; Phases 5–8 are signature changes the compiler will find for you. Doing
    the behaviour work first means you are not making judgement calls while chasing
    build errors.
-2. **Do not `go get` the new version until Phase 5.** Phases 1–4d are audits of the
+2. **Do not change the dependency until Phase 5.** Phases 1–4f are audits of the
    existing code, and you want it building while you do them.
 3. Commit per phase, so a mistake is easy to isolate.
 4. If a grep in this document returns nothing, say so and move on — several of
@@ -38,6 +38,10 @@ If that finds nothing, stop and say so — this prompt does not apply to this re
    passing suite prove nothing about them. You have to watch them run: a scheduled
    job firing (5d), `orm.Create` inserting a row if you use MySQL (Phase 6), and a
    CSRF-protected request succeeding with a token obtained from `/csrf` (4b).
+7. Two changes compile *and vet* cleanly and fail only when the app boots: the
+   driver import (5i) and an app-owned key under `databases.<name>` (5j). **Boot the
+   app** before you call the migration done — `go build ./... && go vet ./...`
+   passing means nothing for either.
 
 ---
 
@@ -492,8 +496,9 @@ func inputErrorHandler(err error, message core.HttpMessage) {
 }
 ```
 
-Note the 400-vs-422 split: a body that *parses* but holds a value a field rejects is still
-`422` with `ValidationErrors`. Only unparseable bodies are `400`.
+Note the 400-vs-422 split: a body that *parses* but holds a value a field rejects is a `422`
+with `ValidationErrors` for an API client, and a `303` back to the `Referer` for a browser
+form — see Phase 4e. Only unparseable bodies are `400`.
 
 ---
 
@@ -507,6 +512,13 @@ one, and wrote the result into viper's highest-precedence layer. So a placeholde
 **missing** variable produced a key that was present, empty, and unbeatable by any default.
 With the documented `secure: ${SESSION_COOKIE_SECURE}` and the variable unset, the session
 cookie shipped **without** `Secure` and nothing said so.
+
+An unresolved placeholder is now **blanked**, and the two security-relevant keys stop the
+boot. It is not left as the literal `${VAR}`: a literal is a value no consumer accepts, and
+the failure that matters is the silent one — an unresolved `auth.session.cookie.domain`
+becomes an invalid cookie `Domain` attribute, so the browser drops `Set-Cookie` and login
+fails with nothing in any log. `config.KeepUnresolvedLiterals()` opts back in if you would
+rather see `${DB_HOST}` in a connection error.
 
 ```bash
 # Every placeholder in your config
@@ -530,14 +542,141 @@ never silently weaken security
 
 Removing the placeholder is a valid fix: the framework's default is `secure: true`.
 
-Any other unresolved placeholder is left as the literal `${VAR}` with a warning, so a
-connection error naming `${DB_HOST}` is now diagnosable where an empty host gave no clue.
+Any other unresolved placeholder is blanked, with a warning naming the key and the variable.
+Note what the warning also tells you and what the old one got wrong: the key stays *present*,
+so a `SetDefault` for it will not apply. Set the variable, or remove the placeholder to fall
+back to the framework's default.
 
+**If your app substitutes `${VAR}` itself**, replace that with a call to the framework's
+resolver:
+
+```bash
+grep -rn 'viper.Set\|os.Getenv\|LookupEnv' --include="*.go" . | grep -v "_test"
+```
+
+```go
+// BEFORE — a local substitution loop
+for _, k := range viper.AllKeys() { ... viper.Set(k, os.Getenv(name)) ... }
+
+// AFTER
+if err := config.ResolveEnvPlaceholders(); err != nil {
+    return err
+}
+```
+
+This matters more than it looks. `viper.Set` writes the *override* layer, and a map fetch
+resolves against the highest layer holding the key without deep-merging the ones below — so
+substituting `databases.default.host` with `viper.Set` makes `GetStringMap("databases")`
+return only that key, and `driver`, `log` and `properties` vanish. The symptom is a boot
+panic naming an unrelated key:
+
+```
+panic: database 'default': datasource config: 'driver' is required
+```
+
+The framework's resolver uses `MergeConfigMap`, which deep-merges and does not do this.
+
+
+---
+
+## Phase 4e — Validation failures now reach an API client (behaviour)
+
+A DTO that failed validation used to produce a **301 redirect to the `Referer`** for every
+caller, API clients included. So the reshaped payload from Phase 4a was unobservable through
+the framework's own handler — the only way to get a `422` was to register your own handler.
+
+Now: `422` with the envelope for an API client, `303 See Other` back to the `Referer` for a
+browser form, and `422` when there is no `Referer` to go back to.
+
+```bash
+# Did you register a ValidationErrors handler? If it exists only to produce a 422, you can
+# delete it — compare it against the framework's first, the shapes are the same.
+grep -rn '"ValidationErrors"\|"ValidationError"' --include="*.go" .
+
+# Anything client-side that treats a 301 from a POST as meaningful
+grep -rn "301\|StatusMovedPermanently" \
+  --include="*.js" --include="*.ts" --include="*.vue" --include="*.go" . \
+  | grep -vi redirect || echo "no matches"
+```
+
+Two details if you keep a browser flow:
+
+- The redirect is `303`, not `301`. A `301` is permanently cacheable and browsers rewrite it
+  to a `GET`, so a browser could cache "POST this URL → GET that one" indefinitely. If you
+  asserted on `301` in a test, that is the change.
+- The errors are still flashed into the session under the same key, so a server-rendered form
+  renders them exactly as before.
+
+Verify against a real endpoint:
+
+```bash
+# API client → 422 with the payload
+curl -i -X POST -H 'Content-Type: application/json' --data '{}' \
+  http://localhost:8080/api/<a-validated-route>
+
+# Browser form with a Referer → 303
+curl -i -X POST -H 'Referer: http://localhost:8080/form' \
+  -d 'field=' http://localhost:8080/<a-form-route>
+
+# No Referer → 422 rather than a redirect to nowhere
+curl -i -X POST -d 'field=' http://localhost:8080/<a-form-route>
+```
+
+---
+
+## Phase 4f — Response shapes: `omitempty` and embedded collisions (behaviour)
+
+The API envelope now applies `encoding/json`'s emptiness rule rather than
+`reflect.Value.IsZero()`, and resolves an embed/outer wire-name collision by depth rather
+than by declaration order. Both move response shapes.
+
+| field with `,omitempty` | before | after (= `encoding/json`) |
+|---|---|---|
+| `[]string{}` (non-nil, len 0) | emitted | **omitted** |
+| `map[string]string{}` (len 0) | emitted | **omitted** |
+| `time.Time{}` | omitted | **emitted** as `"0001-01-01T00:00:00Z"` |
+| zero nested struct | omitted | **emitted** |
+
+```bash
+# The fields that can move
+grep -rn 'omitempty' --include="*.go" . | grep -iE 'time\.|\[\]|map\['
+
+# DTOs where an embed and an outer field might share a wire name
+grep -rn -B 3 -A 10 'json:"' --include="*.go" . | grep -B 6 -A 6 '^\S*-\s*[A-Z][A-Za-z]*Dto$'
+```
+
+The `time.Time` row is the one to check. A `CreatedAt time.Time` tagged
+`json:"created_at,omitempty"` on a not-yet-persisted record used to vanish and now appears as
+the zero time. If a client treats key-absence as meaningful, that is a real change — drop
+`,omitempty` from the field if the old shape is what you want.
+
+The reliable check is a diff:
+
+```bash
+# Capture the same responses before and after the upgrade and compare
+curl -s http://localhost:8080/api/<a-dto-route> | jq -S . > after.json
+diff before.json after.json
+```
 
 ## Phase 5 — Bump the dependency and let the compiler drive
 
 ```bash
-go get github.com/osbits/gorgany@v2.0.0
+# The module path gained a /v2 suffix: Go requires one for major version 2 and above, so
+# `require github.com/osbits/gorgany v2.0.0` fails outright with
+# "version v2.0.0 invalid: should be v0 or v1, not v2".
+#
+# Rewrite every import first, then swap the requirement.
+grep -rl '"github.com/osbits/gorgany' --include="*.go" . \
+  | xargs sed -i '' 's|"github.com/osbits/gorgany/|"github.com/osbits/gorgany/v2/|g; s|"github.com/osbits/gorgany"|"github.com/osbits/gorgany/v2"|g'
+gofmt -w .
+
+go mod edit -droprequire=github.com/osbits/gorgany
+go get github.com/osbits/gorgany/v2@v2.0.0
+go mod tidy
+
+# On GNU sed, drop the '' after -i. Then check for the path outside Go files:
+grep -rn "osbits/gorgany" --include="*.yml" --include="*.yaml" --include="Dockerfile*" \
+  --include="Makefile" . | grep -v "/v2"
 go mod tidy
 go build ./... 2>&1 | tee /tmp/gorgany-v2-build.log
 ```
@@ -760,6 +899,79 @@ dialect := mysqlv2.MySQLDialect{AllowUnfaithfulUpsert: true}
 ```
 
 or use `DoNothing()` (unaffected) or an explicit read-then-write in a transaction.
+
+### 5i. `no datasource drivers are registered` at boot
+
+`provider.DbProvider` used to blank-import `db/sql/driver/builtin`, which registers both
+engines — so every app on the standard bootstrap linked `gorm.io/driver/mysql`,
+`go-sql-driver/mysql` and `filippo.io/edwards25519` whether or not it would ever speak
+MySQL. It now registers nothing and you choose.
+
+**This compiles and vets cleanly.** It fails on the first boot:
+
+```
+datasource config: no datasource drivers are registered, so "postgres_gorm" cannot be
+resolved. Import the engine you use for its side effects — ...
+```
+
+Add one blank import next to your own provider package's imports:
+
+```go
+_ "github.com/osbits/gorgany/v2/db/sql/driver/postgres"   // Postgres only
+_ "github.com/osbits/gorgany/v2/db/sql/driver/mysql"      // MySQL only
+_ "github.com/osbits/gorgany/v2/db/sql/driver/builtin"    // both, exactly as before
+```
+
+Which one:
+
+```bash
+grep -rn "driver:" config/
+```
+
+Then confirm the other engine is actually gone, which is the point:
+
+```bash
+go mod tidy
+go list -deps ./cmd/server | grep -E "mysql|postgres"
+```
+
+A Postgres-only app should show `gorm.io/driver/postgres` and no `mysql` line. Expect
+`go mod tidy` to *remove* `gorm.io/driver/mysql`, `github.com/go-sql-driver/mysql` and
+`filippo.io/edwards25519` from your `go.mod`.
+
+### 5j. An app-owned key under `databases.<name>` is now rejected
+
+`db/sql/config` rejects any key it does not recognise under a datasource, which is what
+turns a typo like `databse` into a boot failure instead of a silently ignored setting. A
+deliberate app-owned key is rejected too:
+
+```yaml
+databases:
+  default:
+    driver: postgres_gorm
+    pool:                 # read by the app itself via viper
+      maxOpen: 25
+```
+
+```
+panic: database 'default': datasource config: unknown key(s) 'pool' under this database
+  — did you mean 'properties' instead of 'pool'? — recognised keys are ...
+```
+
+This is worth knowing about if the framework's `properties` block never worked for you
+before — it did not, on any version up to v1.5.1, because the camelCase lookups could never
+match viper's lowercased keys — and you worked around it with a sibling block.
+
+```bash
+# Every key under every datasource. Anything not in the recognised list will now fail.
+grep -rn -A 20 "^databases:" config/
+```
+
+Two ways out, and the error message names both: move the block under `properties`, whose
+contents are passed through untouched, or out from under `databases.<name>` entirely.
+
+This also **compiles and vets cleanly** — it is a `Register`-time panic — so it is another
+boot check rather than a build one.
 
 Then:
 
@@ -1121,14 +1333,23 @@ curl -i -H 'Accept: application/json' \
 curl -s -X POST -H 'Content-Type: application/json' --data '{}' \
   http://localhost:8080/api/<a-validated-route>
 
-# 13. Every ${VAR} in config/ is set in this environment.
+# 13. Every ${VAR} in config/ is set in this environment. An unset one is now blanked
+#     rather than left as a literal, and the two security-relevant keys fail the boot.
 grep -rn '\${' config/
+
+# 14. Validation reaches an API client as a 422 payload, not a redirect.
+curl -s -X POST -H 'Content-Type: application/json' --data '{}' \
+  http://localhost:8080/api/<a-validated-route>
+
+# 15. The app BOOTS. Two changes compile and vet cleanly and fail only here: the
+#     driver import (5i) and an app-owned key under databases.<name> (5j).
+go run cmd/server.go   # or however you start it — read the first 20 lines of output
 ```
 
 If you use MySQL:
 
 ```bash
-# 14. orm.Create inserts a row and the entity comes back with its id.
+# 16. orm.Create inserts a row and the entity comes back with its id.
 #     The ORM ignored the session's dialect entirely before this release, so every
 #     ORM query against MySQL emitted Postgres SQL. This one needs a real insert
 #     against a real server — no unit test in the framework caught it.
@@ -1160,3 +1381,8 @@ When you finish, report:
    A green build is not evidence for any of them.
 7. Every `${VAR}` in `config/` that you could not confirm is set, and in which
    environment.
+8. Whether the app **booted**, and with which driver import. `go build` and `go vet`
+   passing is not evidence for either of the two boot-only changes.
+9. Every response shape that moved because of `omitempty` or an embed collision
+   (4f) — in particular any `time.Time` field tagged `omitempty`, whose key
+   reappears.
