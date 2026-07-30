@@ -10,8 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/viper"
+
 	"github.com/osbits/gorgany/v2/app/core"
 	"github.com/osbits/gorgany/v2/auth"
+	"github.com/osbits/gorgany/v2/http/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -77,6 +80,13 @@ func (r *stubResponse) JSON(v any, code int) {
 	r.rec.body = v
 }
 
+func (r *stubResponse) Text(body string, code int) {
+	r.rec.status = code
+	r.rec.body = body
+}
+
+func (r *stubResponse) SetHeader(key, value string) { r.Header().Set(key, value) }
+
 func (r *stubResponse) Header() http.Header {
 	if r.rec.headers == nil {
 		r.rec.headers = http.Header{}
@@ -88,8 +98,21 @@ type stubMessage struct {
 	core.HttpMessage
 	res     *stubResponse
 	rec     *recorded
+	req     *stubRequest
 	session *stubSessionScope
 }
+
+// stubRequest exists because the rate limiter (I2) derives its bucket key from the request:
+// the client address from RemoteAddr, and the route from the method and path. RemoteAddr is
+// fixed, so every call in a test shares one bucket — which is what makes a burst measurable.
+type stubRequest struct {
+	core.IRequestScope
+	raw *http.Request
+}
+
+func (r *stubRequest) RawRequest() *http.Request { return r.raw }
+func (r *stubRequest) Header() http.Header       { return r.raw.Header }
+func (r *stubRequest) PathParam(string) string   { return "" }
 
 // stubSessionScope is the request's session slot. The controller sets it after creating a
 // session so the rest of the request sees one, as it would have had the middleware run.
@@ -101,14 +124,22 @@ type stubSessionScope struct {
 func (s *stubSessionScope) Set(session core.ISession) { s.set = session }
 
 func (m *stubMessage) Response() core.IResponseScope { return m.res }
+func (m *stubMessage) Request() core.IRequestScope   { return m.req }
 func (m *stubMessage) Context() context.Context      { return context.Background() }
 func (m *stubMessage) Session() core.ISessionScope   { return m.session }
 
 func newStubMessage() *stubMessage {
 	rec := &recorded{}
+	request := httptest.NewRequest(http.MethodGet, core.DefaultCSRFTokenPath, nil)
+	request.RemoteAddr = "203.0.113.7:54321"
+	// A SPA fetches this endpoint, so the refusal should come back as an envelope rather
+	// than text — which is also the path the limiter's own negotiation takes.
+	request.Header.Set("Accept", core.ApplicationJson.String())
+
 	return &stubMessage{
 		res:     &stubResponse{rec: rec},
 		rec:     rec,
+		req:     &stubRequest{raw: request},
 		session: &stubSessionScope{},
 	}
 }
@@ -343,4 +374,134 @@ func TestTheEndpointIsExemptFromTheCsrfCheckItself(t *testing.T) {
 	// And prove the assumption rather than asserting it in prose.
 	req := httptest.NewRequest(http.MethodGet, core.DefaultCSRFTokenPath, nil)
 	assert.Equal(t, http.MethodGet, req.Method)
+}
+
+// ------------------------------ I2: the write path H2 opened must be metered
+
+// I2. H2 made this endpoint start a session when the request carries none. That is what makes
+// it usable, and it also made it the one public route in a typical app that writes a row to
+// `sessions`: only RecoveryMiddleware is global by default, rate limiting is opt-in, this
+// route is registered outside an app's middleware patterns, and an app's session middleware is
+// scoped to the namespace it protects. Before H2 it answered 403 and wrote nothing; after, a
+// curl loop grew the table without bound.
+//
+// The limiter and H4's sweep are one mitigation in two halves: the limit caps the arrival
+// rate, the sweep collects each row once it expires, and the product bounds the table. Either
+// alone leaves it unbounded — the limit only slows growth, and the sweep cannot keep up with
+// rows arriving faster than a lifetime.
+
+func TestTheTokenRouteIsRateLimitedByDefault(t *testing.T) {
+	routes := NewCsrfController().GetRoutes()
+	require.Len(t, routes, 1)
+
+	mws := routes[0].GetMiddlewares()
+	require.Len(t, mws, 1, "the endpoint that creates sessions must be metered")
+
+	limiter, ok := mws[0].(*middleware.RateLimitMiddleware)
+	require.True(t, ok, "expected a rate limiter, got %T", mws[0])
+	assert.Equal(t, DefaultCsrfRate, limiter.Rate)
+}
+
+// TestTheDefaultRateIsLooseEnoughForRealTraffic. The number has to clear the worst plausible
+// legitimate burst, not the average: an office behind one NAT opening the app at 09:00, or an
+// app behind a proxy with TrustRateLimitForwardedFor left off, where every request shares a
+// single bucket. Tightening this to something that looks more "secure" breaks those and
+// inconveniences an attacker who can just use more addresses.
+func TestTheDefaultRateIsLooseEnoughForRealTraffic(t *testing.T) {
+	require.NoError(t, DefaultCsrfRate.Validate())
+
+	assert.Equal(t, time.Minute, DefaultCsrfRate.Window)
+	assert.GreaterOrEqual(t, DefaultCsrfRate.Burst, 100,
+		"a whole office behind one address must not be locked out")
+}
+
+func TestTheRateIsConfigurable(t *testing.T) {
+	c := NewCsrfController()
+	c.Rate = middleware.PerMinute(7)
+
+	limiter, ok := c.GetRoutes()[0].GetMiddlewares()[0].(*middleware.RateLimitMiddleware)
+	require.True(t, ok)
+	assert.Equal(t, middleware.PerMinute(7), limiter.Rate)
+}
+
+// TestAnInvalidRateFallsBackToTheDefault rather than panicking inside
+// NewRateLimitMiddleware at boot. A zero RateLimit is what a struct literal that sets other
+// fields produces, so it must mean "unset", not "reject every request".
+func TestAnInvalidRateFallsBackToTheDefault(t *testing.T) {
+	c := NewCsrfController()
+	c.Rate = middleware.RateLimit{} // Burst 0 would refuse everything
+
+	limiter, ok := c.GetRoutes()[0].GetMiddlewares()[0].(*middleware.RateLimitMiddleware)
+	require.True(t, ok)
+	assert.Equal(t, DefaultCsrfRate, limiter.Rate)
+}
+
+func TestTheRateLimitCanBeTurnedOff(t *testing.T) {
+	c := NewCsrfController()
+	c.DisableRateLimit = true
+
+	assert.Empty(t, c.GetRoutes()[0].GetMiddlewares(),
+		"an app metering at the edge must be able to opt out")
+}
+
+// TestForwardedForIsNotTrustedByDefault. X-Forwarded-For is caller-supplied, so trusting it
+// with no proxy in front lets a client pick its own bucket and rotate through unlimited ones —
+// which is the same as not rate-limiting at all.
+func TestForwardedForIsNotTrustedByDefault(t *testing.T) {
+	limiter, ok := NewCsrfController().GetRoutes()[0].GetMiddlewares()[0].(*middleware.RateLimitMiddleware)
+	require.True(t, ok)
+	assert.False(t, limiter.TrustForwardedFor)
+
+	c := NewCsrfController()
+	c.TrustRateLimitForwardedFor = true
+	behindProxy, ok := c.GetRoutes()[0].GetMiddlewares()[0].(*middleware.RateLimitMiddleware)
+	require.True(t, ok)
+	assert.True(t, behindProxy.TrustForwardedFor,
+		"an app behind a trusted proxy must be able to key on the real client")
+}
+
+// TestTheLimitActuallyRefusesSessionCreation exercises the limiter over the real handler, so
+// what is pinned is that a flood stops creating sessions — not merely that a middleware is
+// attached to a slice.
+func TestTheLimitActuallyRefusesSessionCreation(t *testing.T) {
+	withStorageConfigured(t)
+
+	const burst = 3
+
+	c := NewCsrfController()
+	c.Rate = middleware.RateLimit{Burst: burst, Window: time.Hour}
+	c.CsrfService = &auth.CsrfService{}
+	c.SessionStorage = &stubSessionStorage{}
+
+	strategy := &stubStrategy{}
+	c.AuthContext = &stubAuthContext{strategy: strategy}
+	// Every call arrives with no session, so every allowed one creates a new one.
+	strategy.created = &stubSession{items: map[string]string{}}
+
+	limiter, ok := c.GetRoutes()[0].GetMiddlewares()[0].(*middleware.RateLimitMiddleware)
+	require.True(t, ok)
+	metered := limiter.Handle(c.Token)
+
+	var refused int
+	for i := 0; i < burst*4; i++ {
+		message := newStubMessage()
+		strategy.created = &stubSession{items: map[string]string{}}
+		metered(message)
+
+		if message.rec.status == http.StatusTooManyRequests {
+			refused++
+		}
+	}
+
+	assert.Equal(t, burst, strategy.newCalls,
+		"only the allowed calls may create a session")
+	assert.Equal(t, burst*3, refused, "the rest must be refused")
+}
+
+func withStorageConfigured(t *testing.T) {
+	t.Helper()
+
+	previous := viper.Get("auth.session.storage")
+	viper.Set("auth.session.storage", "database")
+	t.Cleanup(func() { viper.Set("auth.session.storage", previous) })
 }

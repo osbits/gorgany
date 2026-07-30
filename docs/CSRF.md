@@ -50,6 +50,34 @@ endpoint starts a session itself when the request carries none — the same
 to arrange middleware coverage for it, and you should not: the first call any client makes
 carries no session, which is precisely the call this endpoint exists to answer.
 
+### It is rate-limited
+
+Starting a session makes this a public route that writes a row to `sessions`, so it carries one
+middleware of its own — a limiter at **300 requests per minute per client**. Legitimate use is
+one call per client per session, since every session-carrying response already publishes the
+token, so the limit is roughly three orders of magnitude above normal traffic. With the session
+GC sweeping expired rows, the two together bound the table at about `rate × session lifetime`
+rather than merely slowing its growth.
+
+```go
+csrf := controller.NewCsrfController()
+csrf.Rate = middleware.PerMinute(60)   // tighter
+csrf.DisableRateLimit = true           // or meter at the edge instead
+
+// Behind a proxy or load balancer, read this one:
+csrf.TrustRateLimitForwardedFor = true
+```
+
+`TrustRateLimitForwardedFor` is off by default because `X-Forwarded-For` is caller-supplied:
+trusting it with no proxy in front lets any client pick its own bucket and rotate through
+unlimited ones, which is the same as no limit. Left off *behind* a proxy, every request appears
+to come from the proxy and your whole app shares one bucket. The 300/minute default is loose
+enough to survive either mistake — but set the flag when a trusted proxy sets the header, so
+the limit is actually per-client.
+
+Note that `message.Request().IP()` trusts both headers unconditionally. It is fine for logging
+and useless for anything a caller should not be able to choose.
+
 If your app authenticates with bearer tokens only, `GET /csrf` answers **400** naming the
 reason. A JWT is not sent automatically by the browser, so there is no CSRF exposure and no
 token to issue.
