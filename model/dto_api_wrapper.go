@@ -154,6 +154,17 @@ func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (any, error
 		return body, nil
 	}
 
+	// The names this struct declares at its own depth, computed before anything is
+	// written.
+	//
+	// encoding/json always prefers the shallower field when an inlined embed and an outer
+	// field share a wire name. This marshaller wrote in declaration order — an outer field
+	// by assignment, an embed by MergeMaps, which overwrites — so whichever came *later*
+	// won. With the embed declared first the two agreed by luck; with the outer field
+	// first, the embed silently won and a struct's wire output depended on field order in
+	// a way encoding/json never does.
+	shallowNames := thiz.shallowWireNames(element)
+
 	for i := 0; i < element.NumField(); i++ {
 		rvField := element.Field(i)
 		rtField := element.Type().Field(i)
@@ -201,7 +212,7 @@ func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (any, error
 								"inlined; give it an explicit json tag to nest it instead",
 							rtField.Name, element.Type())
 					}
-					body = util.MergeMaps(body, nestedFields)
+					mergeInlined(body, nestedFields, shallowNames)
 				}
 				continue
 			}
@@ -221,7 +232,7 @@ func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (any, error
 				if e != nil {
 					return nil, e
 				}
-				body = util.MergeMaps(body, nested)
+				mergeInlined(body, nested, shallowNames)
 				continue
 			}
 		}
@@ -232,9 +243,11 @@ func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (any, error
 			continue
 		}
 
-		// `omitempty` drops a zero value, as encoding/json does. It used to be
-		// ignored, so an empty field shipped as null / "" / 0.
-		if tag.OmitEmpty && rvField.IsZero() {
+		// `omitempty` drops an empty value, using encoding/json's own predicate. It used
+		// to be ignored entirely, so an empty field shipped as null / "" / 0; then it
+		// used reflect.Value.IsZero(), which is a *different* predicate and diverged in
+		// both directions. See model.IsEmptyValue.
+		if tag.OmitEmpty && IsEmptyValue(rvField) {
 			continue
 		}
 
@@ -246,6 +259,53 @@ func (thiz *ApiReturnObject) buildBodyElement(element reflect.Value) (any, error
 	}
 
 	return body, nil
+}
+
+// shallowWireNames collects the wire names element declares at its own depth — every
+// exported, non-skipped field that is not an inlined embed.
+//
+// An embed carrying an explicit json name counts: the tag makes it a real key at this
+// depth rather than something to inline, so it wins over a promoted field of the same name
+// exactly as encoding/json has it.
+func (thiz *ApiReturnObject) shallowWireNames(element reflect.Value) map[string]bool {
+	names := make(map[string]bool)
+
+	for i := 0; i < element.NumField(); i++ {
+		rtField := element.Type().Field(i)
+		if !rtField.IsExported() {
+			continue
+		}
+
+		tag := parseJSONTag(rtField)
+		if tag.Skip {
+			continue
+		}
+
+		// An anonymous field with no explicit name is a candidate for inlining, so it
+		// contributes its *promoted* names rather than one of its own.
+		if rtField.Anonymous && !tag.HasName {
+			continue
+		}
+
+		names[tag.Name] = true
+	}
+
+	return names
+}
+
+// mergeInlined copies an embed's promoted fields into body, skipping any name the outer
+// struct declares at its own depth.
+//
+// This is the shallower-field-wins rule, applied before the write rather than depending on
+// which happened to be written last. It replaces util.MergeMaps at both inlining sites;
+// MergeMaps overwrites unconditionally, which is what made the result order-dependent.
+func mergeInlined(body map[string]any, promoted map[string]any, shallowNames map[string]bool) {
+	for name, value := range promoted {
+		if shallowNames[name] {
+			continue
+		}
+		body[name] = value
+	}
 }
 
 // inlineEmbedded returns a builder for an anonymous embedded struct's fields when

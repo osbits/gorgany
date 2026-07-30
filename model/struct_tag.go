@@ -63,6 +63,40 @@ func ParseStructTag(rtField reflect.StructField, tagName string) StructTag {
 	return tag
 }
 
+// IsEmptyValue reports whether v is empty in the sense `omitempty` means, matching
+// encoding/json exactly.
+//
+// The envelope marshaller used reflect.Value.IsZero(), which is a different predicate, and
+// the difference ran both ways:
+//
+//   - a non-nil but empty slice or map is zero-length, so encoding/json omits it; IsZero
+//     is false for it, so the marshaller emitted it;
+//   - encoding/json treats a struct as never empty, so it emits a zero time.Time; IsZero
+//     is true for it, so the marshaller silently dropped the key.
+//
+// The struct case is the dangerous one: a CreatedAt time.Time tagged
+// json:"created_at,omitempty" on a not-yet-persisted record vanished from the response
+// instead of appearing as the zero time, where the stated goal was parity.
+//
+// This mirrors encoding/json's own isEmptyValue. Kept here beside ParseStructTag so the two
+// halves of `omitempty` — parsing the option and applying it — cannot drift apart.
+func IsEmptyValue(v reflect.Value) bool {
+	switch v.Kind() {
+	case reflect.Array, reflect.Map, reflect.Slice, reflect.String:
+		return v.Len() == 0
+	case reflect.Bool,
+		reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Uintptr,
+		reflect.Float32, reflect.Float64,
+		reflect.Interface, reflect.Pointer:
+		return v.IsZero()
+	}
+	// Everything else — notably a struct, and also a chan or func — is never empty, which
+	// is encoding/json's rule and not an oversight.
+	return false
+}
+
 // WireFieldName returns the name a client used for this field: its `json` tag, else its
 // `scheme` tag, else the Go field name.
 //
