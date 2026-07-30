@@ -150,6 +150,36 @@ func (thiz *SpaController) Serve(message core.HttpMessage) {
 		return
 	}
 
+	// No such file, so this is the deep-link fallback: the client-side router owns the path
+	// and needs the entry document. Unless the caller asked for JSON, in which case it is
+	// not a navigation at all.
+	//
+	// This closes the half of the shadowing that ExcludedPrefixes cannot. The exclusion list
+	// only knows the framework's own conventions — /api/, /public/, /csrf — so an app whose
+	// API lives at /v1/** still had `GET /v1/widgetz` answered with 200 and an HTML document,
+	// and the client's JSON parse failed somewhere far from the cause. Requiring every app to
+	// enumerate its API namespaces is a configuration step it will get wrong once and then
+	// never revisit.
+	//
+	// The Accept header settles it without configuration and without guessing at namespaces:
+	// a browser navigating to a deep link sends `text/html,...,*/*;q=0.8` and never names JSON
+	// specifically, while a fetch() to an API endpoint does.
+	//
+	// ClientAskedForJSON, not WantsJSON. WantsJSON also answers true for anything under
+	// `/api/`, and that path rule would overrule ExcludedPrefixes — an app that sets
+	// `ExcludedPrefixes = []string{}` is explicitly asking for /api/** to reach the SPA, and
+	// this guard must not quietly take that back. Paths are the exclusion list's business;
+	// what the client asked for is this one's.
+	//
+	// Placed after the file read on purpose. A bundle legitimately contains .json and
+	// .webmanifest files, and a request for one of those names JSON in Accept — so this guards
+	// only the fallback, never a real asset.
+	if grghttp.ClientAskedForJSON(message) {
+		grghttp.WriteNegotiatedError(message, core.NotFoundHttpStatus,
+			"No route matches this request")
+		return
+	}
+
 	thiz.writeIndex(message)
 }
 

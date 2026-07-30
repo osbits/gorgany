@@ -32,6 +32,43 @@ func WantsJSON(message core.HttpMessage) bool {
 		return true
 	}
 
+	if ClientAskedForJSON(message) {
+		return true
+	}
+
+	if req := request.RawRequest(); req != nil && req.URL != nil {
+		path := req.URL.Path
+		if strings.HasPrefix(path, "/api/") || path == "/api" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// ClientAskedForJSON reports whether the *client* named JSON, through Accept or Content-Type.
+//
+// It is the header-only half of WantsJSON, split out because one caller must not use the
+// other half. WantsJSON also answers true for anything under `/api/`, which is right for
+// choosing an error's shape — an app's API namespace should get envelopes — but wrong for
+// SpaController's deep-link fallback, where the *path* question is already owned by
+// ExcludedPrefixes. An app that sets `ExcludedPrefixes = []string{}` is explicitly asking for
+// /api/** to reach the SPA, and a path rule buried in a negotiation helper must not overrule
+// that. What the client put in its Accept header is orthogonal to any of it.
+//
+// Accept is matched on JSON specifically, never on the wildcard: a browser navigation sends
+// `text/html,application/xhtml+xml,...,*/*;q=0.8`, and matching `*/*` there would treat every
+// page load as an API call.
+func ClientAskedForJSON(message core.HttpMessage) bool {
+	if message == nil {
+		return false
+	}
+
+	request := message.Request()
+	if request == nil {
+		return false
+	}
+
 	req := request.RawRequest()
 	if req == nil {
 		return strings.Contains(
@@ -44,21 +81,7 @@ func WantsJSON(message core.HttpMessage) bool {
 		return true
 	}
 
-	// Honour Accept, but only when JSON is asked for specifically: a browser sends
-	// `Accept: text/html,...,*/*`, and matching the wildcard there would turn every
-	// browser redirect into a JSON body.
-	if strings.Contains(req.Header.Get("Accept"), core.ApplicationJson.String()) {
-		return true
-	}
-
-	if req.URL != nil {
-		path := req.URL.Path
-		if strings.HasPrefix(path, "/api/") || path == "/api" {
-			return true
-		}
-	}
-
-	return false
+	return strings.Contains(req.Header.Get("Accept"), core.ApplicationJson.String())
 }
 
 // WriteNegotiatedError answers with the standard envelope for an API client and plain text

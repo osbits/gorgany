@@ -510,17 +510,40 @@ func TestTheSpaDoesNotShadowTheRoutersAnswer(t *testing.T) {
 	}
 }
 
-// TestAMissingIndexIsNegotiatedToo. The misconfiguration paths matter less, but an API client
-// that gets text/plain from one branch and an envelope from another has to handle both.
-func TestAMissingIndexIsNegotiatedToo(t *testing.T) {
+// TestAMissingIndexTellsABrowserWhatIsWrong. "404" here means the app was never built or Root
+// points at the wrong directory, and naming the file is the whole value of the message.
+func TestAMissingIndexTellsABrowserWhatIsWrong(t *testing.T) {
 	controller := NewSpaController(t.TempDir())
+
+	message := spaRequestFor("/settings")
+	message.req.raw.Header.Set("Accept", "text/html")
+	controller.Serve(message)
+
+	assert.Equal(t, http.StatusNotFound, message.rec.status)
+	assert.Contains(t, message.rec.text, "is the app built?")
+}
+
+// TestAMissingIndexDoesNotLeakThePathToAnApiClient.
+//
+// I1's fallback guard means a client that asked for JSON never reaches writeIndex, so it gets
+// the plain negotiated 404 instead of the diagnostic. That is the right split twice over: the
+// caller was not asking for the SPA shell, and the diagnostic embeds an absolute server
+// filesystem path — `/var/www/app/web/dist/index.html` — which H1 had started delivering to
+// API callers inside the envelope. A developer looking at a blank page in a browser still gets
+// the full message.
+func TestAMissingIndexDoesNotLeakThePathToAnApiClient(t *testing.T) {
+	root := t.TempDir()
+	controller := NewSpaController(root)
 
 	message := spaAPIRequestFor("/settings")
 	controller.Serve(message)
 
 	assert.Equal(t, http.StatusNotFound, message.rec.status)
 	require.NotNil(t, message.rec.json)
-	assert.Contains(t, envelopeError(t, message.rec.json), "is the app built?")
+
+	rendered := envelopeError(t, message.rec.json)
+	assert.NotContains(t, rendered, root, "no server filesystem path in an API response")
+	assert.NotContains(t, rendered, "index.html")
 }
 
 // envelopeStatusCode and envelopeError read the envelope back through encoding/json, so the
@@ -547,4 +570,70 @@ func envelopeField(t *testing.T, envelope any, field string) string {
 	require.Contains(t, decoded, field, "envelope was %s", encoded)
 
 	return fmt.Sprint(decoded[field])
+}
+
+// -------------------------------- I1: the half ExcludedPrefixes cannot reach
+
+// I1. H1 fixed how an *excluded* path answers. It did not fix the app whose API is not under
+// an excluded prefix: DefaultSpaExclusions knows only the framework's own conventions
+// (/api/, /api, /public/, /csrf), so an API at /v1/** still had `GET /v1/widgetz` answered
+// with 200 and an HTML document — the original flow8-be symptom, just one path prefix over.
+//
+// Requiring each app to enumerate its API namespaces in ExcludedPrefixes is a configuration
+// step it gets wrong once and never revisits. The Accept header settles it instead: a browser
+// navigating to a deep link never names JSON specifically, a fetch() to an API endpoint does.
+
+func TestANonExcludedApiPathIsNotServedTheDocument(t *testing.T) {
+	controller := NewSpaController(builtApp(t))
+
+	message := spaAPIRequestFor("/v1/widgetz")
+	controller.Serve(message)
+
+	assert.Equal(t, http.StatusNotFound, message.rec.status)
+	assert.Empty(t, message.rec.body, "a JSON client must never receive index.html")
+	require.NotNil(t, message.rec.json)
+	assert.Contains(t, envelopeStatusCode(t, message.rec.json), "NOT_FOUND")
+}
+
+// TestADeepLinkStillGetsTheDocument is the constraint the fix must not break: reloading a
+// client-side route is the entire reason this controller exists.
+func TestADeepLinkStillGetsTheDocument(t *testing.T) {
+	controller := NewSpaController(builtApp(t))
+
+	for _, accept := range []string{
+		// What Chrome, Firefox and Safari actually send on a navigation.
+		"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+		"text/html",
+		"*/*",
+		"", // no Accept at all
+	} {
+		t.Run(accept, func(t *testing.T) {
+			message := spaRequestFor("/settings/profile")
+			if accept != "" {
+				message.req.raw.Header.Set("Accept", accept)
+			}
+			controller.Serve(message)
+
+			require.Equal(t, http.StatusOK, message.rec.status)
+			assert.Contains(t, string(message.rec.body), "<!doctype html>")
+		})
+	}
+}
+
+// TestAJsonAssetIsStillServed. The guard sits after the file read, because a bundle
+// legitimately contains .json and .webmanifest files and a fetch for one of those sends
+// exactly the Accept header the guard looks for. Putting the check earlier would have made
+// the app's own manifest a 404.
+func TestAJsonAssetIsStillServed(t *testing.T) {
+	root := builtApp(t)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "manifest.webmanifest"),
+		[]byte(`{"name":"app"}`), 0o600))
+
+	controller := NewSpaController(root)
+
+	message := spaAPIRequestFor("/manifest.webmanifest")
+	controller.Serve(message)
+
+	require.Equal(t, http.StatusOK, message.rec.status)
+	assert.Contains(t, string(message.rec.body), `"name":"app"`)
 }
