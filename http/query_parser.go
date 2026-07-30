@@ -53,7 +53,7 @@ func (p *QueryParser) initStruct(dest interface{}, inputMap map[string]any) erro
 	for key, value := range inputMap {
 		err := p.processValue(dest, value, key)
 		if err != nil {
-			return fmt.Errorf("failed to process field %s: %w", key, err)
+			return fieldParseError(key, err)
 		}
 	}
 	return nil

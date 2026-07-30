@@ -207,7 +207,7 @@ func (p *MultipartParser) initStruct(dest interface{}, inputMap map[string]any) 
 
 	for key, value := range inputMap {
 		if err := p.processValue(dest, value, key); err != nil {
-			return fmt.Errorf("failed to process field %s: %w", key, err)
+			return fieldParseError(key, err)
 		}
 	}
 	return nil

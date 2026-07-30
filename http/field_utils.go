@@ -1,11 +1,14 @@
 package http
 
 import (
+	"errors"
 	"fmt"
-	"github.com/osbits/gorgany/v2/app/core"
 	"reflect"
 	"strings"
 	"time"
+
+	"github.com/osbits/gorgany/v2/app/core"
+	error2 "github.com/osbits/gorgany/v2/err"
 )
 
 // sanitizeFieldName removes potentially dangerous characters from field names
@@ -17,6 +20,30 @@ func sanitizeFieldName(name string) string {
 		}
 	}
 	return string(result)
+}
+
+// fieldParseError attaches a field name to a parse failure so it survives as structured
+// data rather than as prose inside a message.
+//
+// Both body parsers used to write
+//
+//	return fmt.Errorf("failed to process field %s: %w", key, err)
+//
+// which is where the field name went to die: the name was known right there, and putting it
+// in the message meant the only way to get it back out was to read English. Everything
+// downstream then reported the failure as field "GeneralError" (G2), so a client could not
+// map it to the input it sent — the exact problem B2 set out to fix.
+//
+// An inner *ValidationErrors passes through untouched. It already names its fields, and more
+// precisely than this level can: a nested DTO knows its own path, where the caller only
+// knows the key it was iterating.
+func fieldParseError(field string, err error) error {
+	var nested *error2.ValidationErrors
+	if errors.As(err, &nested) && nested != nil && len(*nested) > 0 {
+		return err
+	}
+
+	return newValidationError(sanitizeFieldName(field), "%s", err.Error())
 }
 
 // isTimeLikeType reports whether t is time.Time or a struct that directly contains/embeds a time.Time field

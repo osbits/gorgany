@@ -151,11 +151,53 @@ func resolveBodyParser(command core.HttpCommand, message core.HttpMessage) bodyP
 	return nil
 }
 
+// checkAndAddIfValidationError folds err into validationErrors, keeping the field names it
+// already carries.
+//
+// It used to open with:
+//
+//	if errors.Is(err, &error2.ValidationError{}) {
+//	    validationErrors.AddValidationError(err.(error2.ValidationError))
+//
+// which was wrong three ways at once, and the same dead-check bug B3 fixed in the JSON
+// parser:
+//
+//   - errors.Is compares with == for a type that implements no Is method, and the target was
+//     a freshly allocated pointer, so the condition was *always false*;
+//   - it tested the singular ValidationError, while the parsers actually produce
+//     *ValidationErrors — plural — through newValidationError;
+//   - and the assertion behind it was to the *value* type after comparing the *pointer*
+//     type, so the branch would have panicked had it ever been reached. Dead code hiding a
+//     panic.
+//
+// The visible consequence was that every query-string and multipart parse failure came back
+// as field "GeneralError" with the real field name buried in prose:
+//
+//	{"field":"GeneralError","err":"failed to process field limit: Field: limit, Error: ..."}
+//
+// So B2's whole point — a client can map an error back to the field it sent — did not hold
+// on two of the three input paths. errors.As is the call that works, and it unwraps through
+// initStruct's fmt.Errorf("failed to process field %s: %w", ...) to reach the entries the
+// parser built with their Field, Rule, Param and Path already set.
 func checkAndAddIfValidationError(err error, validationErrors *error2.ValidationErrors) {
-	if errors.Is(err, &error2.ValidationError{}) {
-		validationErrors.AddValidationError(err.(error2.ValidationError))
+	// Plural first: it is what the parsers produce, and a *ValidationErrors would also
+	// match nothing below.
+	var nested *error2.ValidationErrors
+	if errors.As(err, &nested) && nested != nil && len(*nested) > 0 {
+		for _, entry := range *nested {
+			validationErrors.AddValidationError(entry)
+		}
 		return
 	}
+
+	var single *error2.ValidationError
+	if errors.As(err, &single) && single != nil {
+		validationErrors.AddValidationError(*single)
+		return
+	}
+
+	// Genuinely not a validation error — a reflection failure, a bad destination. There is
+	// no field to name, so GeneralError is honest here rather than a fallback that hides one.
 	validationErrors.AddValidationError(error2.ValidationError{
 		Field: core.GeneralError,
 		Err:   err.Error(),
