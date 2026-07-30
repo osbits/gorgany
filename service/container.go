@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/osbits/gorgany/app/core"
@@ -128,11 +129,12 @@ func (c *Container) bind(resolver interface{}, name string, isSingleton, isLazy 
 		}
 		preInst = inst
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if _, ok := c.bindings[instType]; !ok {
-		c.bindings[instType] = make(map[string]*binding)
-	}
+	replaced := c.storeBinding(instType, name, &binding{
+		resolver:    resolver,
+		concrete:    preInst,
+		isSingleton: isSingleton,
+		explicit:    true,
+	})
 
 	// Rebinding is intentionally still allowed: overwriting is currently the only
 	// mechanism an app has to override a framework service such as
@@ -141,23 +143,70 @@ func (c *Container) bind(resolver interface{}, name string, isSingleton, isLazy 
 	// registered in the wrong order silently won and the symptom showed up much
 	// later as "my override isn't being used".
 	//
-	// Overriding a core interface now logs at warn. The supported pattern is to
-	// register the override provider LAST.
-	if _, replaced := c.bindings[instType][name]; replaced && isCoreAbstraction(instType) {
-		log.Log().Warnf(
+	// The warning is emitted here, *after* storeBinding has released the lock —
+	// never from inside it. Logging under the lock deadlocked the process
+	// unconditionally: log.Log() goes through the factory LoggerProvider installs,
+	// which resolves core.Logger back out of this container, and sync.RWMutex is not
+	// reentrant. See containerWarnf.
+	// The advice this gives — register your override last — is what used to walk an app
+	// straight into the deadlock above. It is restored verbatim now that emitting the
+	// warning is safe, because it is the correct advice and vaguer wording would only
+	// have hidden a bug that is fixed.
+	if replaced && isCoreAbstraction(instType) {
+		containerWarnf(
 			"container: rebinding %s%s — the previous binding is discarded. "+
 				"This is supported, but only the last registration wins, so register "+
 				"your override provider last.",
 			instType, namedSuffix(name))
 	}
 
-	c.bindings[instType][name] = &binding{
-		resolver:    resolver,
-		concrete:    preInst,
-		isSingleton: isSingleton,
-		explicit:    true,
-	}
 	return nil
+}
+
+// storeBinding installs b and reports whether it displaced an existing binding.
+//
+// The lock lives here, and nothing inside it may call out to code that can re-enter
+// the container — which is why the caller does the logging. Keeping the critical
+// section in its own function makes that structural rather than a comment somebody
+// has to notice before adding a line.
+func (c *Container) storeBinding(instType reflect.Type, name string, b *binding) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, ok := c.bindings[instType]; !ok {
+		c.bindings[instType] = make(map[string]*binding)
+	}
+
+	_, replaced := c.bindings[instType][name]
+	c.bindings[instType][name] = b
+	return replaced
+}
+
+// inContainerDiagnostic guards against the container's own diagnostics re-entering it.
+//
+// log.Log() resolves core.Logger through the container (that is what
+// provider.LoggerProvider installs), and the factory's fallback branch *binds* a
+// logger when resolution fails — so a warning emitted from bind can reach bind again.
+// Releasing the lock first stops the deadlock; this stops the recursion. While the
+// flag is set, container diagnostics go straight to a logger that cannot reach back.
+//
+// It is a process-wide flag rather than per-container because the logger factory is
+// process-wide: whichever container the factory closes over is the one that would be
+// re-entered, and it is not necessarily the one emitting the warning.
+var inContainerDiagnostic atomic.Bool
+
+// containerWarnf logs a container diagnostic without risking re-entry.
+func containerWarnf(format string, args ...any) {
+	if !inContainerDiagnostic.CompareAndSwap(false, true) {
+		// Already inside a container diagnostic: the app's logger is being resolved
+		// right now, so resolving it again is what would recurse. DefaultLogger
+		// writes straight to stderr and touches nothing.
+		(&log.DefaultLogger{}).Warnf(format, args...)
+		return
+	}
+	defer inContainerDiagnostic.Store(false)
+
+	log.Log().Warnf(format, args...)
 }
 
 // coreAbstractionPkg is the import path whose interfaces are the framework's
@@ -617,7 +666,7 @@ func (c *Container) handleCircularDependency(path string) error {
 	}
 	switch c.circularDependenciesMode() {
 	case "warning":
-		log.Log().Warn(err.Error())
+		containerWarnf("%s", err.Error())
 		return err
 	default:
 		return err
@@ -632,7 +681,7 @@ func (c *Container) resolveCircularDependency(key dependencyKey, state *resoluti
 	}
 
 	if mode == "warning" {
-		log.Log().Warn(fmt.Sprintf("container: circular dependency detected: %s", path))
+		containerWarnf("container: circular dependency detected: %s", path)
 	}
 
 	b := c.findBinding(key.t, key.name)

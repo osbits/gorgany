@@ -18,6 +18,14 @@ import (
 //
 // log.SetLoggerFactory panics if called twice, so it is installed once per test
 // binary and the buffer is drained per test instead.
+//
+// The factory here returns a logger *directly*, which is why these tests could never
+// have caught the deadlock the same warning line used to cause. The real factory —
+// provider.LoggerProvider's — resolves core.Logger back out of the container, and the
+// warning was emitted while bind held the container's write lock. See
+// service/containerlog for the tests that install a container-backed factory; they live
+// in their own package because this file has already claimed the process's one
+// SetLoggerFactory slot.
 
 type capturingLogger struct {
 	mu    *sync.Mutex
