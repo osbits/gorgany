@@ -612,6 +612,16 @@ usable.
   - `DbSessionStorage.ClearExpiredSessions` discarded its error with `_ = err`, alone in a
     file where every other method reports through `HandleError`. A sweep failing every
     time looked exactly like one that worked.
+  - `DbSessionRepository.DeleteExpired` was one unbatched
+    `DELETE FROM sessions WHERE expiry < NOW()`. On an app that had been leaking for months
+    the first sweep would take a long lock on the whole backlog, emit a WAL burst
+    proportional to it, and leave bloat needing `VACUUM` — so the fix for the leak would
+    have hit hardest exactly the apps that had leaked most. It now deletes in batches of
+    `auth.SessionSweepBatchSize` (1000), each committing on its own, capped per sweep so it
+    cannot run forever if rows arrive as fast as they go. `DELETE ... LIMIT` is MySQL-only
+    and Postgres has no equivalent, so the statement wraps its subquery in a derived table —
+    which is also what MySQL needs to avoid error 1093 on its own DELETE target. Verified
+    against live Postgres 16 and MySQL 8.4.
 - **A validator that silently ignored your `validation.*` translations.** `validator.message`
   skips the i18n lookup when no manager is installed, so every message comes back as the
   framework's English. The skip is deliberate — a CLI app validates its command DTOs without

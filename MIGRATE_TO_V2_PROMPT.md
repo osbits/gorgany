@@ -1247,8 +1247,10 @@ Only if useful to you.
   jobProvider.DisableSessionGc()
   ```
 
-  Check your table before you deploy this — the first sweep on a long-running app may
-  delete a very large number of rows at once.
+  The sweep deletes in batches of 1000 (`auth.SessionSweepBatchSize`), so the first run on a
+  table that has been growing since deployment does not go in one statement. Check the row
+  count anyway — it tells you how long the backlog will take to clear, and each batch commits
+  on its own so an interrupted sweep keeps the work it did.
 
 - **`ROLLUP` / `CUBE` / `GROUPING SETS`** now render. They were silently dropped
   before — and with no plain `GroupBy()` fields the framework emitted a bare

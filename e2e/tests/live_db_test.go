@@ -21,6 +21,8 @@ package e2e
 import (
 	"context"
 	"fmt"
+
+	"github.com/osbits/gorgany/v2/auth"
 	"os"
 	"testing"
 	"time"
@@ -1128,4 +1130,129 @@ func TestTheUpsertOptInWorksThroughTheConfig(t *testing.T) {
 			ToSQL()
 		return txErr
 	}), "a transaction's builder must honour the opt-in too")
+}
+
+// ------------------------------------- I3: the sweep must batch, on both engines
+
+// I3. DbSessionRepository.DeleteExpired used to be one statement:
+//
+//	DELETE FROM sessions WHERE expiry < NOW()
+//
+// Harmless while nothing called it, which was the case until H4 — the job meant to call it was
+// registered by nothing. H4 gives it a caller, so the first sweep on an app running for months
+// would delete everything accumulated since deployment in a single statement: a long lock on
+// the matched tuples, a WAL burst proportional to the whole backlog, and bloat needing VACUUM.
+// The fix for the leak would have hit hardest exactly the apps that had leaked most.
+//
+// The batched statement wraps its subquery in a derived table because MySQL rejects a subquery
+// on the DELETE's own target with error 1093, while `DELETE ... LIMIT n` — the obvious form —
+// exists on MySQL and not on Postgres. So the SQL is the same on both and neither engine's
+// acceptance can be assumed: this runs it on both.
+
+// sweepProbe creates a sessions table and fills it with expired rows.
+func sweepProbe(t *testing.T, gormDb *gorm.DB, expired int) {
+	t.Helper()
+
+	require.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS sessions`).Error)
+	require.NoError(t, migration.NewSessionsMigration().Up()(gormDb))
+	t.Cleanup(func() { gormDb.Exec(`DROP TABLE IF EXISTS sessions`) })
+
+	for i := 0; i < expired; i++ {
+		require.NoError(t, gormDb.Exec(
+			`INSERT INTO sessions (id, user_id, expiry, created_at, last_activity) `+
+				`VALUES (?, '', ?, ?, ?)`,
+			fmt.Sprintf("expired-%d", i),
+			time.Now().Add(-time.Hour), time.Now().Add(-time.Hour), time.Now().Add(-time.Hour),
+		).Error)
+	}
+
+	// One live row, to prove the sweep is selective and not a truncate.
+	require.NoError(t, gormDb.Exec(
+		`INSERT INTO sessions (id, user_id, expiry, created_at, last_activity) `+
+			`VALUES ('live', '', ?, ?, ?)`,
+		time.Now().Add(time.Hour), time.Now(), time.Now(),
+	).Error)
+}
+
+func countSessions(t *testing.T, gormDb *gorm.DB) int64 {
+	t.Helper()
+
+	var n int64
+	require.NoError(t, gormDb.Raw(`SELECT count(*) FROM sessions`).Scan(&n).Error)
+	return n
+}
+
+// runBatchedSweep executes the framework's own batched statement the way DeleteExpired does,
+// through the session executor, and returns how many batches it took.
+//
+// It drives the real SQL and the real loop condition rather than calling DeleteExpired, whose
+// container-injected dbContext is not available here — so what is verified is that the
+// statement both engines have to accept does batch, and terminates.
+func runBatchedSweep(t *testing.T, ds dbCore.IDataSource, batch int) int {
+	t.Helper()
+
+	session, err := ds.NewSession()
+	require.NoError(t, err)
+	defer session.Close()
+
+	batches := 0
+	for {
+		result := session.Executor().ExecRaw(ctxBackground(), auth.BatchedExpiredDeleteSQL, batch)
+		require.NoError(t, result.Error, "the batched delete must be valid on this engine")
+		batches++
+
+		if result.RowsAffected < int64(batch) {
+			return batches
+		}
+		require.Less(t, batches, 100, "the sweep must terminate")
+	}
+}
+
+func TestTheSessionSweepBatchesOnPostgres(t *testing.T) {
+	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
+		return pgv2.NewDataSource(pgConfig())
+	})
+	defer ds.Close()
+
+	gormDb := gormOf(t, ds)
+	sweepProbe(t, gormDb, 25)
+
+	batches := runBatchedSweep(t, ds, 10)
+
+	assert.Equal(t, 3, batches, "25 expired rows at 10 per batch is three statements")
+	assert.Equal(t, int64(1), countSessions(t, gormDb), "the unexpired session must survive")
+}
+
+func TestTheSessionSweepBatchesOnMySQL(t *testing.T) {
+	requireMySQL(t)
+
+	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
+		return mysqlv2.NewDataSource(mysqlConfig())
+	})
+	defer ds.Close()
+
+	gormDb := gormOf(t, ds)
+	sweepProbe(t, gormDb, 25)
+
+	// The derived-table wrapper is here for MySQL specifically: without it this statement is
+	// error 1093, "You can't specify target table for update in FROM clause".
+	batches := runBatchedSweep(t, ds, 10)
+
+	assert.Equal(t, 3, batches)
+	assert.Equal(t, int64(1), countSessions(t, gormDb))
+}
+
+// TestASweepWithNothingExpiredIsOneStatement — the common case on a healthy app, and it must
+// not cost a batch per tick beyond the one that finds nothing.
+func TestASweepWithNothingExpiredIsOneStatement(t *testing.T) {
+	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
+		return pgv2.NewDataSource(pgConfig())
+	})
+	defer ds.Close()
+
+	gormDb := gormOf(t, ds)
+	sweepProbe(t, gormDb, 0)
+
+	assert.Equal(t, 1, runBatchedSweep(t, ds, 10))
+	assert.Equal(t, int64(1), countSessions(t, gormDb))
 }
