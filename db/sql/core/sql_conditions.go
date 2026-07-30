@@ -150,35 +150,39 @@ func (c *BetweenCondition) ToSQL() (string, []interface{}) {
 		operator = "NOT BETWEEN"
 	}
 
-	// Handle lower bound
-	var lowerSQL string
-	switch v := c.Lower.(type) {
-	case string:
-		lowerSQL = v
-	case *Query:
-		sql, subArgs := buildSubquerySQL(v)
-		lowerSQL = fmt.Sprintf("(%s)", sql)
-		args = append(args, subArgs...)
-	default:
-		lowerSQL = "?"
-		args = append(args, v)
-	}
-
-	// Handle upper bound
-	var upperSQL string
-	switch v := c.Upper.(type) {
-	case string:
-		upperSQL = v
-	case *Query:
-		sql, subArgs := buildSubquerySQL(v)
-		upperSQL = fmt.Sprintf("(%s)", sql)
-		args = append(args, subArgs...)
-	default:
-		upperSQL = "?"
-		args = append(args, v)
-	}
+	lowerSQL, args := betweenBoundSQL(c.Lower, args)
+	upperSQL, args := betweenBoundSQL(c.Upper, args)
 
 	return fmt.Sprintf("%s %s %s AND %s", fieldSQL, operator, lowerSQL, upperSQL), args
+}
+
+// betweenBoundSQL renders one BETWEEN bound, binding it as a parameter.
+//
+// A string used to be interpolated straight into the SQL here — `BETWEEN 18 AND 65`
+// with no args — which made BetweenCondition the only member of this family to treat a
+// string in a *value* position as SQL rather than as a value:
+//
+//	BinaryCondition{Left: "age", Operator: ">", Right: "18"}   → age > ?        args=[18]
+//	InCondition{Field: "age", Values: []any{"18"}}             → age IN (?)     args=[18]
+//	LikeCondition{Field: "name", Pattern: "a%"}                → name LIKE ?    args=[a%]
+//	BetweenCondition{Field: "age", Lower: "18", Upper: "65"}   → age BETWEEN 18 AND 65
+//
+// Builder.Between is public API passing its arguments straight through, so an app
+// filtering on a date range from the query string produced
+// `created_at BETWEEN 1 OR 1=1 -- AND 2` — SQL injection through the framework's own
+// builder. It was also a regression for anyone migrating off the removed
+// postgres/v2.BetweenCondition, which always parameterised both bounds.
+//
+// A *Query still renders as a subquery, matching every sibling. To put an *identifier*
+// in a bound — `BETWEEN start_col AND end_col` — use a RawCondition, which is the same
+// answer the family already gives for BinaryCondition.Right.
+func betweenBoundSQL(bound interface{}, args []interface{}) (string, []interface{}) {
+	if query, ok := bound.(*Query); ok {
+		sql, subArgs := buildSubquerySQL(query)
+		return fmt.Sprintf("(%s)", sql), append(args, subArgs...)
+	}
+
+	return "?", append(args, bound)
 }
 
 // ExistsCondition represents an EXISTS condition

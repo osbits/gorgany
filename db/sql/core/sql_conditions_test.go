@@ -159,23 +159,73 @@ func TestCompositeConditionGroupsAndParenthesises(t *testing.T) {
 // passing a date straight out of a query parameter puts it into the SQL text instead
 // of a placeholder. MIGRATION_v2.md §10 documents it; this test is what makes a
 // silent change to it fail.
-func TestBetweenBoundsOnlyBindNonStrings(t *testing.T) {
-	bound := &dbCore.BetweenCondition{Field: "age", Lower: 18, Upper: 65}
-	sql, args := bound.ToSQL()
+// TestBetweenBindsBothBoundsWhateverTheirType replaces
+// TestBetweenBoundsOnlyBindNonStrings, which pinned the behaviour F12 removed.
+//
+// BetweenCondition used to interpolate a string bound straight into the SQL, making it the
+// only member of this family to read a string in a *value* position as SQL rather than as a
+// value. Builder.Between passes its arguments straight through, so an app filtering a date
+// range from the query string had SQL injection through the framework's own builder.
+func TestBetweenBindsBothBoundsWhateverTheirType(t *testing.T) {
+	numeric := &dbCore.BetweenCondition{Field: "age", Lower: 18, Upper: 65}
+	sql, args := numeric.ToSQL()
 	assert.Equal(t, "age BETWEEN ? AND ?", sql)
 	assert.Equal(t, []interface{}{18, 65}, args)
 
-	literal := &dbCore.BetweenCondition{Field: "age", Lower: "18", Upper: "65"}
-	sql, args = literal.ToSQL()
-	assert.Equal(t, "age BETWEEN 18 AND 65", sql)
-	assert.Empty(t, args)
+	// The row that used to render "age BETWEEN 18 AND 65" with no args.
+	stringly := &dbCore.BetweenCondition{Field: "age", Lower: "18", Upper: "65"}
+	sql, args = stringly.ToSQL()
+	assert.Equal(t, "age BETWEEN ? AND ?", sql)
+	assert.Equal(t, []interface{}{"18", "65"}, args)
 
-	// BinaryCondition does not share the behaviour: only Left is an identifier, and a
-	// string Right binds.
-	binary := &dbCore.BinaryCondition{Left: "name", Operator: "=", Right: "ada"}
-	sql, args = binary.ToSQL()
-	assert.Equal(t, "name = ?", sql)
-	assert.Equal(t, []interface{}{"ada"}, args)
+	// And the reason it matters.
+	hostile := &dbCore.BetweenCondition{
+		Field: "created_at", Lower: "1 OR 1=1 --", Upper: "2",
+	}
+	sql, args = hostile.ToSQL()
+	assert.Equal(t, "created_at BETWEEN ? AND ?", sql,
+		"a caller-supplied bound must never reach the SQL text")
+	assert.Equal(t, []interface{}{"1 OR 1=1 --", "2"}, args)
+	assert.NotContains(t, sql, "OR 1=1")
+}
+
+// TestBetweenMatchesItsSiblings is the invariant behind the fix: across this family, a
+// string in a *value* position binds, and only the field position is an identifier.
+func TestBetweenMatchesItsSiblings(t *testing.T) {
+	valuePositions := map[string]dbCore.Condition{
+		"BinaryCondition.Right": &dbCore.BinaryCondition{
+			Left: "f", Operator: "=", Right: "s",
+		},
+		"InCondition.Values":     &dbCore.InCondition{Field: "f", Values: []interface{}{"s"}},
+		"LikeCondition.Pattern":  &dbCore.LikeCondition{Field: "f", Pattern: "s"},
+		"BetweenCondition.Lower": &dbCore.BetweenCondition{Field: "f", Lower: "s", Upper: "s"},
+	}
+
+	for name, condition := range valuePositions {
+		sql, args := condition.ToSQL()
+		assert.NotContainsf(t, sql, "'", "%s must not quote a value into the SQL", name)
+		assert.Containsf(t, sql, "?", "%s must use a placeholder", name)
+		assert.Containsf(t, args, "s", "%s must bind the string", name)
+	}
+
+	// The field position is the identifier, and stays one.
+	sql, _ := (&dbCore.BetweenCondition{Field: "created_at", Lower: 1, Upper: 2}).ToSQL()
+	assert.Equal(t, "created_at BETWEEN ? AND ?", sql)
+}
+
+// TestBetweenStillSupportsSubqueryBounds: a *Query bound is not a value, so it still
+// renders as a subquery — the one branch the fix had to preserve.
+func TestBetweenStillSupportsSubqueryBounds(t *testing.T) {
+	lower := &dbCore.Query{
+		Select: &dbCore.SelectClause{Fields: []string{"MIN(created_at)"}},
+		From:   &dbCore.FromClause{Table: "events"},
+	}
+
+	condition := &dbCore.BetweenCondition{Field: "created_at", Lower: lower, Upper: 5}
+	sql, args := condition.ToSQL()
+
+	assert.Contains(t, sql, "(SELECT MIN(created_at) FROM events)")
+	assert.Equal(t, []interface{}{5}, args)
 }
 
 // TestRawConditionIdentifierPlaceholders covers the handling the removed postgres/v2

@@ -929,25 +929,27 @@ builder = builder.Where(&dbCore.CompositeCondition{
 })
 ```
 
-#### One difference that is not a rename
+#### A behaviour difference that has since been fixed rather than documented
 
-`dbCore.BetweenCondition` treats a `string` bound as a literal SQL fragment,
-where the removed `v2.Between` always bound it as a parameter:
+The first version of this section warned that `dbCore.BetweenCondition` interpolated a
+`string` bound into the SQL text, where the removed `v2.Between` always bound it as a
+parameter — and told you to pass a non-string type to avoid it.
+
+That was accurate and it was the wrong resolution. It made `BetweenCondition` the only
+member of the family to read a string in a *value* position as SQL, and `Builder.Between`
+passes its arguments straight through, so an app filtering a date range from the query
+string got `created_at BETWEEN 1 OR 1=1 -- AND 2`. Documenting a SQL injection in a public
+API is not a migration note. Both bounds now bind whatever their type, so there is nothing
+to do here:
 
 ```go
-v2.Between("age", "18", "65")
-// age BETWEEN ? AND ?    args: ["18", "65"]
-
 &dbCore.BetweenCondition{Field: "age", Lower: "18", Upper: "65"}
-// age BETWEEN 18 AND 65  args: []
+// age BETWEEN ? AND ?    args: ["18", "65"]   — same as v2.Between always did
 ```
 
-If your bounds are strings — a date arriving from a query parameter is the common
-case — pass them as a non-string type (`time.Time`, `int`, `float64`) so they bind,
-or the value is interpolated into the SQL text instead of a placeholder. That
-matters beyond correctness for anything user-supplied. `dbCore.BinaryCondition`
-does not share the behaviour: its `Right` binds a string, and only `Left` is
-treated as an identifier.
+A `*Query` bound still renders as a subquery. If you genuinely need an *identifier* in a
+bound — `BETWEEN start_col AND end_col` — use a `RawCondition`, which is the same answer
+the family already gives for `BinaryCondition.Right`.
 
 `dbCore.RawCondition` also understands identifier placeholders that the removed
 copy passed through verbatim: `"?.id"` consumes one argument and renders
