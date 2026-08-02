@@ -205,7 +205,10 @@ type stubSessionStorage struct {
 
 func (s *stubSessionStorage) GetSessionLifetime() time.Duration { return s.lifetime }
 
-func (s *stubSessionStorage) ClearExpiredSessions() { atomic.AddInt32(s.cleared, 1) }
+func (s *stubSessionStorage) ClearExpiredSessions() error {
+	atomic.AddInt32(s.cleared, 1)
+	return nil
+}
 
 // -------------------------------------- H4: the sweep the framework never registered
 

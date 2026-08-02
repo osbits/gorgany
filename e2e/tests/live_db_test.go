@@ -16,11 +16,17 @@
 // Then:
 //
 //	go test -tags=livedb ./e2e/tests/ -count=1 -v
+//
+// e2e/run.sh runs this same suite inside the compose network instead, where the engines
+// answer on their service names rather than on host-published ports; see liveEngineHost
+// for the variables that redirect it. It also sets E2E_REQUIRE_LIVE=1, which forbids the
+// skips below — see requireLiveEnvVar in e2e_test.go.
 package e2e
 
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/osbits/gorgany/v2/auth"
 	"os"
@@ -45,11 +51,45 @@ import (
 	"gorm.io/gorm"
 )
 
+// liveEngineHost and liveEnginePort say where an engine listens.
+//
+// The defaults are the host-published ports in this file's doc comment, which is how these
+// tests are run by hand against two `docker run` containers. The overrides exist for the
+// dockerised harness: it runs this suite from a container on the compose network, where
+// 127.0.0.1 is the test runner itself and the engines are reachable only under their
+// service names on their standard ports. With the addresses hardcoded, the harness could
+// never dial an engine at all, so every case here skipped no matter how the compose file
+// was written — which is how "the MySQL live suite passes" came to mean "the MySQL live
+// suite was never started".
+func liveEngineHost(envKey, fallback string) string {
+	if value := os.Getenv(envKey); value != "" {
+		return value
+	}
+	return fallback
+}
+
+// liveEnginePort panics rather than falling back on a malformed value. Silently reverting
+// to the default would point the suite at the wrong machine and report the resulting skips
+// as an absent engine, hiding the operator's typo behind the very outcome these gates exist
+// to make impossible.
+func liveEnginePort(envKey string, fallback int) int {
+	value := os.Getenv(envKey)
+	if value == "" {
+		return fallback
+	}
+
+	port, err := strconv.Atoi(value)
+	if err != nil {
+		panic(fmt.Sprintf("%s must be a TCP port number, got %q", envKey, value))
+	}
+	return port
+}
+
 func pgConfig() map[string]any {
 	return map[string]any{
 		"driver":   "postgres_gorm",
-		"host":     "127.0.0.1",
-		"port":     5433,
+		"host":     liveEngineHost("E2E_PG_HOST", "127.0.0.1"),
+		"port":     liveEnginePort("E2E_PG_PORT", 5433),
 		"username": "postgres",
 		"password": "test",
 		"db":       "gorgany_test",
@@ -60,12 +100,19 @@ func pgConfig() map[string]any {
 func mysqlConfig() map[string]any {
 	return map[string]any{
 		"driver":   "mysql_gorm",
-		"host":     "127.0.0.1",
-		"port":     3307,
+		"host":     liveEngineHost("E2E_MYSQL_HOST", "127.0.0.1"),
+		"port":     liveEnginePort("E2E_MYSQL_PORT", 3307),
 		"username": "root",
 		"password": "test",
 		"db":       "gorgany_test",
 	}
+}
+
+// mysqlAddress renders the MySQL endpoint for messages, so a skip or a failure names the
+// address that was actually tried instead of the one in the doc comment.
+func mysqlAddress() string {
+	cfg := mysqlConfig()
+	return fmt.Sprintf("%v:%v", cfg["host"], cfg["port"])
 }
 
 // secondPgDatabase is the database name used for the second Postgres datasource,
@@ -119,6 +166,15 @@ func secondaryConfig(t *testing.T) (cfg map[string]any, dialect string) {
 		return mysqlConfig(), "mysql"
 	}
 
+	// The fallback is a convenience for a developer who has only Postgres running, and it
+	// must not survive into a run that will be read as proof of cross-engine coverage: two
+	// Postgres databases exercise the routing but never put a MySQL statement on a MySQL
+	// connection, which is the half of this check that matters.
+	if liveRunIsRequired() {
+		t.Fatalf("%s is set, so the cross-engine case must run against MySQL, but MySQL is not reachable on %s",
+			requireLiveEnvVar, mysqlAddress())
+	}
+
 	t.Log("MySQL not reachable; using a second Postgres database. " +
 		"This still proves datasource routing, but not the cross-engine case.")
 	ensureSecondPgDatabase(t)
@@ -144,7 +200,8 @@ func secondaryDataSource(t *testing.T, cfg map[string]any) dbCore.IDataSource {
 // discovering that a server is absent.
 const engineWait = 10 * time.Second
 
-// waitForDatasource retries until the engine accepts connections, then skips.
+// waitForDatasource retries until the engine accepts connections, then skips — or fails,
+// when the caller demanded a real run.
 func waitForDatasource(t *testing.T, build func() (dbCore.IDataSource, error)) dbCore.IDataSource {
 	t.Helper()
 
@@ -153,6 +210,7 @@ func waitForDatasource(t *testing.T, build func() (dbCore.IDataSource, error)) d
 	for {
 		ds, err := build()
 		if err == nil {
+			recordLiveCase()
 			return ds
 		}
 		lastErr = err
@@ -162,7 +220,7 @@ func waitForDatasource(t *testing.T, build func() (dbCore.IDataSource, error)) d
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	t.Skipf("engine not reachable within %s, skipping live test: %v", engineWait, lastErr)
+	skipUnlessLiveRequired(t, "engine not reachable within %s: %v", engineWait, lastErr)
 	return nil
 }
 
@@ -172,7 +230,8 @@ func requireMySQL(t *testing.T) {
 	t.Helper()
 
 	if !mysqlAvailable() {
-		t.Skip("MySQL not reachable on 127.0.0.1:3307; start the container from this file's doc comment")
+		skipUnlessLiveRequired(t,
+			"MySQL not reachable on %s; start the container from this file's doc comment", mysqlAddress())
 	}
 }
 
@@ -183,6 +242,15 @@ func requireMySQL(t *testing.T) {
 // panicking". The map below is missing `log`, `prefer_simple_protocol` and
 // `properties` — all three of which used to be unchecked type assertions.
 func TestT13_MissingLogKeyReturnsAnErrorNotAPanic(t *testing.T) {
+	// Reachability is settled through the shared gate before anything is asserted. This
+	// case used to dial the engine directly inside require.NoError, so on a machine with no
+	// Postgres it did not skip like its neighbours: it failed, reporting "omitting `log`
+	// must not be an error" for what was really a refused connection. That both slandered
+	// working code and left the tagged suite unable to go green without engines, so the one
+	// signal worth having here — an engine is up and the config was still rejected — was
+	// buried under a failure that said nothing of the kind.
+	waitForDatasource(t, func() (dbCore.IDataSource, error) { return pgv2.NewDataSource(pgConfig()) }).Close()
+
 	// A valid config missing the optional keys must simply work.
 	require.NotPanics(t, func() {
 		ds, err := pgv2.NewDataSource(pgConfig())

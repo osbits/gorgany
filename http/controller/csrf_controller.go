@@ -3,6 +3,7 @@ package controller
 import (
 	"github.com/osbits/gorgany/v2/app/core"
 	"github.com/osbits/gorgany/v2/auth"
+	grghttp "github.com/osbits/gorgany/v2/http"
 	"github.com/osbits/gorgany/v2/http/middleware"
 	"github.com/osbits/gorgany/v2/http/router"
 	"github.com/osbits/gorgany/v2/service/dto"
@@ -34,12 +35,20 @@ type CsrfController struct {
 	AuthContext core.IAuthContext `container:"inject"`
 	CsrfService *auth.CsrfService `container:"inject"`
 
-	// SessionStorage persists the session the token is bound to.
+	// SessionStorage is injected but deliberately not written to.
 	//
-	// It is needed because ISession.SetItem is in-memory only: DbSessionEntity.SetItem
-	// writes the Attributes map and nothing else, so a token minted here would be lost on
-	// the next request unless AddSession upserts the row. SessionMiddleware does exactly
-	// this after GenerateCSRFToken, for the same reason.
+	// Token() used to end with an unconditional AddSession, on the belief that
+	// ISession.SetItem is in-memory only. It is not: the session a DB-backed store hands
+	// out writes through to its row on every SetItem, and a memory store hands out the
+	// very object it holds, so the upsert was redundant on both backends. What it was not
+	// is harmless. This endpoint is registered by default, needs no authentication, and
+	// resolves the session at the top of the handler — so a request whose session was
+	// revoked in between (a concurrent logout, or a logout already handled by another
+	// replica) asked storage to write that session back, user id and all. Reproduced on
+	// both backends: a plain map insert for memory, an INSERT for the database.
+	//
+	// The field stays because it is part of the controller's wired shape and an app may
+	// have set it; nothing here uses it.
 	SessionStorage core.ISessionStorage `container:"inject"`
 
 	// Path is where the endpoint is mounted. Empty means core.DefaultCSRFTokenPath.
@@ -161,12 +170,11 @@ func (thiz CsrfController) Token(message core.HttpMessage) {
 			return
 		}
 
+		// So the rest of this request sees the session, as it would have had the middleware
+		// created it — the session scope and the message context both cache it, and the
+		// strategy consults the second one before the cookie. See http.PublishSession.
 		session = created
-		if editable, ok := message.Session().(core.IEditableSessionScope); ok {
-			// So the rest of this request sees the session, as it would have had the
-			// middleware created it.
-			editable.Set(session)
-		}
+		grghttp.PublishSession(message, session)
 	}
 
 	token, err := thiz.CsrfService.GetCSRFToken(message.Context(), session)
@@ -175,12 +183,6 @@ func (thiz CsrfController) Token(message core.HttpMessage) {
 			dto.ReturnObject(nil, core.InternalErrorHttpStatus, "Could not issue a CSRF token"),
 			core.InternalErrorHttpStatus.Status)
 		return
-	}
-
-	// Unconditionally, not only on the freshly created path: GetCSRFToken mints a token for
-	// an existing session that has none, and that SetItem is in-memory too.
-	if thiz.SessionStorage != nil {
-		thiz.SessionStorage.AddSession(session)
 	}
 
 	message.Response().Header().Set(core.CSRFTokenHeader, token)

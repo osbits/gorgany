@@ -11,9 +11,15 @@ import (
 
 type ISessionRepository interface {
 	FindById(id string) (*DbSessionEntity, error)
+	// Save persists the session. An implementation must be handed a detached copy, never
+	// a session the mediator shares between requests — see DbSessionEntity.Snapshot.
 	Save(session *DbSessionEntity) error
 	Delete(session *DbSessionEntity) error
-	DeleteById(id string) error
+	// DeleteById removes the row for id and reports whether there was one. An absent row
+	// is not an error: revocation is idempotent, and the caller needs the boolean to tell
+	// "revoked it" from "there was nothing to revoke" — session rotation refuses to carry
+	// a user id over from a session that has already been revoked.
+	DeleteById(id string) (bool, error)
 	DeleteExpired() error
 }
 
@@ -51,9 +57,21 @@ func (r *DbSessionRepository) FindById(id string) (*DbSessionEntity, error) {
 	return session, err
 }
 
+// Save persists the session, and refuses to call an update against a row that is gone a
+// success.
+//
+// orm.Save would have used the plain update, which reports only the statement's own error.
+// An UPDATE keyed on a primary key that no longer exists matches nothing and succeeds, so
+// a session whose row had been deleted — by a logout on this process or on another one —
+// was written "successfully" and every caller above believed the state was persisted.
+// UpdateExisting resolves that: it checks the row when the statement matched none, so a
+// no-op update of a live row still succeeds while a write with nowhere to land does not.
 func (r *DbSessionRepository) Save(session *DbSessionEntity) error {
-	return r.withOrm(func(orm *orm.ORM[*DbSessionEntity]) error {
-		return orm.Save(session)
+	return r.withOrm(func(o *orm.ORM[*DbSessionEntity]) error {
+		if meta := session.GetMeta(); meta != nil && meta.IsLoaded {
+			return o.UpdateExisting(session)
+		}
+		return o.Create(session)
 	})
 }
 
@@ -63,12 +81,35 @@ func (r *DbSessionRepository) Delete(session *DbSessionEntity) error {
 	})
 }
 
-func (r *DbSessionRepository) DeleteById(id string) error {
-	session, err := r.FindById(id)
-	if err != nil {
-		return err
+// DeleteById removes the row in one statement.
+//
+// It used to read the row and then delete the entity it found, which made an already-absent
+// session an error: FindById returns nil, and orm.Delete(nil) answers "domain cannot be
+// nil". Revoking a session twice — a double-clicked logout, a retried request, a row the
+// sweep already collected — therefore failed, and because the mediator returned before
+// purging its cache, the failure left the cache entry the delete was supposed to revoke
+// still serving requests. Deleting is idempotent, so zero rows removed is success, and the
+// count is reported so a caller that needs to know whether the session was live can ask.
+func (r *DbSessionRepository) DeleteById(id string) (bool, error) {
+	if id == "" {
+		return false, nil
 	}
-	return r.Delete(session)
+
+	deleted := false
+	err := r.withSession(func(session dbCore.ISession) error {
+		builder := session.Query().Delete((&DbSessionEntity{}).TableName()).
+			Where(&dbCore.BinaryCondition{Left: "id", Operator: "=", Right: id})
+
+		result := session.Executor().Exec(context.Background(), builder)
+		if result.Error != nil {
+			return result.Error
+		}
+
+		deleted = result.RowsAffected > 0
+		return nil
+	})
+
+	return deleted, err
 }
 
 // SessionSweepBatchSize is how many rows one DELETE removes. See DeleteExpired.

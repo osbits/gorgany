@@ -46,12 +46,19 @@ type fakeSessionStorage struct {
 
 	added   []core.ISession
 	deleted []core.ISession
+	addErr  error
 }
 
 func (s *fakeSessionStorage) GetSessionLifetime() time.Duration { return time.Hour }
-func (s *fakeSessionStorage) AddSession(session core.ISession)  { s.added = append(s.added, session) }
-func (s *fakeSessionStorage) DeleteSession(session core.ISession) {
+
+func (s *fakeSessionStorage) AddSession(session core.ISession) error {
+	s.added = append(s.added, session)
+	return s.addErr
+}
+
+func (s *fakeSessionStorage) DeleteSession(session core.ISession) error {
 	s.deleted = append(s.deleted, session)
+	return nil
 }
 
 // sessionMiddlewareWith wires a SessionMiddleware around an existing session, the way

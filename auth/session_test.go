@@ -31,9 +31,9 @@ func (m *MockSessionRepository) Delete(session *DbSessionEntity) error {
 	return args.Error(0)
 }
 
-func (m *MockSessionRepository) DeleteById(id string) error {
+func (m *MockSessionRepository) DeleteById(id string) (bool, error) {
 	args := m.Called(id)
-	return args.Error(0)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockSessionRepository) DeleteExpired() error {
@@ -66,16 +66,20 @@ func TestDbSessionStorage_GetSessionById(t *testing.T) {
 
 	mockRepo.On("FindById", "test-session-1").Return(session, nil)
 
-	result := storage.GetSessionById("test-session-1")
+	result, err := storage.GetSessionById("test-session-1")
+	assert.NoError(t, err)
 	assert.NotNil(t, result)
 	assert.Equal(t, "test-session-1", result.GetId())
 	assert.Equal(t, "user-1", result.GetUserId())
 	assert.False(t, result.IsExpired())
 
-	// Test case 2: Session not found
+	// Test case 2: the lookup itself failed. That is reported rather than answered with
+	// "there is no such session": a store that cannot be reached and a visitor with no
+	// cookie look identical from a single nil, and only one of them is normal.
 	mockRepo.On("FindById", "non-existent").Return(nil, assert.AnError)
 
-	result = storage.GetSessionById("non-existent")
+	result, err = storage.GetSessionById("non-existent")
+	assert.ErrorIs(t, err, assert.AnError)
 	assert.Nil(t, result)
 
 	// Test case 3: Session expired
@@ -89,9 +93,10 @@ func TestDbSessionStorage_GetSessionById(t *testing.T) {
 	}
 
 	mockRepo.On("FindById", "expired-session").Return(expiredSession, nil)
-	mockRepo.On("DeleteById", "expired-session").Return(nil)
+	mockRepo.On("DeleteById", "expired-session").Return(true, nil)
 
-	result = storage.GetSessionById("expired-session")
+	result, err = storage.GetSessionById("expired-session")
+	assert.NoError(t, err)
 	assert.Nil(t, result)
 
 	mockRepo.AssertExpectations(t)
@@ -120,10 +125,18 @@ func TestDbSessionStorage_AddSession(t *testing.T) {
 	}
 	wrappedSession := NewDbSessionEntityWithMediator(dbSession, mediator)
 
+	// The repository receives a detached copy of the session, never the live pointer — see
+	// DbSessionEntity.Snapshot — so the expectation is on the type, and what was persisted
+	// is checked afterwards.
+	var created *DbSessionEntity
 	mockRepo.On("FindById", "test-session").Return(nil, nil)
-	mockRepo.On("Save", dbSession).Return(nil)
+	mockRepo.On("Save", mock.AnythingOfType("*auth.DbSessionEntity")).
+		Run(func(args mock.Arguments) { created = args.Get(0).(*DbSessionEntity) }).
+		Return(nil).Once()
 
-	storage.AddSession(wrappedSession)
+	assert.NoError(t, storage.AddSession(wrappedSession))
+	assert.NotSame(t, dbSession, created)
+	assert.Equal(t, "test-session", created.GetId())
 	mockRepo.AssertExpectations(t)
 
 	// Test case 2: Update an existing mediated session
@@ -138,10 +151,39 @@ func TestDbSessionStorage_AddSession(t *testing.T) {
 	wrappedExistingSession := NewDbSessionEntityWithMediator(existingSession, mediator)
 
 	mockRepo.On("FindById", "regular-session").Return(existingSession, nil)
-	mockRepo.On("Save", existingSession).Return(nil)
+	mockRepo.On("Save", mock.AnythingOfType("*auth.DbSessionEntity")).Return(nil)
 
-	storage.AddSession(wrappedExistingSession)
+	assert.NoError(t, storage.AddSession(wrappedExistingSession))
 	mockRepo.AssertExpectations(t)
+}
+
+// TestDbSessionStorage_AddSessionRefusesARevokedSession. A session that was loaded from the
+// table and whose row has since gone was revoked by something, and writing it back would undo
+// that — a durable row carrying whatever user id the stale object still holds. Reachable from
+// a request holding a session across a concurrent logout, and from the CSRF token endpoint,
+// which is registered by default and needs no authentication.
+func TestDbSessionStorage_AddSessionRefusesARevokedSession(t *testing.T) {
+	mockRepo := &MockSessionRepository{}
+	mediator := NewDbSessionMediator(mockRepo)
+	storage := &DbSessionStorage{sessionLifetime: 30 * time.Minute, mediator: mediator}
+
+	now := time.Now()
+	revoked := &DbSessionEntity{
+		ID:           "revoked-session",
+		UserID:       "user-9",
+		Expiry:       now.Add(time.Hour),
+		CreatedAt:    now,
+		LastActivity: now,
+		Attributes:   make(map[string]string),
+	}
+	revoked.Meta.IsLoaded = true
+
+	mockRepo.On("FindById", "revoked-session").Return(nil, nil)
+
+	err := storage.AddSession(NewDbSessionEntityWithMediator(revoked, mediator))
+
+	assert.Error(t, err, "a revoked session must not be written back")
+	mockRepo.AssertNotCalled(t, "Save", mock.Anything)
 }
 
 func TestDbSessionEntity_ISimpleStorage(t *testing.T) {

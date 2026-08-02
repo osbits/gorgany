@@ -64,8 +64,9 @@ func (m *MockAuthStrategy) IsLoggedIn(ctx context.Context) bool {
 	return args.Bool(0)
 }
 
-func (m *MockAuthStrategy) Logout(ctx context.Context) {
-	m.Called(ctx)
+func (m *MockAuthStrategy) Logout(ctx context.Context) error {
+	args := m.Called(ctx)
+	return args.Error(0)
 }
 
 func (m *MockAuthStrategy) CurrentUser(ctx context.Context) (core.Authenticable, error) {
@@ -143,24 +144,27 @@ type MockSessionStorage struct {
 	mock.Mock
 }
 
-func (m *MockSessionStorage) AddSession(session core.ISession) {
-	m.Called(session)
+func (m *MockSessionStorage) AddSession(session core.ISession) error {
+	args := m.Called(session)
+	return args.Error(0)
 }
 
-func (m *MockSessionStorage) DeleteSession(session core.ISession) {
-	m.Called(session)
+func (m *MockSessionStorage) DeleteSession(session core.ISession) error {
+	args := m.Called(session)
+	return args.Error(0)
 }
 
-func (m *MockSessionStorage) DeleteSessionById(id string) {
-	m.Called(id)
+func (m *MockSessionStorage) DeleteSessionById(id string) error {
+	args := m.Called(id)
+	return args.Error(0)
 }
 
-func (m *MockSessionStorage) GetSessionById(id string) core.ISession {
+func (m *MockSessionStorage) GetSessionById(id string) (core.ISession, error) {
 	args := m.Called(id)
 	if args.Get(0) == nil {
-		return nil
+		return nil, args.Error(1)
 	}
-	return args.Get(0).(core.ISession)
+	return args.Get(0).(core.ISession), args.Error(1)
 }
 
 func (m *MockSessionStorage) GetSessionLifetime() time.Duration {
@@ -172,8 +176,9 @@ func (m *MockSessionStorage) SetSessionLifetime(duration time.Duration) {
 	m.Called(duration)
 }
 
-func (m *MockSessionStorage) ClearExpiredSessions() {
-	m.Called()
+func (m *MockSessionStorage) ClearExpiredSessions() error {
+	args := m.Called()
+	return args.Error(0)
 }
 
 func (m *MockSessionStorage) GetSessionRotationInterval() time.Duration {
@@ -361,8 +366,13 @@ func TestHTTPRequestScope_FormFile(t *testing.T) {
 	err = file.Close()
 	assert.NoError(t, err)
 
-	// Verify temp file is removed
-	assert.False(t, file.IsExists())
+	// Close releases the temp copy, not the published file. This used to assert the
+	// opposite — that IsExists went false — which is exactly what made a request-scoped
+	// cleanup impossible: Close resolved its target through the public path as soon as
+	// Write had set one, so releasing an upload deleted the copy the handler had just
+	// stored. See MultipartFile.Close.
+	assert.True(t, file.IsExists(), "Close must leave the published file alone")
+	assert.NoError(t, file.Delete())
 }
 
 func TestMessage_RedirectWithFlash(t *testing.T) {
@@ -602,4 +612,57 @@ func TestMessage_Close(t *testing.T) {
 	// Verify
 	assert.NoError(t, err)
 	mockSession.AssertExpectations(t)
+}
+
+// stubRenderer writes a fixed body, which is all Render needs from an engine.
+type stubRenderer struct{ body string }
+
+func (s stubRenderer) DoRender(_ context.Context, w io.Writer, _ string, _ map[string]any) error {
+	_, err := w.Write([]byte(s.body))
+	return err
+}
+func (s stubRenderer) RegisterGlobalFunction(string, any) {}
+func (s stubRenderer) RegisterGlobalVariable(string, any) {}
+
+// TestRenderNamesItsOwnContentType. The render path wrote the template straight to the
+// ResponseWriter and named nothing, so the Content-Type was whatever net/http's sniffer made
+// of the first 512 bytes. That was survivable while browsers sniffed too — it is not now
+// that every response carries X-Content-Type-Options: nosniff, because the browser then
+// honours the guess. And the guess is wrong for a great deal of real markup:
+// http.DetectContentType only recognises a fixed list of opening tags, so a fragment
+// beginning <ul>, <span>, <section>, <form>, <tr> or <option> sniffs as text/plain and would
+// be displayed to the visitor as source instead of being rendered.
+func TestRenderNamesItsOwnContentType(t *testing.T) {
+	for _, body := range []string{
+		"<!DOCTYPE html><html><body>page</body></html>",
+		"<ul><li>a</li></ul>",
+		"<span>name</span>",
+		"<section><h2>x</h2></section>",
+		"<form action=/x></form>",
+		"Hello, <b>world</b>",
+	} {
+		t.Run(body, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			scope := NewHTTPViewScope(context.Background(), recorder, stubRenderer{body: body})
+
+			scope.Render("whatever", nil)
+
+			assert.Equal(t, "text/html; charset=utf-8", recorder.Header().Get("Content-Type"),
+				"a view renders html and has to say so rather than leave it to the sniffer")
+			assert.Equal(t, body, recorder.Body.String(), "and the body is untouched")
+		})
+	}
+}
+
+// TestRenderLeavesAnAlreadyChosenContentTypeAlone: an app rendering a template that is not
+// html — a sitemap, an RSS feed, a plain-text mail body — sets the type before rendering, and
+// that choice has to win.
+func TestRenderLeavesAnAlreadyChosenContentTypeAlone(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	recorder.Header().Set("Content-Type", "application/xml; charset=utf-8")
+	scope := NewHTTPViewScope(context.Background(), recorder, stubRenderer{body: "<urlset/>"})
+
+	scope.Render("sitemap", nil)
+
+	assert.Equal(t, "application/xml; charset=utf-8", recorder.Header().Get("Content-Type"))
 }

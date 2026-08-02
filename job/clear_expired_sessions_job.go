@@ -43,7 +43,12 @@ func (thiz ClearExpiredSessionsJob) Schedule() core.JobSchedule {
 }
 
 // Run deletes every expired session.
+//
+// The sweep's failure is returned rather than logged and forgotten. It used to be neither:
+// the storage swallowed the error and this returned nil, so a sweep that failed on every
+// tick — a revoked GRANT, a lock timeout, a table that is not there — was indistinguishable
+// from one that worked, and the only symptom was the table growing, which is also the
+// symptom of the job not running.
 func (thiz ClearExpiredSessionsJob) Run(_ context.Context) error {
-	thiz.SessionStorage.ClearExpiredSessions()
-	return nil
+	return thiz.SessionStorage.ClearExpiredSessions()
 }

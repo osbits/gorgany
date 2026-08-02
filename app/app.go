@@ -26,6 +26,71 @@ import (
 
 var Application core.IApplication
 
+const (
+	// ConfigMaxRequestBytes caps the raw request body, in bytes, before anything reads it.
+	// Set it to lift or tighten the ceiling MaxRequestBodyBytes derives.
+	ConfigMaxRequestBytes = "http.security.body.maxRequestBytes"
+
+	// configMaxMultipartSize must stay spelled the same as http.ConfigMaxMultipartSize.
+	// It cannot be referenced: the http package imports this one (http/error.go needs
+	// GetRunMode), so the dependency only runs the other way. TestTheRequestCeilingTracks
+	// TheMultipartBudget in http/ pins the two together.
+	configMaxMultipartSize = "http.upload.maxMultipartSize"
+
+	// DefaultMaxRequestBytes is the request-body ceiling when nothing is configured. It
+	// matches http.DefaultMaxMultipartSize, so an app that configures no limits at all
+	// gets one number rather than two that disagree.
+	DefaultMaxRequestBytes int64 = 32 * 1024 * 1024
+
+	// requestFramingAllowance is the slack the raw-body ceiling gets over the upload
+	// budget it is derived from. A multipart body is bigger than the sum of the files in
+	// it — part boundaries, headers and the trailing delimiter all count against a reader
+	// limit but not against the upload budget — so a ceiling set to exactly the budget
+	// would reject an upload that the upload limits allow.
+	requestFramingAllowance int64 = 1 * 1024 * 1024
+)
+
+// MaxRequestBodyBytes is the ceiling every request body is held to.
+//
+// Nothing capped a request body before: the server was built with ReadTimeout,
+// WriteTimeout and MaxHeaderBytes but no body limit, http.MaxBytesReader appeared nowhere
+// in the framework, and the multipart parser read the whole form and consulted its size
+// limits afterwards. The argument to ParseMultipartForm is only the in-memory budget —
+// everything above it spills to temp files — so a single unauthenticated POST could write
+// as many bytes to the OS temp directory as it cared to send, and the 10 MB per-file check
+// ran once they were already on disk.
+//
+// The ceiling therefore tracks the upload budget rather than being an independent number:
+// an app that raises http.upload.maxMultipartSize to accept larger uploads must not have
+// them refused here instead, and an app that configures nothing gets a ceiling it will not
+// notice. Configure ConfigMaxRequestBytes to override the derivation outright.
+func MaxRequestBodyBytes() int64 {
+	if configured := viper.GetInt64(ConfigMaxRequestBytes); configured > 0 {
+		return configured
+	}
+
+	ceiling := DefaultMaxRequestBytes
+	if multipartBudget := viper.GetInt64(configMaxMultipartSize); multipartBudget > ceiling {
+		ceiling = multipartBudget
+	}
+
+	return ceiling + requestFramingAllowance
+}
+
+// limitRequestBodies caps every body at the server boundary, before routing and therefore
+// before any handler, middleware or parser can read one. The framework applies the same
+// cap per request when it builds the message, which is what protects an app embedding the
+// router in a server of its own; this is the outer belt, and it also covers the paths that
+// never reach a message at all.
+func limitRequestBodies(next http.Handler, ceiling int64) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, ceiling)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func GetRunMode() gorgany.RunMode {
 	mode := os.Getenv("MODE")
 	if mode == "" {
@@ -181,10 +246,12 @@ func (s *ServerApp) Run() {
 		writeTimeout = 60 * time.Second
 	}
 
+	maxRequestBytes := MaxRequestBodyBytes()
+
 	go func() {
 		s.httpServer = &http.Server{
 			Addr:           fmt.Sprintf(":%d", port),
-			Handler:        router,
+			Handler:        limitRequestBodies(router, maxRequestBytes),
 			MaxHeaderBytes: 1 << 20,
 			ReadTimeout:    readTimeout,
 			WriteTimeout:   writeTimeout,

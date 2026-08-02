@@ -138,6 +138,46 @@ type IMessageContext interface {
 	GetRequestContext() context.Context
 }
 
+// IRequestIdentityMemo is an optional interface a per-request context may implement so
+// that the caller's identity is resolved once for the request rather than once for every
+// question asked about it.
+//
+// It exists because resolving the identity is not a cheap read: a session-backed strategy
+// looks the session up in its store and then loads the user, both database round trips in
+// a real application, and access control asks per row of a response - field filtering runs
+// once per DTO. Without a memo a hundred-row list performs a hundred session lookups and a
+// hundred user loads for one principal that cannot have changed in between.
+//
+// The lifetime is the point. The obvious alternative - a map on the access control object
+// keyed by something request-shaped - is shared mutable state on an object every request
+// touches at once, and nothing prunes it, so it is a data race and a leak that grows for
+// the life of the process. A slot on the request's own context is thrown away with the
+// request and is reachable from nowhere else, so neither is possible.
+//
+// The key is what keeps the memo honest. The identity can legitimately change in the
+// middle of a request - a login rotates the session and republishes it - and answering the
+// rest of that request about the pre-login principal would be an authorization bug, worse
+// than the cost being avoided. So the resolver hands in a key describing what the identity
+// was derived from and gets its value back only for exactly that key; a carrier does not
+// have to understand what the key means. InvalidateIdentity is the belt to that braces,
+// for a caller that knows the identity moved but cannot express it in the key.
+//
+// The memoised value is an `any` because this package sits underneath the one that owns the
+// resolved identity type and cannot name it. A carrier stores it and hands it back; it
+// never inspects it.
+//
+// Implementations must be safe for concurrent use: one request can be served by more than
+// one goroutine.
+type IRequestIdentityMemo interface {
+	// LoadIdentity returns the memoised identity, but only if it was stored under exactly
+	// this key. Anything else - nothing stored, or stored under a different key - is a miss.
+	LoadIdentity(key string) (any, bool)
+	// StoreIdentity memoises identity under key, replacing whatever was held before.
+	StoreIdentity(key string, identity any)
+	// InvalidateIdentity drops the memo, so the next load misses whatever the key.
+	InvalidateIdentity()
+}
+
 // ISimpleStorage defines the interface for simple key-value storage
 type ISimpleStorage interface {
 	// GetItem retrieves a value by key
@@ -164,20 +204,6 @@ type ICookieManager interface {
 type HttpCommand interface {
 	// ContentType returns the content type of the command
 	ContentType() ContentType
-}
-
-// HttpFilterCommand defines the interface for HTTP filter operations
-type HttpFilterCommand interface {
-	// AllowFilterFields returns the list of fields that can be filtered
-	AllowFilterFields(ctx context.Context) []string
-}
-
-// HttpAccessCommand defines the interface for HTTP access control. Deprecated
-type HttpAccessCommand interface {
-	// IsAccessAllowed checks if access is allowed for the current context
-	IsAccessAllowed(ctx context.Context) bool
-	// FilterBuilder returns a query builder for filtering
-	FilterBuilder(ctx context.Context) IQueryBuilder
 }
 
 // MapInitiator defines the interface for map initialization

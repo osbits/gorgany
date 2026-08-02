@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/osbits/gorgany/v2/app/core"
@@ -50,6 +51,21 @@ func (thiz JwtMiddleware) Handle(next func(core.HttpMessage)) func(core.HttpMess
 		}
 
 		secret := viper.GetString("auth.jwt.secret")
+
+		// The secret is checked here as well as inside JwtService, and the reason is
+		// diagnosis rather than defence. ValidateJwt can only answer false, so a deployment
+		// whose key never resolved would answer 401 to every request with nothing anywhere
+		// saying why — and the previous behaviour was worse than a silent 401: this
+		// middleware read the key and handed it straight to ValidateJwt, so an empty key
+		// meant a caller's self-signed token passed both the signature check and, through the
+		// user service, the role check. Boot validation is meant to make this unreachable;
+		// if it is ever reached, the operator gets a line naming the key.
+		if err := auth.ValidateJwtSecret(secret); err != nil {
+			error2.HandleError(fmt.Sprintf(
+				"jwt middleware: rejecting every request because %v", err))
+			panic(error2.NewJwtAuthError())
+		}
+
 		if !jwtService.ValidateJwt(token, secret) {
 			panic(error2.NewJwtAuthError())
 		}

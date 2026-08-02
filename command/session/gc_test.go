@@ -2,6 +2,9 @@ package session
 
 import (
 	"context"
+	"errors"
+	"io"
+	"os"
 	"testing"
 
 	"github.com/spf13/viper"
@@ -20,9 +23,13 @@ import (
 type recordingStorage struct {
 	core.ISessionStorage
 	sweeps int
+	err    error
 }
 
-func (s *recordingStorage) ClearExpiredSessions() { s.sweeps++ }
+func (s *recordingStorage) ClearExpiredSessions() error {
+	s.sweeps++
+	return s.err
+}
 
 func withStorageConfig(t *testing.T, storage string) {
 	t.Helper()
@@ -39,6 +46,44 @@ func TestTheCommandSweeps(t *testing.T) {
 	GcCommand{SessionStorage: storage}.Execute(context.Background())
 
 	assert.Equal(t, 1, storage.sweeps)
+}
+
+// TestTheCommandDoesNotClaimToHaveSweptWhenTheSweepFailed. A cron entry judges the run by
+// what it prints, and the storage used to swallow the error entirely: a sweep that had never
+// once succeeded printed the same line as one that worked.
+func TestTheCommandDoesNotClaimToHaveSweptWhenTheSweepFailed(t *testing.T) {
+	withStorageConfig(t, "database")
+
+	storage := &recordingStorage{err: errors.New("permission denied for table sessions")}
+
+	stdout := captureStdout(t, func() {
+		GcCommand{SessionStorage: storage}.Execute(context.Background())
+	})
+
+	assert.Equal(t, 1, storage.sweeps)
+	assert.Contains(t, stdout, "NOT cleared")
+	assert.Contains(t, stdout, "permission denied for table sessions")
+}
+
+// captureStdout collects what fn prints. The command reports to the operator through stdout,
+// so that is where the assertion has to look.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	reader, writer, err := os.Pipe()
+	require.NoError(t, err)
+
+	previous := os.Stdout
+	os.Stdout = writer
+	defer func() { os.Stdout = previous }()
+
+	fn()
+	require.NoError(t, writer.Close())
+
+	out, err := io.ReadAll(reader)
+	require.NoError(t, err)
+
+	return string(out)
 }
 
 // TestTheCommandRefusesMemoryStorage. Memory sessions live in the web process's heap, so
@@ -90,6 +135,5 @@ func TestTheCommandAndTheJobSweepTheSameWay(t *testing.T) {
 type sweepJob struct{ storage core.ISessionStorage }
 
 func (j sweepJob) run() error {
-	j.storage.ClearExpiredSessions()
-	return nil
+	return j.storage.ClearExpiredSessions()
 }

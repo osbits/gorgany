@@ -1,4 +1,6 @@
 services:
+  # postgres backs the fixture application: it holds the schema the fixture migrations
+  # create and the rows the fixture seeder writes.
   postgres:
     image: postgres:16-alpine
     environment:
@@ -10,6 +12,45 @@ services:
       interval: 2s
       timeout: 5s
       retries: 20
+
+  # postgres-live and mysql-live back e2e/tests/live_db_test.go, which is a different kind
+  # of test: it creates and rolls back its own tables, boots datasources repeatedly and
+  # needs a superuser it can CREATE DATABASE with, so it cannot share the fixture app's
+  # database without corrupting the state the fixture assertions depend on.
+  #
+  # They are here because the harness previously started only `postgres` and ran the test
+  # suite without the `livedb` tag, so the live-engine tests — the whole of the MySQL
+  # coverage — were compiled out and never ran. The claim that both engines were verified
+  # rested on a developer having remembered to start two containers by hand.
+  postgres-live:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: test
+      POSTGRES_DB: gorgany_test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d gorgany_test"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  mysql-live:
+    image: mysql:8
+    # The charset flags are not cosmetic: the utf8mb4 round-trip assertions fail against
+    # MySQL's older default, which silently truncates four-byte characters.
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: test
+      MYSQL_DATABASE: gorgany_test
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -ptest --silent"]
+      interval: 3s
+      timeout: 5s
+      retries: 40
+      # MySQL's first boot initialises the data directory, which takes far longer than it
+      # takes to answer once it is up.
+      start_period: 60s
 
   app-migrate:
     build:
@@ -41,6 +82,17 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    # Without a healthcheck the only thing `up -d` can report is that the container was
+    # started, which it does even for a process that exits immediately afterwards. The
+    # harness waits on this condition instead, so a fixture app that fails to boot is a
+    # failure of the step that started it rather than a timeout in the tests much later.
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health > /dev/null"]
+      interval: 2s
+      timeout: 5s
+      retries: 45
+      # `go run` compiles the framework before it listens on anything.
+      start_period: 180s
     command: ["go", "run", "./cmd/server"]
 
   runner:
@@ -48,7 +100,29 @@ services:
       context: ..
       dockerfile: e2e/Dockerfile
     working_dir: /workspace
+    depends_on:
+      app-server:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      postgres-live:
+        condition: service_healthy
+      mysql-live:
+        condition: service_healthy
     environment:
       E2E_BASE_URL: http://app-server:8080
       E2E_DB_DSN: postgres://gorgany:gorgany@postgres:5432/gorgany_e2e?sslmode=disable
-    command: ["go", "test", "./e2e/tests/...", "-count=1", "-v"]
+      # The live-engine tests default to host-published ports, which from inside this
+      # container would resolve to the container itself.
+      E2E_PG_HOST: postgres-live
+      E2E_PG_PORT: "5432"
+      E2E_MYSQL_HOST: mysql-live
+      E2E_MYSQL_PORT: "3306"
+      # Every case in the suite gates itself on a dependency it can reach and skips when it
+      # cannot, so an environment that came up wrong used to produce a run of nothing but
+      # skips and an exit status of zero. This forbids the skips here: in the harness a case
+      # that cannot reach its dependency is a failure, because reaching it is the point.
+      E2E_REQUIRE_LIVE: "1"
+    # The `livedb` tag is what admits live_db_test.go to the binary. Without it the command
+    # below compiled and ran only the fixture-app tests.
+    command: ["go", "test", "-tags=livedb", "./e2e/tests/...", "-count=1", "-v"]

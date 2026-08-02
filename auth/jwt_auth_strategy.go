@@ -38,7 +38,11 @@ func (thiz *JwtAuthStrategy) IsLoggedIn(ctx context.Context) bool {
 	return thiz.jwtService.ValidateJwt(bearerToken, viper.GetString("auth.jwt.secret"))
 }
 
-func (thiz *JwtAuthStrategy) Logout(ctx context.Context) {
+// Logout is a no-op and reports success. A bearer token carries no server-side state to
+// revoke: it stops working when it expires, and nothing this strategy can do to the request
+// shortens that. An app that needs revocable tokens has to keep a deny list of its own.
+func (thiz *JwtAuthStrategy) Logout(ctx context.Context) error {
+	return nil
 }
 
 func (thiz *JwtAuthStrategy) CurrentUser(ctx context.Context) (core.Authenticable, error) {
@@ -53,10 +57,26 @@ func (thiz *JwtAuthStrategy) CurrentSession(ctx context.Context) core.ISession {
 	return nil
 }
 
+// IsRequestMadeWithStrategy claims a request only when this strategy can actually verify
+// the token it carries.
+//
+// The secret check is not redundant with the boot validation, and it is the reason an
+// unconfigured app is safe. AppProvider registers this strategy under "api" for every app,
+// including one that only ever configured session auth, and AuthContext.ResolveAuthStrategyByContext
+// hands the request to the first strategy that claims it. The claim used to be "jwt.Parse
+// succeeded", so with an empty or guessable key any request carrying a bearer token the
+// caller signed themselves captured strategy resolution — which substitutes the principal
+// RBAC decides against, silently drops session handling, and turns Logout into a no-op. None
+// of that requires the app to have mounted JwtMiddleware or configured JWT at all.
 func (thiz *JwtAuthStrategy) IsRequestMadeWithStrategy(ctx context.Context) bool {
 	messageContext, ok := ctx.Value(core.MessageContextKey).(core.IMessageContext)
 	if !ok {
 		err2.HandleError("Ctx is not core.IMessageContext instance")
+		return false
+	}
+
+	secret := viper.GetString("auth.jwt.secret")
+	if ValidateJwtSecret(secret) != nil {
 		return false
 	}
 
@@ -65,9 +85,11 @@ func (thiz *JwtAuthStrategy) IsRequestMadeWithStrategy(ctx context.Context) bool
 		return false
 	}
 
+	// jwtParseOptions pins the signing method; see its comment for what that does and does
+	// not buy.
 	_, err := jwt.Parse(token, func(token *jwt.Token) (interface{}, error) {
-		return []byte(viper.GetString("auth.jwt.secret")), nil
-	})
+		return []byte(secret), nil
+	}, jwtParseOptions...)
 	if err != nil {
 		return false
 	}

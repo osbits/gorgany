@@ -26,7 +26,15 @@ func NewFieldFilteredDto(dto interface{}, accessControl AccessControl, ctx conte
 	}
 }
 
-// MarshalJSON implements json.Marshaler interface with field filtering
+// MarshalJSON implements json.Marshaler interface with field filtering.
+//
+// This runs once per DTO, so a collection or a page of results runs it once per row, and
+// each run asks the access control which fields the caller may read. That question resolves
+// the caller's identity, which for a session-backed strategy means a session lookup and a
+// user load - so the identity memo on the request context is what keeps a hundred-row
+// response to one of each instead of a hundred. See RoleBasedAccessControl.resolveUserContext:
+// the fields are not cached here on purpose, because the DTO wrapper is per row and would
+// have nowhere to cache them that the next row could see.
 func (ffd *FieldFilteredDto) MarshalJSON() ([]byte, error) {
 	// Get readable fields for the current user
 	readableFields := ffd.accessControl.GetReadableFields(ffd.ctx, ffd.entity)

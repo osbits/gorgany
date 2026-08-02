@@ -21,6 +21,87 @@ var SecurityRelevantKeys = []string{
 	"auth.session.cookie.secure",
 }
 
+// KeysWithoutSecureFallback are the security-relevant keys for which "remove the
+// placeholder" is not a repair.
+//
+// The distinction is not pedantic. auth.session.cookie.secure genuinely does fall back to
+// a secure value — auth.CookieConfig defaults it to true — so telling an operator to drop
+// the placeholder is sound advice for that key. There is no such thing as a default
+// signing key: dropping the placeholder for auth.jwt.secret leaves an empty HMAC key,
+// which signs and verifies tokens perfectly happily, so anyone can mint one naming any
+// user and role. The error message used to give the removal advice for every key in
+// SecurityRelevantKeys, which meant an operator who followed the framework's own
+// instructions converted a caught boot failure into a silent authentication bypass.
+var KeysWithoutSecureFallback = []string{
+	"auth.jwt.secret",
+}
+
+const (
+	// JwtSecretKey holds the HMAC key this app's tokens are signed and verified with.
+	JwtSecretKey = "auth.jwt.secret"
+
+	// jwtSectionPrefix is the section whose presence means the app intends to use JWT.
+	jwtSectionPrefix = "auth.jwt."
+)
+
+// JwtIsConfigured answers "does this application use JWT".
+//
+// The answer has to come from the configuration, because nothing else can give it: the JWT
+// auth strategy is registered for every app whether or not it is wanted, and whether an app
+// mounts JwtMiddleware is not knowable from here. So the rule is: an app whose configuration
+// declares any auth.jwt key has asked for token authentication and must configure it
+// properly, and an app that declares none has not, and is not made to invent a signing
+// secret in order to boot.
+//
+// The second half is only safe because every JWT entry point refuses an unusable key at the
+// point of use — auth.JwtService's sign and verify paths, JwtMiddleware, and above all
+// JwtAuthStrategy.IsRequestMadeWithStrategy, which is how an app that never configured JWT
+// could otherwise be dragged into authenticating a bearer token the caller signed
+// themselves.
+func JwtIsConfigured() bool {
+	for _, key := range viper.AllKeys() {
+		if strings.HasPrefix(strings.ToLower(key), jwtSectionPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// registerJwtSecretPlaceholder makes an absent JWT secret visible to the resolver.
+//
+// ResolveEnvPlaceholders can only examine keys viper.AllKeys() returns, and a key that
+// appears nowhere in the config file is not among them — so a config with no
+// auth.jwt.secret line never reached the security-relevant guard at all, and the app booted
+// signing tokens with an empty key. AllKeys() *does* include keys registered with
+// SetDefault, so registering the documented placeholder as the default routes the
+// absent-key case into the same guard as an unset variable, and lets an app that keeps the
+// secret purely in the environment work with no config line at all.
+//
+// It is registered only for an app whose config declares the auth.jwt section; see
+// JwtIsConfigured for that rule and why a session-only app is safe without a secret.
+func registerJwtSecretPlaceholder() {
+	sectionDeclared := false
+	for _, key := range viper.AllKeys() {
+		lowered := strings.ToLower(key)
+		if lowered == JwtSecretKey {
+			// Declared, including as a YAML null or an empty string. Those are values the
+			// app chose, and the JWT boot validation names them precisely; a placeholder
+			// default here would report them as an unset environment variable the operator
+			// never mentioned.
+			return
+		}
+		if strings.HasPrefix(lowered, jwtSectionPrefix) {
+			sectionDeclared = true
+		}
+	}
+
+	if !sectionDeclared {
+		return
+	}
+
+	viper.SetDefault(JwtSecretKey, "${JWT_SECRET}")
+}
+
 // envPlaceholder reports the variable named by a `${VAR}` value.
 func envPlaceholder(value string) (string, bool) {
 	if !strings.HasPrefix(value, "${") || !strings.HasSuffix(value, "}") {
@@ -118,6 +199,10 @@ func KeepUnresolvedLiterals() ResolveOption {
 // An unresolved placeholder is blanked by default; see KeepUnresolvedLiterals. A
 // security-relevant key whose placeholder cannot be resolved stops the boot either way.
 //
+// It also registers the JWT secret's placeholder default before it looks at anything, which
+// is how an auth.jwt.secret that appears nowhere in the config file becomes visible to the
+// guard at all; see registerJwtSecretPlaceholder.
+//
 // Exported so a test, or an app that loads config its own way, can apply the same
 // semantics. An app that substitutes placeholders itself should call this instead: a local
 // `viper.Set` loop reintroduces the sibling-wipe described below, and the symptom is a boot
@@ -128,8 +213,11 @@ func ResolveEnvPlaceholders(opts ...ResolveOption) error {
 		opt(&options)
 	}
 
+	registerJwtSecretPlaceholder()
+
 	unresolved := make(map[string]string)
 	var unresolvedSecurityKeys []string
+	var unresolvedWithoutFallback []string
 
 	// Substitutions are collected and applied together through MergeConfigMap rather
 	// than written one at a time with viper.Set. viper.Set writes the *override* layer,
@@ -166,6 +254,9 @@ func ResolveEnvPlaceholders(opts ...ResolveOption) error {
 			if isSecurityRelevant(key) {
 				unresolvedSecurityKeys = append(unresolvedSecurityKeys,
 					fmt.Sprintf("%s (${%s})", key, name))
+				if hasNoSecureFallback(key) {
+					unresolvedWithoutFallback = append(unresolvedWithoutFallback, key)
+				}
 				// Do not substitute a security-relevant key at all: the boot is about to
 				// fail, and writing anything would matter only if a caller ignored the
 				// error.
@@ -195,11 +286,8 @@ func ResolveEnvPlaceholders(opts ...ResolveOption) error {
 
 	if len(unresolvedSecurityKeys) > 0 {
 		sort.Strings(unresolvedSecurityKeys)
-		return fmt.Errorf(
-			"config: security-relevant key(s) reference environment variables that are not "+
-				"set: %s. Set them, or remove the placeholder so the framework's secure "+
-				"default applies — an unset placeholder must never silently weaken security",
-			strings.Join(unresolvedSecurityKeys, ", "))
+		return fmt.Errorf("config: %s", securityKeyFailureAdvice(
+			unresolvedSecurityKeys, unresolvedWithoutFallback))
 	}
 
 	// The message used to say "leaving the key unset so its default applies". Neither
@@ -253,6 +341,47 @@ func isSecurityRelevant(key string) bool {
 		}
 	}
 	return false
+}
+
+// hasNoSecureFallback reports whether "remove the placeholder" would leave this key in an
+// unsafe state rather than on a safe default. See KeysWithoutSecureFallback.
+func hasNoSecureFallback(key string) bool {
+	for _, unsafe := range KeysWithoutSecureFallback {
+		if strings.EqualFold(key, unsafe) {
+			return true
+		}
+	}
+	return false
+}
+
+// securityKeyFailureAdvice builds the boot error, giving each group of keys advice that is
+// actually true for it.
+//
+// The single message this replaces ended "or remove the placeholder so the framework's
+// secure default applies", which was correct for the secure-cookie flag and actively
+// dangerous for the signing key: an operator who followed it turned a boot that failed
+// loudly into a server that accepted forged tokens.
+func securityKeyFailureAdvice(described []string, withoutFallback []string) string {
+	message := fmt.Sprintf(
+		"security-relevant key(s) reference environment variables that are not set: %s. "+
+			"An unset placeholder must never silently weaken security, so the boot stops here",
+		strings.Join(described, ", "))
+
+	if len(withoutFallback) > 0 {
+		sort.Strings(withoutFallback)
+		message += fmt.Sprintf(
+			". There is no secure fallback for %s, so the variable has to be set — removing the "+
+				"placeholder does not repair it, it leaves an empty signing key that verifies "+
+				"tokens anyone can mint",
+			strings.Join(withoutFallback, ", "))
+	}
+
+	if len(withoutFallback) < len(described) {
+		message += ". For the remaining key(s) you can either set the variable or remove the " +
+			"placeholder so the framework's secure default applies"
+	}
+
+	return message
 }
 
 func sortedKeys(m map[string]string) []string {

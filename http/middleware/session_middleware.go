@@ -9,6 +9,7 @@ import (
 
 	"github.com/osbits/gorgany/v2/app/core"
 	err2 "github.com/osbits/gorgany/v2/err"
+	grghttp "github.com/osbits/gorgany/v2/http"
 	"github.com/osbits/gorgany/v2/model"
 )
 
@@ -56,6 +57,20 @@ func (thiz SessionMiddleware) Handle(next func(core.HttpMessage)) func(core.Http
 
 		// If we have a valid session, update it
 		if session != nil && !session.IsExpired() {
+			// CurrentSession does not always hand back the session the request arrived on:
+			// once a session is idle past the activity timeout or older than the rotation
+			// interval it rotates it, and the rotation deletes the identifier that was
+			// resolved. That resolution already happened — message.Context() above went
+			// through the session scope to build the context — so both of the request's
+			// caches name the deleted identifier while this branch works on the live one.
+			// Left uncorrected, every handler after this asks about a session the store no
+			// longer has: the request that rotates is anonymous, so a returning visitor is
+			// bounced through the login page once per idle period, and a handler that
+			// resolves the session again gets nothing and starts a third one, orphaning the
+			// live row. Publishing costs nothing when no rotation happened — the scope
+			// already holds this session.
+			grghttp.PublishSession(message, session)
+
 			session.SetExpiry(now.Add(time.Duration(thiz.SessionStorage.GetSessionLifetime().Seconds()) * time.Second))
 			thiz.markFlashUsed(session)
 			session.SetLastActivity(time.Now())
@@ -75,9 +90,14 @@ func (thiz SessionMiddleware) Handle(next func(core.HttpMessage)) func(core.Http
 			return
 		}
 
-		// If we have an expired session, delete it
+		// If we have an expired session, delete it. A failure here is reported and the
+		// request carries on with a new session: the expired one is not being trusted
+		// either way, and refusing the request would turn an unreachable store into an
+		// outage on every page.
 		if session != nil && session.IsExpired() {
-			thiz.SessionStorage.DeleteSession(session)
+			if e := thiz.SessionStorage.DeleteSession(session); e != nil {
+				err2.HandleError(e)
+			}
 		}
 
 		// Create a new session
@@ -93,9 +113,12 @@ func (thiz SessionMiddleware) Handle(next func(core.HttpMessage)) func(core.Http
 			return
 		}
 
-		if editableSession, ok := message.Session().(core.IEditableSessionScope); ok {
-			editableSession.Set(newSess)
-		}
+		// Published rather than just set on the scope: the strategy resolves the session id
+		// from the message context before it looks at the cookie, and a request that arrived
+		// without a cookie has nothing there to fall back to. It used to work only because
+		// message.Context() happens to be called again a few lines below, which is not a
+		// property anybody should have to notice before reordering this.
+		grghttp.PublishSession(message, newSess)
 
 		csrfToken, e := thiz.csrfService.GenerateCSRFToken(message.Context(), newSess)
 		if e != nil {
@@ -103,9 +126,18 @@ func (thiz SessionMiddleware) Handle(next func(core.HttpMessage)) func(core.Http
 			next(message)
 			return
 		}
-		message.Response().Header().Set(core.CSRFTokenHeader, csrfToken)
 
-		thiz.SessionStorage.AddSession(newSess)
+		// Persisting before publishing the token: the token lives in the session, so
+		// handing it to the client while the session it is bound to was never stored
+		// would guarantee that the next mutating request is rejected. NewSessionWithoutUser
+		// has already stored the session, so this is the upsert that carries the token.
+		if e := thiz.SessionStorage.AddSession(newSess); e != nil {
+			err2.HandleError(e)
+			next(message)
+			return
+		}
+
+		message.Response().Header().Set(core.CSRFTokenHeader, csrfToken)
 
 		// Update the message context with the session
 		// We can't directly update the message context, but the session will be available via the context

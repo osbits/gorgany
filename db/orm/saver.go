@@ -13,6 +13,12 @@ import (
 	"gorm.io/gorm/schema"
 )
 
+// ErrRowGone reports an update whose row no longer exists.
+//
+// Only UpdateExisting returns it. Save and Update deliberately do not: see updateEntity for
+// why zero matched rows is not, on its own, evidence of anything.
+var ErrRowGone = errors.New("orm: the row this entity was loaded from no longer exists")
+
 // Save saves an domain (creates if new, updates if existing)
 func (o *ORM[T]) Save(entity T) error {
 	if isNilValue(entity) {
@@ -30,7 +36,7 @@ func (o *ORM[T]) Save(entity T) error {
 	if !meta.IsLoaded {
 		return o.createEntity(entity)
 	}
-	return o.updateEntity(entity)
+	return o.updateEntity(entity, false)
 }
 
 // Create inserts a new domain into the database.
@@ -46,7 +52,24 @@ func (o *ORM[T]) Update(entity T) error {
 	if isNilValue(entity) {
 		return errors.New("domain cannot be nil")
 	}
-	return o.updateEntity(entity)
+	return o.updateEntity(entity, false)
+}
+
+// UpdateExisting modifies an existing domain and fails with ErrRowGone when its row is not
+// there any more.
+//
+// Update on its own cannot tell the difference: the statement it runs matches no rows and
+// succeeds, which is what let a caller believe state had been persisted after something
+// else had deleted the row underneath it. This method resolves it by asking whether the row
+// exists — the extra read happens only when nothing was matched, so a normal update costs
+// nothing. It is a separate method rather than a change to Update because zero matched rows
+// is genuinely ambiguous (see updateEntity) and most callers neither need nor want the
+// stricter contract.
+func (o *ORM[T]) UpdateExisting(entity T) error {
+	if isNilValue(entity) {
+		return errors.New("domain cannot be nil")
+	}
+	return o.updateEntity(entity, true)
 }
 
 // Delete deletes an domain
@@ -272,8 +295,20 @@ func (o *ORM[T]) createEntity(entity T) error {
 	return nil
 }
 
-// updateEntity handles the actual update logic for an domain
-func (o *ORM[T]) updateEntity(entity T) error {
+// updateEntity handles the actual update logic for an domain.
+//
+// requireRow asks it to treat a statement that matched nothing as a failure. That is not the
+// default, and the reason is that the row count alone does not say what happened. Postgres
+// reports matched rows, so zero there does mean the row is gone; MySQL reports *changed*
+// rows unless the DSN carries clientFoundRows, and this framework's MySQL DSN does not set
+// it, so an update that writes the values a row already holds legitimately reports zero.
+// Turning zero into an error unconditionally would therefore break correct code on one of
+// the two engines the ORM supports.
+//
+// What is unconditional is recording the result on the entity's meta. Before, the statement
+// result was thrown away entirely: an update against a deleted row was indistinguishable
+// from one that landed, for every caller, with no way to find out.
+func (o *ORM[T]) updateEntity(entity T, requireRow bool) error {
 	meta := entity.GetMeta()
 	if meta == nil {
 		meta = &EntityMeta{
@@ -346,6 +381,17 @@ func (o *ORM[T]) updateEntity(entity T) error {
 	if queryRes.Error != nil {
 		return fmt.Errorf("failed to update domain: %w", queryRes.Error)
 	}
+	meta.QueryResult = &queryRes
+
+	if requireRow && queryRes.RowsAffected == 0 {
+		exists, existsErr := o.rowExists(tableName, meta.PrimaryKey, pkValue)
+		if existsErr != nil {
+			return existsErr
+		}
+		if !exists {
+			return fmt.Errorf("%w: %s where %s = %v", ErrRowGone, tableName, meta.PrimaryKey, pkValue)
+		}
+	}
 
 	// Update metadata
 	meta.IsDirty = false
@@ -370,6 +416,31 @@ func (o *ORM[T]) updateEntity(entity T) error {
 	}
 
 	return nil
+}
+
+// rowExists reports whether a row with this primary key is still in the table.
+//
+// Keyed and limited to one row, and read through Find rather than a COUNT so it goes through
+// the same path createEntity's read-back uses on every engine.
+func (o *ORM[T]) rowExists(tableName, primaryKey string, pkValue any) (bool, error) {
+	sql, args, err := o.newBuilder().
+		Select(primaryKey).
+		From(tableName).
+		Eq(primaryKey, pkValue).
+		Limit(1).
+		ToSQL()
+	if err != nil {
+		return false, fmt.Errorf("orm: cannot render the existence check for %s: %w", tableName, err)
+	}
+
+	row := map[string]interface{}{}
+	queryRes := o.db.Executor().FindRaw(context.Background(), &row, sql, args...)
+	if queryRes.Error != nil {
+		return false, fmt.Errorf("orm: cannot check whether the %s row still exists: %w",
+			tableName, queryRes.Error)
+	}
+
+	return queryRes.Found, nil
 }
 
 // insertAndReadBack performs an INSERT on an engine that has no RETURNING clause,

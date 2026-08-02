@@ -1,6 +1,8 @@
 package provider
 
 import (
+	gohttp "net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/osbits/gorgany/v2/app/core"
@@ -30,7 +32,7 @@ func TestRecoveryIsRegisteredFirstByDefault(t *testing.T) {
 
 	configs := p.standardMiddlewares()
 
-	require.Len(t, configs, 2, "the app's middleware plus the recovery filter")
+	require.Len(t, configs, 3, "the app's middleware plus the two framework filters")
 
 	first := configs[0]
 	assert.IsType(t, &middleware.RecoveryMiddleware{}, first.GetMiddleware(),
@@ -38,8 +40,57 @@ func TestRecoveryIsRegisteredFirstByDefault(t *testing.T) {
 	assert.Equal(t, "/**", first.GetPattern())
 	assert.True(t, first.IsFilter(), "it must be a filter, not a route middleware")
 
-	// The app's own middleware is still there, after it.
-	assert.IsType(t, countingMiddleware{}, configs[1].GetMiddleware())
+	// The app's own middleware is still there, after the framework's.
+	assert.IsType(t, countingMiddleware{}, configs[2].GetMiddleware())
+}
+
+// TestSecurityHeadersAreRegisteredByDefault. The framework emitted no security headers at
+// all — nosniff included — so an app must not have to remember this one either. It goes
+// ahead of the app's own filters so the headers are present even when one of them answers
+// the request itself.
+func TestSecurityHeadersAreRegisteredByDefault(t *testing.T) {
+	p := NewRouteProvider()
+	p.AddMiddleware(newFilter(countingMiddleware{}))
+
+	configs := p.standardMiddlewares()
+	require.Len(t, configs, 3)
+
+	headers := configs[1]
+	assert.IsType(t, &middleware.SecurityHeadersMiddleware{}, headers.GetMiddleware())
+	assert.Equal(t, "/**", headers.GetPattern())
+	assert.True(t, headers.IsFilter())
+}
+
+// TestSecurityHeaderOptionsReachTheMiddleware pins the configuration hook, so an app that
+// is ready to enforce a CSP can do it without replacing the filter.
+func TestSecurityHeaderOptionsReachTheMiddleware(t *testing.T) {
+	p := NewRouteProvider()
+	p.ConfigureSecurityHeaders(middleware.SecurityHeadersOptions{
+		ContentSecurityPolicy: middleware.RecommendedContentSecurityPolicy,
+		FrameOptions:          "DENY",
+	})
+
+	configs := p.standardMiddlewares()
+	require.Len(t, configs, 2)
+
+	headers, ok := configs[1].GetMiddleware().(*middleware.SecurityHeadersMiddleware)
+	require.True(t, ok)
+
+	recorded := runFilter(headers, "/")
+	assert.Equal(t, middleware.RecommendedContentSecurityPolicy,
+		recorded.Get("Content-Security-Policy"))
+	assert.Equal(t, "DENY", recorded.Get("X-Frame-Options"))
+}
+
+// TestDisableSecurityHeadersMiddlewareOptsOut covers the escape hatch for an app that
+// installs its own header filter.
+func TestDisableSecurityHeadersMiddlewareOptsOut(t *testing.T) {
+	p := NewRouteProvider()
+	p.DisableSecurityHeadersMiddleware()
+
+	configs := p.standardMiddlewares()
+	require.Len(t, configs, 1)
+	assert.IsType(t, &middleware.RecoveryMiddleware{}, configs[0].GetMiddleware())
 }
 
 // TestRecoveryIsRegisteredEvenWithNoAppMiddleware covers the common case of an app
@@ -47,8 +98,9 @@ func TestRecoveryIsRegisteredFirstByDefault(t *testing.T) {
 func TestRecoveryIsRegisteredEvenWithNoAppMiddleware(t *testing.T) {
 	configs := NewRouteProvider().standardMiddlewares()
 
-	require.Len(t, configs, 1)
+	require.Len(t, configs, 2)
 	assert.IsType(t, &middleware.RecoveryMiddleware{}, configs[0].GetMiddleware())
+	assert.IsType(t, &middleware.SecurityHeadersMiddleware{}, configs[1].GetMiddleware())
 }
 
 // TestDisableRecoveryMiddlewareOptsOut pins the escape hatch for an app that
@@ -57,6 +109,20 @@ func TestDisableRecoveryMiddlewareOptsOut(t *testing.T) {
 	p := NewRouteProvider()
 	p.AddMiddleware(newFilter(countingMiddleware{}))
 	p.DisableRecoveryMiddleware()
+
+	configs := p.standardMiddlewares()
+
+	require.Len(t, configs, 2, "the security headers filter and the app's own middleware")
+	assert.IsType(t, &middleware.SecurityHeadersMiddleware{}, configs[0].GetMiddleware())
+	assert.IsType(t, countingMiddleware{}, configs[1].GetMiddleware())
+}
+
+// TestBothFrameworkFiltersCanBeDisabled leaves the app's own list exactly as given.
+func TestBothFrameworkFiltersCanBeDisabled(t *testing.T) {
+	p := NewRouteProvider()
+	p.AddMiddleware(newFilter(countingMiddleware{}))
+	p.DisableRecoveryMiddleware()
+	p.DisableSecurityHeadersMiddleware()
 
 	configs := p.standardMiddlewares()
 
@@ -75,9 +141,23 @@ func TestStandardMiddlewaresDoesNotMutateTheAppsSlice(t *testing.T) {
 	second := p.standardMiddlewares()
 
 	require.Len(t, p.middlewares, 1, "the provider's own slice must be untouched")
-	require.Len(t, first, 2)
-	require.Len(t, second, 2)
+	require.Len(t, first, 3)
+	require.Len(t, second, 3)
 	assert.IsType(t, &middleware.RecoveryMiddleware{}, second[0].GetMiddleware())
+}
+
+// runFilter drives a middleware over a synthetic message and returns the headers it wrote.
+func runFilter(mw core.IMiddleware, target string) gohttp.Header {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(gohttp.MethodGet, target, nil)
+
+	message := &http.Message{}
+	message.Req = http.NewHTTPRequestScope(request)
+	message.Res = http.NewHTTPResponseScope(recorder, request)
+
+	mw.Handle(func(core.HttpMessage) {})(message)
+
+	return recorder.Header()
 }
 
 func newFilter(mw core.IMiddleware) core.IMiddlewareConfig {

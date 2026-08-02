@@ -51,28 +51,45 @@ func (m *MockSessionFactory) CreateSessionWithUser(id string, userId string, exp
 	return args.Get(0).(core.ISession)
 }
 
-func (m *MockSessionStorage) ClearExpiredSessions() {
-	m.Called()
+func (m *MockSessionStorage) ClearExpiredSessions() error {
+	args := m.Called()
+	return args.Error(0)
 }
 
-func (m *MockSessionStorage) AddSession(session core.ISession) {
-	m.Called(session)
+// The mutators return an error, and the reads distinguish absent from failed. Where a test
+// only cares that the call happened, the expectation is still written as .Return() and the
+// helpers below turn testify's empty argument list into a nil error, so the existing
+// expectations keep reading the way they did.
+func (m *MockSessionStorage) AddSession(session core.ISession) error {
+	return errorArg(m.Called(session), 0)
 }
 
-func (m *MockSessionStorage) DeleteSession(session core.ISession) {
-	m.Called(session)
+func (m *MockSessionStorage) DeleteSession(session core.ISession) error {
+	return errorArg(m.Called(session), 0)
 }
 
-func (m *MockSessionStorage) DeleteSessionById(id string) {
-	m.Called(id)
+func (m *MockSessionStorage) DeleteSessionById(id string) error {
+	return errorArg(m.Called(id), 0)
 }
 
-func (m *MockSessionStorage) GetSessionById(id string) core.ISession {
+func (m *MockSessionStorage) GetSessionById(id string) (core.ISession, error) {
 	args := m.Called(id)
-	if args.Get(0) == nil {
+	if len(args) == 0 || args.Get(0) == nil {
+		return nil, errorArg(args, 1)
+	}
+	return args.Get(0).(core.ISession), errorArg(args, 1)
+}
+
+// errorArg reads an error out of a return list that may be shorter than the method's
+// signature, which is what `.Return()` produces.
+func errorArg(args mock.Arguments, index int) error {
+	if len(args) <= index {
 		return nil
 	}
-	return args.Get(0).(core.ISession)
+	if err, ok := args.Get(index).(error); ok {
+		return err
+	}
+	return nil
 }
 
 func (m *MockSessionStorage) SetSessionLifetime(lifetime time.Duration) {
@@ -346,7 +363,7 @@ func TestStandardAuthStrategy_Login(t *testing.T) {
 	mockMsgCtx.On("GetCookieManager").Return(mockCookieManager)
 	mockMsgCtx.On("GetSession").Return(nil)
 	mockCookieManager.On("SetCookie", mock.Anything).Return()
-	mockCookieManager.On("GetCookie", core.SessionCookieName).Return(nil)
+	mockCookieManager.On("GetCookie", SessionCookieName()).Return(nil)
 	mockMsgCtx.On("GetSession").Return(nil)
 
 	// Test
@@ -387,7 +404,7 @@ func TestStandardAuthStrategy_CurrentUser(t *testing.T) {
 
 	// Expectations
 	mockMsgCtx.On("GetCookieManager").Return(mockCookieManager)
-	mockCookieManager.On("GetCookie", core.SessionCookieName).Return(&http.Cookie{Value: session.GetId()})
+	mockCookieManager.On("GetCookie", SessionCookieName()).Return(&http.Cookie{Value: session.GetId()})
 	mockStorage.On("GetSessionById", session.GetId()).Return(session)
 	mockUserService.On("Get", user.GetId()).Return(user, nil)
 	mockMsgCtx.On("GetSession").Return(session)
@@ -420,7 +437,7 @@ func TestStandardAuthStrategy_CurrentUser_NoSession(t *testing.T) {
 
 	// Expectations
 	mockMsgCtx.On("GetCookieManager").Return(mockCookieManager)
-	mockCookieManager.On("GetCookie", core.SessionCookieName).Return(nil)
+	mockCookieManager.On("GetCookie", SessionCookieName()).Return(nil)
 	mockMsgCtx.On("GetSession").Return(nil)
 	mockStorage.On("GetSessionById", mock.Anything).Return(nil)
 
@@ -498,7 +515,9 @@ func TestStandardAuthStrategy_RotateSession(t *testing.T) {
 	mockStorage.On("GetSessionLifetime").Return(time.Duration(3600))
 	mockStorage.On("GetSessionById", mock.Anything).Return(nil)
 	mockStorage.On("AddSession", mock.Anything).Return()
-	mockStorage.On("DeleteSession", oldSession).Return()
+	// The old identifier is revoked before the new one inherits the user id, and rotation is
+	// abandoned when there was nothing to revoke — see RotateSession.
+	mockStorage.On("DeleteSessionById", oldSession.GetId()).Return()
 
 	// Create a test session for the factory
 	testSession := &Session{
@@ -555,15 +574,40 @@ func TestStandardAuthStrategy_Logout(t *testing.T) {
 	mockMsgCtx.On("GetSession").Return(session)
 	mockStorage.On("DeleteSessionById", session.GetId()).Return()
 	mockCookieManager.On("SetCookie", mock.MatchedBy(func(cookie *http.Cookie) bool {
-		return cookie.Name == core.SessionCookieName && cookie.MaxAge < 0
+		return cookie.Name == SessionCookieName() && cookie.MaxAge < 0
 	})).Return()
 
 	// Test
-	strategy.Logout(ctx)
+	assert.NoError(t, strategy.Logout(ctx))
 
 	// Assertions
 	mockStorage.AssertExpectations(t)
 	mockMsgCtx.AssertExpectations(t)
+}
+
+// TestStandardAuthStrategy_LogoutReportsAFailedRevocation. The caller has to be able to tell
+// the user the logout did not happen, and the cookie must stay put: expiring it while the
+// session is still in the store is what made the previous void Logout fail open.
+func TestStandardAuthStrategy_LogoutReportsAFailedRevocation(t *testing.T) {
+	mockStorage := new(MockSessionStorage)
+	mockMsgCtx := new(MockMessageContext)
+	mockCookieManager := new(MockCookieManager)
+
+	strategy := &StandardAuthStrategy{sessionManager: mockStorage}
+
+	ctx := context.WithValue(context.Background(), core.MessageContextKey, mockMsgCtx)
+	session := &Session{id: "test-session", userId: "test-user", expiry: time.Now().Add(time.Hour)}
+
+	mockMsgCtx.On("GetCookieManager").Return(mockCookieManager)
+	mockMsgCtx.On("GetSession").Return(session)
+	mockStorage.On("DeleteSessionById", session.GetId()).Return(assert.AnError)
+
+	err := strategy.Logout(ctx)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, assert.AnError)
+	mockCookieManager.AssertNotCalled(t, "SetCookie", mock.Anything)
+	mockStorage.AssertExpectations(t)
 }
 
 func TestStandardAuthStrategy_IsLoggedIn(t *testing.T) {
@@ -591,7 +635,7 @@ func TestStandardAuthStrategy_IsLoggedIn(t *testing.T) {
 			setupMocks: func() {
 				mockMsgCtx.On("GetSession").Return(nil)
 				mockMsgCtx.On("GetCookieManager").Return(mockCookieManager)
-				mockCookieManager.On("GetCookie", core.SessionCookieName).Return(nil)
+				mockCookieManager.On("GetCookie", SessionCookieName()).Return(nil)
 				mockStorage.On("GetSessionById", mock.Anything).Return(nil)
 			},
 		},
@@ -715,7 +759,7 @@ func TestStandardAuthStrategy_IsRequestMadeWithStrategy(t *testing.T) {
 			setupMocks: func() {
 				mockMsgCtx.On("GetSession").Return(nil)
 				mockMsgCtx.On("GetCookieManager").Return(mockCookieManager)
-				mockCookieManager.On("GetCookie", core.SessionCookieName).Return(nil)
+				mockCookieManager.On("GetCookie", SessionCookieName()).Return(nil)
 			},
 		},
 		{
@@ -845,7 +889,7 @@ func TestSessionCookieCarriesTheConfiguredSecureFlag(t *testing.T) {
 			require.NoError(t, err)
 
 			require.NotNil(t, emitted, "a session cookie must be written")
-			assert.Equal(t, core.SessionCookieName, emitted.Name)
+			assert.Equal(t, SessionCookieName(), emitted.Name)
 			assert.Equal(t, tt.wantSecure, emitted.Secure,
 				"the Secure attribute must follow auth.session.cookie.secure")
 

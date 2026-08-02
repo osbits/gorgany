@@ -25,8 +25,14 @@ type IAuthStrategy interface {
 	Login(user Authenticable, ctx context.Context) (ISession, error)
 	// IsLoggedIn checks if there is an active session in the context
 	IsLoggedIn(ctx context.Context) bool
-	// Logout terminates the current session
-	Logout(ctx context.Context)
+	// Logout terminates the current session.
+	//
+	// It returns an error when the server-side session could not be revoked. The
+	// caller must treat that as a failed logout and say so: the previous signature
+	// returned nothing, so a strategy that could not delete the session had no way to
+	// report it and expired the browser's cookie anyway — which tells the user they
+	// are logged out while the session, and any copy of the cookie, keeps working.
+	Logout(ctx context.Context) error
 	// CurrentUser retrieves the authenticated user from the context
 	CurrentUser(ctx context.Context) (Authenticable, error)
 	// ResolveSessionId extracts the session ID from the context
@@ -41,18 +47,32 @@ type IAuthStrategy interface {
 	RotateSession(ctx context.Context, oldSession ISession) (ISession, error)
 }
 
-// ISessionStorage defines the interface for session storage management
+// ISessionStorage defines the interface for session storage management.
+//
+// Every method that changes stored state reports failure, and the read distinguishes
+// "no such session" from "the store could not answer". None of them used to: a store
+// that could not delete, could not persist or could not be reached looked exactly like
+// one that had done the work, so login reported success for a session nothing held and
+// logout reported success for a session that was still live. A caller that has nowhere
+// to propagate the error must still fail closed — refuse the request, not trust the
+// session — and report through err.HandleError rather than discarding it.
 type ISessionStorage interface {
 	// ClearExpiredSessions removes all expired sessions
-	ClearExpiredSessions()
-	// AddSession adds a new session to storage
-	AddSession(session ISession)
+	ClearExpiredSessions() error
+	// AddSession adds a new session to storage, or persists the current state of one
+	// the store already holds. It must refuse to recreate a session the store no
+	// longer has: an already-revoked identifier that can be written back is a
+	// revocation bypass.
+	AddSession(session ISession) error
 	// DeleteSession removes a session from storage
-	DeleteSession(session ISession)
-	// DeleteSessionById removes a session by its ID
-	DeleteSessionById(id string)
-	// GetSessionById retrieves a session by its ID
-	GetSessionById(id string) ISession
+	DeleteSession(session ISession) error
+	// DeleteSessionById removes a session by its ID. Removing a session the store does
+	// not hold is not an error — revocation is idempotent.
+	DeleteSessionById(id string) error
+	// GetSessionById retrieves a session by its ID. It returns (nil, nil) when there is
+	// no such session and (nil, err) when the lookup itself failed, which a caller
+	// must not read as "not logged in" without saying so.
+	GetSessionById(id string) (ISession, error)
 	// SetSessionLifetime sets the lifetime duration for sessions
 	SetSessionLifetime(lifetime time.Duration)
 	// GetSessionLifetime returns the current session lifetime duration
@@ -63,7 +83,36 @@ type ISessionStorage interface {
 	GetSessionActivityTimeout() time.Duration
 }
 
-// ISession defines the interface for session management
+// ISessionRevoker is an optional interface a session storage may implement to report
+// whether a revocation removed anything.
+//
+// It exists for session rotation. Rotation carries the old session's user id over to a
+// new identifier, and it must only do that while the old session is still live: if the
+// user logged out between the moment the request loaded the session and the moment it
+// rotated, an unconditional rotation mints a brand new, durable session carrying the
+// logged-out user's identity and hands its cookie to whoever made the request. Plain
+// DeleteSessionById cannot express the difference, because deleting an absent session
+// is deliberately not an error.
+//
+// Optional rather than part of ISessionStorage so a storage that cannot answer the
+// question keeps compiling; both storages the framework ships implement it.
+type ISessionRevoker interface {
+	// RevokeSession deletes the session with this id and reports whether the store
+	// held it. (false, nil) means there was nothing to revoke.
+	RevokeSession(id string) (bool, error)
+}
+
+// ISession defines the interface for session management.
+//
+// The setters are void even though a session backed by a database persists on every
+// write. That is a deliberate boundary, not an oversight: giving them errors would
+// break every request and view scope and every test double in every downstream app for
+// a signal almost no caller is in a position to act on. The consequence is that an
+// implementation whose write-through can fail must remember the failure and surface it
+// at the next operation that *can* report one — the storage call, or Login/Logout — and
+// callers of those must fail closed rather than assume the write landed. Every field an
+// implementation shares between concurrent requests must also be synchronised;
+// GetUserId in particular feeds authorization decisions.
 type ISession interface {
 	ISimpleStorage
 	// GetId returns the session identifier

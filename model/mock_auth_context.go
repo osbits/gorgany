@@ -48,8 +48,9 @@ func (m *MockAuthStrategy) IsLoggedIn(ctx context.Context) bool {
 	return m.currentUser != nil
 }
 
-func (m *MockAuthStrategy) Logout(ctx context.Context) {
+func (m *MockAuthStrategy) Logout(ctx context.Context) error {
 	m.currentUser = nil
+	return nil
 }
 
 func (m *MockAuthStrategy) CurrentUser(ctx context.Context) (core.Authenticable, error) {

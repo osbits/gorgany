@@ -14,11 +14,13 @@ import (
 )
 
 type RouteProvider struct {
-	controllers  []core.IController
-	middlewares  []core.IMiddlewareConfig
-	notFound     core.HandlerFunc
-	skipRecovery bool
-	skipCsrf     bool
+	controllers         []core.IController
+	middlewares         []core.IMiddlewareConfig
+	notFound            core.HandlerFunc
+	skipRecovery        bool
+	skipCsrf            bool
+	skipSecurityHeaders bool
+	securityHeaderOpts  middleware.SecurityHeadersOptions
 }
 
 func NewRouteProvider() *RouteProvider {
@@ -46,6 +48,25 @@ func (p *RouteProvider) DisableRecoveryMiddleware() {
 // or mounts CsrfController itself with a different Path.
 func (p *RouteProvider) DisableCsrfController() {
 	p.skipCsrf = true
+}
+
+// DisableSecurityHeadersMiddleware stops this provider from registering
+// middleware.SecurityHeadersMiddleware as a /** filter.
+//
+// The headers are on by default because the framework emitted none of them at all — no
+// X-Content-Type-Options, no X-Frame-Options, no Referrer-Policy, no HSTS — so an app got
+// whatever the browser's most permissive interpretation of a response happened to be.
+// Content-Security-Policy is the one exception and is off unless configured; see
+// middleware.SecurityHeadersOptions.ContentSecurityPolicy for why a default policy cannot be
+// both safe and invisible. Disable this only if the app installs its own header filter.
+func (p *RouteProvider) DisableSecurityHeadersMiddleware() {
+	p.skipSecurityHeaders = true
+}
+
+// ConfigureSecurityHeaders replaces the options the default security-headers filter is built
+// with — a CSP to enforce, DENY instead of SAMEORIGIN for framing, a different HSTS max-age.
+func (p *RouteProvider) ConfigureSecurityHeaders(options middleware.SecurityHeadersOptions) {
+	p.securityHeaderOpts = options
 }
 
 func (p *RouteProvider) AddController(ctrl core.IController) {
@@ -77,18 +98,35 @@ func (p *RouteProvider) Register(c core.IContainer) {
 // standardMiddlewares returns the app's middlewares with the framework defaults
 // prepended, so the recovery filter is registered first and therefore wraps
 // everything else.
+//
+// The security-headers filter goes second, ahead of the app's own: it writes its headers
+// before calling through, so registering it early means they are on the response even when
+// something further down answers the request itself, and an app filter that wants a
+// different value still gets the last word.
 func (p *RouteProvider) standardMiddlewares() []core.IMiddlewareConfig {
-	if p.skipRecovery {
+	defaults := make([]core.IMiddlewareConfig, 0, 2)
+
+	if !p.skipRecovery {
+		defaults = append(defaults, http.NewMiddlewareConfigBuilder().
+			WithPattern("/**").
+			AsFilter().
+			WithMiddleware(middleware.NewRecoveryMiddleware()).
+			Build())
+	}
+
+	if !p.skipSecurityHeaders {
+		defaults = append(defaults, http.NewMiddlewareConfigBuilder().
+			WithPattern("/**").
+			AsFilter().
+			WithMiddleware(middleware.NewSecurityHeadersMiddleware(p.securityHeaderOpts)).
+			Build())
+	}
+
+	if len(defaults) == 0 {
 		return p.middlewares
 	}
 
-	recovery := http.NewMiddlewareConfigBuilder().
-		WithPattern("/**").
-		AsFilter().
-		WithMiddleware(middleware.NewRecoveryMiddleware()).
-		Build()
-
-	return append([]core.IMiddlewareConfig{recovery}, p.middlewares...)
+	return append(defaults, p.middlewares...)
 }
 
 // standardControllers returns the app's controllers with the framework defaults

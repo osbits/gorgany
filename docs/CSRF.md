@@ -122,10 +122,32 @@ async function api(url, options = {}) {
 }
 ```
 
-The token does **not** rotate per request. Rotating on every response would invalidate
-the token an in-flight request from another tab is already carrying, so a session keeps
-one token until the session itself is replaced. That is also why step 2 above is cheap:
-most of the time the header you read back is the token you already had.
+The token does **not** rotate per request. Rotating on every response would invalidate the
+token an in-flight request from another tab is already carrying. A session keeps one token
+for as long as it is the same session **and the same principal**, so most of the time the
+header you read back is the token you already had.
+
+The session itself is replaced more often than you would guess, and only one of those
+replacements replaces the token:
+
+- **The session's own rotations keep it.** The framework moves a session onto a fresh
+  identifier once it has been idle past the activity timeout, and again once it is older
+  than the rotation interval. Both carry the existing token across. They happen on a request
+  you did not ask to rotate anything on — you cannot know one occurred — so minting a new
+  token there would reject the next form you submit from a page that was already rendered.
+- **Logging in does.** `Login` replaces the session identifier and mints a **new** token
+  with it. Every secret a pre-login session held was chosen by whoever presented that
+  session; carrying the token across the authentication boundary would leave a party who
+  learned the pre-login token holding a valid token for the authenticated one, which is the
+  whole of the protection this token provides. Logging out ends the session, so the next
+  request starts a new one with a token of its own.
+
+Which makes step 2 of the contract mandatory rather than merely tidy: **re-read
+`X-CSRF-Token` from every response and replace your stored token with it.** The response to
+the login request carries the new token — the framework rewrites the header after the handler
+has replaced the session, so what you read is the token your session actually holds — and a
+client that keeps its pre-login token instead has every mutating request rejected with
+`Invalid CSRF token` until it calls `GET /csrf` again.
 
 ## Sending the token
 

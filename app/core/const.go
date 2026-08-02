@@ -26,7 +26,27 @@ const FullMessageInstanceContextKey = "fullMessageInstance"
 const MessageContextKey = "messageContext"
 const DbSessionContextKey = "dbSession"
 
-const SessionCookieName = "GRG_SESSION_ID"
+// SessionCookieBaseName is the session cookie's name without a prefix.
+//
+// Never read or write the cookie under this name directly. Which of the two names below is
+// in use depends on configuration, and a component that writes one while another reads the
+// other authenticates nobody and reports nothing — auth.SessionCookieName() is the single
+// place that decides.
+const SessionCookieBaseName = "GRG_SESSION_ID"
+
+// HostPrefixedSessionCookieName is the __Host- form of the session cookie, and the default.
+//
+// The prefix is not decoration. A browser accepts a `__Host-` cookie only if it is Secure,
+// has Path=/ and carries no Domain — and, the part that matters here, it will not let any
+// other host set one for this host. An unprefixed name is a token any host under the
+// registrable domain can also write: `sibling.example.com` sends
+// `Set-Cookie: GRG_SESSION_ID=chosen; Domain=example.com; Path=/login`, RFC 6265 serialises
+// the more specific path first, http.Request.Cookie returns the first match, and the
+// framework reads the identifier the sibling picked — even though the app's own cookie is
+// host-only. Assigning an authenticated user to an identifier the client chose is session
+// fixation, and without the prefix an app could not opt out of it.
+const HostPrefixedSessionCookieName = "__Host-" + SessionCookieBaseName
+
 const OneTimeSessionAttributeKey = "_GORGANY_ONE_TIME_PARAMS"
 
 const DefaultKeyInRegistrar = "default"

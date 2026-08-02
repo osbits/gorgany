@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/viper"
 
 	"github.com/osbits/gorgany/v2/app/core"
+	grgErr "github.com/osbits/gorgany/v2/err"
 )
 
 // GcCommand deletes every expired session.
@@ -50,6 +51,15 @@ func (thiz GcCommand) Execute(_ context.Context) {
 		return
 	}
 
-	thiz.SessionStorage.ClearExpiredSessions()
+	// A cron entry judges the run by what it prints and by the exit status, so a sweep that
+	// failed must not print that it cleared anything. The storage used to swallow the error
+	// entirely, which made "the sweep works" and "the sweep has never once succeeded" look
+	// identical from the outside.
+	if err := thiz.SessionStorage.ClearExpiredSessions(); err != nil {
+		grgErr.HandleError(fmt.Errorf("session:gc: %w", err))
+		fmt.Printf("session:gc: expired sessions were NOT cleared: %v\n", err)
+		return
+	}
+
 	fmt.Println("session:gc: expired sessions cleared")
 }

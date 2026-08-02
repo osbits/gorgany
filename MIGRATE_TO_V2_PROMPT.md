@@ -23,11 +23,11 @@ If that finds nothing, stop and say so — this prompt does not apply to this re
 
 ## Ground rules
 
-1. Work through the phases in order. Phases 1–4f are behaviour changes that compile
+1. Work through the phases in order. Phases 1–4m are behaviour changes that compile
    cleanly; Phases 5–8 are signature changes the compiler will find for you. Doing
    the behaviour work first means you are not making judgement calls while chasing
    build errors.
-2. **Do not change the dependency until Phase 5.** Phases 1–4f are audits of the
+2. **Do not change the dependency until Phase 5.** Phases 1–4m are audits of the
    existing code, and you want it building while you do them.
 3. Commit per phase, so a mistake is easy to isolate.
 4. If a grep in this document returns nothing, say so and move on — several of
@@ -38,10 +38,22 @@ If that finds nothing, stop and say so — this prompt does not apply to this re
    passing suite prove nothing about them. You have to watch them run: a scheduled
    job firing (5d), `orm.Create` inserting a row if you use MySQL (Phase 6), and a
    CSRF-protected request succeeding with a token obtained from `/csrf` (4b).
-7. Two changes compile *and vet* cleanly and fail only when the app boots: the
-   driver import (5i) and an app-owned key under `databases.<name>` (5j). **Boot the
-   app** before you call the migration done — `go build ./... && go vet ./...`
-   passing means nothing for either.
+7. Three changes compile *and vet* cleanly and fail only when the app boots: the
+   driver import (5i), an app-owned key under `databases.<name>` (5j), and an
+   absent or weak `auth.jwt.secret` (5n). **Boot the app** before you call the
+   migration done — `go build ./... && go vet ./...` passing means nothing for any
+   of them.
+8. **One change compiles, vets, boots and then quietly logs nobody in: Phase 4h.**
+   `Login` now rotates the session identifier, and a login handler that does not
+   call `http.PublishSession` leaves the rest of the request looking at a session
+   that has been deleted. There is no error anywhere. Log in with `curl` and make a
+   second request on the cookie you were given; that is the only check that catches
+   it.
+9. **Two changes are visible to users on the first request after the deploy, and
+   neither is a code change you can make.** The session cookie is renamed, so every
+   signed-in user is logged out (Phase 4g); and `/public/*` no longer renders SVG,
+   so every `<img src="/public/….svg">` breaks (Phase 4i). Report both to whoever
+   owns the deploy before you finish.
 
 ---
 
@@ -449,6 +461,22 @@ async function api(url, options = {}) {
 }
 ```
 
+**The re-read is mandatory, not an optimisation.** The token does not rotate per request,
+but the session is replaced more often than you would guess and one of those replacements
+replaces the token:
+
+- The session's own rotations — past the idle timeout, and past the rotation interval —
+  **carry the token over**. They happen on a request the client did not ask to rotate
+  anything on, so minting a new token there would reject a form that was already rendered.
+- **Logging in replaces it.** `Login` rotates the session and mints a new token, because
+  every secret a pre-login session held was chosen by whoever presented that session. The
+  login response carries the replacement in `X-CSRF-Token`.
+
+So a session keeps one token for as long as it is the same session **and the same
+principal**. A client that caches its pre-login token has every mutating request rejected
+with `Invalid CSRF token` until it calls `GET /csrf` again — check specifically that yours
+re-reads the header on the **login** response, not only on ordinary ones.
+
 For a server-rendered form, put the token in a hidden `csrf_token` field, sourced from
 `CsrfService.GetCSRFToken`.
 
@@ -658,6 +686,445 @@ curl -s http://localhost:8080/api/<a-dto-route> | jq -S . > after.json
 diff before.json after.json
 ```
 
+## Phase 4g — The session cookie is renamed: every user is logged out (behaviour, security)
+
+**What changed.** The session cookie is now `__Host-GRG_SESSION_ID`, not
+`GRG_SESSION_ID`. The constant `core.SessionCookieName` is deleted (that part is Phase 5l).
+
+**Why it matters.** A browser holding the old cookie sends a name the framework no longer
+reads, so **on the first request after the deploy every signed-in user is logged out** and
+starts a fresh anonymous session. There is deliberately no fallback to the old name. This
+is not a code change you can make; it is a deploy you have to plan.
+
+The prefix is what stops cookie tossing: an unprefixed name is a token any host under the
+registrable domain can also write, even when the app's own cookie is host-only, and the
+framework then reads the identifier that host chose. A browser refuses to let any other
+host set a `__Host-` cookie for yours.
+
+**Find anything that names the cookie outside Go:**
+
+```bash
+grep -rn 'GRG_SESSION_ID' --include='*.js' --include='*.ts' --include='*.vue' \
+  --include='*.yaml' --include='*.yml' --include='*.conf' --include='*.tf' \
+  --include='Dockerfile*' .
+```
+
+Check three things that produce no compile error and no test failure:
+
+1. A reverse proxy, CDN or WAF rule keyed on the cookie name — cache-bypass rules, sticky
+   sessions, exemptions. An exact match on `GRG_SESSION_ID` will not match the new name.
+2. A synthetic monitor or smoke test that sets the cookie by name.
+3. Your own config:
+
+```bash
+grep -rn 'auth.session.cookie' config/
+```
+
+`auth.session.cookie.secure: false` (the documented local-HTTP setting) and
+`auth.session.cookie.domain: <anything>` each keep the **old** name, because a `__Host-`
+cookie must be Secure and may not carry a Domain. If either is set in production you keep
+the old name, log nobody out, and keep the exposure. **Do not set the domain purely to
+avoid the logout** — set it only if you genuinely share a session across subdomains.
+
+Note that your local development cookie name will differ from production if you use
+`secure: false` locally. That is correct: a `__Host-` cookie that is not Secure is
+discarded by the browser silently, which would make every local request look logged-out
+with nothing reporting an error.
+
+**Report:** whether you are on the prefixed or the unprefixed name in each environment,
+and the list of infrastructure rules that need the new name. Then tell whoever owns the
+deploy that it ends every session.
+
+---
+
+## Phase 4h — Your login handler must republish the session (compile-clean, security)
+
+**What changed.** `StandardAuthStrategy.Login` now revokes the session the client
+presented, mints a fresh identifier, and issues a new CSRF token. It used to assign the
+user id to whatever session arrived.
+
+**Why it matters.** This is the most dangerous item in this document, because **it
+compiles.** The session your request resolved on the way in no longer exists when `Login`
+returns, and two places cache it for the life of the request: the message's session scope,
+and the message context — which `ResolveSessionId` consults *before* the cookie. A handler
+that does not republish leaves `message.Session().Get()` and `IsLoggedIn` looking at a
+deleted session, so a login that fully succeeded is indistinguishable from one that failed.
+Your app builds, your tests may well pass, and nobody can log in.
+
+**Find every login handler:**
+
+```bash
+grep -rn '\.Login(' --include='*.go' . | grep -v '_test.go'
+```
+
+For each, add one line:
+
+```go
+// BEFORE
+_, err := strategy.Login(user, message.Context())
+if err != nil { /* ... */ }
+message.Response().Redirect(homeUrl, 301)
+
+// AFTER
+session, err := strategy.Login(user, message.Context())
+if err != nil { /* ... */ }
+
+grghttp.PublishSession(message, session) // github.com/osbits/gorgany/v2/http
+
+message.Response().Redirect(homeUrl, 301)
+```
+
+`http.PublishSession` installs the session on the session scope **and** the message
+context, drops the request's memoised identity, and rewrites `X-CSRF-Token` from the new
+session's token. It replaces any hand-rolled
+`message.Session().(core.IEditableSessionScope).Set(...)`, which covered only the first of
+those.
+
+**Then delete the already-authenticated guard from your POST handler:**
+
+```bash
+grep -rn -B 4 -A 4 'IsLoggedIn(' --include='*.go' . | grep -v '_test.go'
+```
+
+```go
+// DELETE this from the POST handler
+if strategy.IsLoggedIn(message.Context()) {
+    message.Response().Redirect(homeUrl, 301)
+    return
+}
+```
+
+A login POST answered with a redirect is a login POST whose credentials were never
+compared to anything: whoever the session already belonged to keeps it and the poster is
+handed that identity. Turned around it is an attack — a party who can plant the session
+cookie plants their own *signed-in* session, the victim's login bounces off the guard,
+their password is never checked, and they browse inside the planted account while the
+planter holds a live cookie for the same session. It is safe to remove now precisely
+because `Login` replaces the session rather than reusing it.
+
+**Keep the guard on the GET handler**, and make sure it `return`s after redirecting. A GET
+carries no credentials, so there is nothing to verify and nothing to donate.
+
+**Do not** end the session on a failed login attempt. That would hand anybody able to make
+a browser post the form a remote logout with no credentials at all.
+
+**One more thing to check — clients and tests that read `Set-Cookie`:**
+
+```bash
+grep -rn 'Cookies()\[0\]\|Set-Cookie' --include='*.go' --include='*.js' --include='*.ts' .
+```
+
+A login response now carries **two** `Set-Cookie` headers for the session when the request
+arrived without one (the middleware starts a session, the login rotates it). Browsers and
+real cookie jars keep the last. Anything taking the **first** picks up an identifier that
+has just been revoked.
+
+**Verify at runtime, not by building:**
+
+```bash
+curl -s -c /tmp/j -X POST -d 'username=u&password=p' http://localhost:8080/login >/dev/null
+curl -i -b /tmp/j http://localhost:8080/<a-route-requiring-auth>
+# 200 = correct. 401 or a redirect to /login = you are missing PublishSession.
+```
+
+---
+
+## Phase 4i — SVG and HTML under `resource/public` (behaviour, security)
+
+**What changed.** Every `/public/*` response now carries `X-Content-Type-Options: nosniff`
+and `Content-Disposition: attachment`, and the `Content-Type` is passed through only for a
+render-safe allowlist: `image/*` **except SVG**, `audio/*`, `video/*`, `font/*`,
+`text/plain`, `text/css`, `text/csv`, JavaScript, `application/json`, `application/pdf`.
+Everything else — `text/html` and `image/svg+xml` included — is served as
+`application/octet-stream`.
+
+**Why it matters.** `Content-Disposition` does not apply to a subresource load, so
+stylesheets, scripts, raster images and fonts keep loading. The retyping *does* apply, and
+**SVG is the casualty**: an SVG answered as `application/octet-stream` under `nosniff` is
+one the browser refuses to render.
+
+**Find every broken icon:**
+
+```bash
+find resource/public -name '*.svg'
+
+grep -rn 'public/.*\.svg' --include='*.html' --include='*.amber' --include='*.tmpl' \
+  --include='*.css' --include='*.scss' --include='*.js' --include='*.ts' --include='*.vue' .
+```
+
+Every hit is an `<img>`, a `<use href>` or a CSS `url()` that stops rendering. Three ways
+out, in order of preference:
+
+1. **Move app-authored assets out of the upload root.** Serve them from a controller of
+   your own over an `assets/` directory, or from a CDN. This is the right answer
+   regardless of this change: the directory users can upload into is not where your logo
+   belongs.
+2. **Inline the SVG** as an `<svg>` element in the template.
+3. **Use a raster fallback** if the asset is decorative.
+
+Adding `image/svg+xml` back is not on the list. There is no way to serve your SVG as
+`image/svg+xml` from this endpoint that does not also serve an *uploaded* SVG that way,
+and an SVG served from your origin runs script on it.
+
+**Also find HTML under the public root:**
+
+```bash
+find resource/public -name '*.html' -o -name '*.htm'
+```
+
+These now download rather than opening. Serve app-authored HTML through a view or a
+dedicated route.
+
+**Verify:**
+
+```bash
+curl -sI http://localhost:8080/public/<some-file> \
+  | grep -iE 'content-type|content-disposition|x-content-type-options'
+```
+
+---
+
+## Phase 4j — Upload types and stored extensions (behaviour, security)
+
+**What changed.** An upload's stored extension now comes from what its bytes sniff to
+(`http.DetectContentType` on the first 512 bytes), looked up in an allowlist, and a type
+with no entry is **refused**. The extension used to be `filepath.Ext(clientFilename)`
+appended verbatim, and the mime allowlist was applied to `Content-Type` on the part — a
+value the uploading client writes. The DTO-binding path (a `core.IFile` field on a DTO) had
+no content check at all.
+
+**Why it matters.** Uploads that used to be accepted can now be rejected, and accepted ones
+are stored under a different name.
+
+**Find what your app accepts:**
+
+```bash
+grep -rn 'FormFile\|GetFiles\|core.IFile\|NewMultipartFile' --include='*.go' .
+grep -rn 'allowedMimes\|allowedTypes' config/
+
+# What extensions are actually on disk today
+ls resource/public | sed 's/.*\.//' | sort | uniq -c | sort -rn
+```
+
+The built-in table covers PNG, JPEG, GIF, WebP, BMP, TIFF, ICO, PDF, ZIP, GZ, RAR, OGG,
+WASM, WOFF, TTF, MP3, WAV, AIFF, MIDI, AU, MP4, WebM, AVI and `text/plain`, plus
+`application/octet-stream` → `.bin`. That last entry is the one that keeps working apps
+working: any binary format Go has no signature for is stored as `.bin` rather than
+rejected, and `.bin` is inert.
+
+**What will surprise you:**
+
+- A `.docx`, `.xlsx`, `.pptx` or `.jar` sniffs as `application/zip` and is stored as
+  `.zip` — accepted, but under an extension that is not the one the user uploaded. The
+  sniffer cannot tell zip-based formats apart.
+- Anything sniffing to `text/html`, `image/svg+xml` or an XML type is **rejected**.
+- The stored extension no longer matches the uploaded one for anything the sniffer
+  disagrees with the client about.
+
+**If you need more types**, configure them — and note that setting this key **replaces the
+built-in table wholesale**, so restate everything you still want:
+
+```yaml
+http:
+  upload:
+    allowedTypes:
+      image/png: .png
+      image/jpeg: .jpg
+      application/pdf: .pdf
+      application/zip: .zip
+```
+
+A configured value that is not an extension (anything but a dot and ASCII alphanumerics,
+or over 16 characters) is dropped rather than obeyed — the extension is joined onto a
+filesystem path.
+
+Overriding `application/zip` to `.docx` is possible, but it renames *every* zip-based
+upload to `.docx` — the sniffer cannot distinguish docx, xlsx, pptx, jar and a plain
+archive. If several of them matter, store the client's filename in your own column and do
+not rely on the stored name.
+
+**If your own code applies an allowlist**, switch it to the sniffed type:
+
+```go
+// BEFORE — the client wrote this
+if fh.Header.Get("Content-Type") != "application/pdf" { /* refuse */ }
+
+// AFTER — this is what the bytes are
+if file.(*model.MultipartFile).MediaType() != "application/pdf" { /* refuse */ }
+```
+
+**One API change to look for:**
+
+```bash
+grep -rn '\.Close()' --include='*.go' . | grep -i 'file\|upload'
+```
+
+`MultipartFile.Close()` no longer deletes a file that `Write` has published — use
+`Delete()` for that. (It never actually deleted the temp copy either, so nothing you
+relied on is being taken away; both halves were broken.) Temp copies are now released
+automatically when the request ends.
+
+**Verify:** upload one of every type your users actually send, and look at the resulting
+filename.
+
+---
+
+## Phase 4k — Request bodies are capped (behaviour)
+
+**What changed.** `http.MaxBytesReader` now caps every request body, at the server
+boundary and again per request before any middleware, handler or parser reads it. Nothing
+capped a body before — only `Request().Body()` had a limit of its own, so `BodyReader()`,
+`ParseForm` and any hand-rolled streaming had none, and the multipart parser spilled
+unbounded bytes to the OS temp directory before checking any size.
+
+The ceiling derives from your upload budget so the two cannot disagree:
+
+```
+max(32 MB, http.upload.maxMultipartSize) + 1 MB framing allowance
+```
+
+**Find code that reads a large body:**
+
+```bash
+grep -rn 'BodyReader()\|io.ReadAll\|ParseForm\|GetMultipartFormValues' --include='*.go' .
+grep -rn 'maxMultipartSize\|maxFileSize\|maxSizeMB' config/
+```
+
+If you accept uploads larger than 32 MB, or stream something large that is not an upload,
+raise the limit:
+
+```yaml
+http:
+  upload:
+    maxMultipartSize: 104857600      # raises the derived ceiling with it
+  security:
+    body:
+      maxRequestBytes: 209715200     # or override the derivation outright, in bytes
+```
+
+**If you call `GetMultipartFormValues` yourself, check for nil.** Nil now means "malformed,
+or over a limit" and must be treated as a client error. The framework's own caller ranged
+straight over `form.File` on that nil pointer, which is why any client could panic any
+multipart endpoint with a truncated body.
+
+**Verify:**
+
+```bash
+head -c 40000000 /dev/urandom | curl -si -X POST --data-binary @- \
+  http://localhost:8080/<a-body-route> | head -1
+```
+
+---
+
+## Phase 4l — Mail rejects CR/LF in a header value (behaviour, security)
+
+**What changed.** `MailService.buildBody` rejects a CR or LF in the sender, the subject,
+any recipient, any CC or BCC entry, and any attachment file name or content id, and `Send`
+fails rather than delivering. The generated message also uses CRLF throughout and RFC
+2047-encodes non-ASCII header text.
+
+**Why it matters.** Headers were assembled with `fmt.Sprintf` and no filtering, so a
+newline in a subject produced *extra headers* and, after a blank line, an entire
+replacement body — sent from your authenticated SMTP identity with your SPF and DKIM
+vouching for it. Any place user input reaches a subject was a vector.
+
+**Find where user input reaches a header:**
+
+```bash
+grep -rn 'GetSubject\|SetSubject\|Subject' --include='*.go' . | grep -v '_test.go'
+grep -rn 'mail\.\|MailService\|core.IMail' --include='*.go' . | grep -v '_test.go'
+```
+
+For each, sanitise at the boundary where you can report it to the user, rather than
+letting the mailer refuse the send:
+
+```go
+// BEFORE
+subject := fmt.Sprintf("New message from %s", form.Name)
+
+// AFTER
+subject := fmt.Sprintf("New message from %s", strings.Join(strings.Fields(form.Name), " "))
+```
+
+Collapsing newlines to spaces is usually right. Multi-line values were never delivered as
+intended anyway — they were delivered as extra headers.
+
+**Then find tests that assert on raw message bytes:**
+
+```bash
+grep -rln 'MIME-version\|Content-Transfer-Encoding' --include='*_test.go' --include='*.golden' .
+```
+
+Line endings are CRLF now, and a non-ASCII subject appears as `=?utf-8?q?…?=`. Assert on
+the decoded value with `mime.WordDecoder.DecodeHeader` rather than on the raw header.
+
+---
+
+## Phase 4m — Security headers and framing (behaviour)
+
+**What changed.** `middleware.SecurityHeadersMiddleware` is registered automatically as a
+`/**` filter. The framework emitted no security headers at all before.
+
+| Header | Default |
+|---|---|
+| `X-Content-Type-Options` | `nosniff` (not configurable) |
+| `X-Frame-Options` | `SAMEORIGIN` |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `Strict-Transport-Security` | `max-age=31536000`, TLS responses only |
+| `Content-Security-Policy` | **not sent** |
+
+**The one that can break a working page is `X-Frame-Options: SAMEORIGIN`.**
+
+```bash
+grep -rn '<iframe' --include='*.html' --include='*.amber' --include='*.vue' .
+```
+
+If a third party embeds your app in a frame, set `FrameOptions: "off"` and manage framing
+with a CSP `frame-ancestors` directive instead:
+
+```go
+routeProvider.ConfigureSecurityHeaders(middleware.SecurityHeadersOptions{
+    FrameOptions:          "off",
+    ContentSecurityPolicy: "frame-ancestors 'self' https://partner.example.com",
+})
+```
+
+**The second thing to check is templates that render something other than HTML.**
+`HTTPViewScope.Render` now sets `Content-Type: text/html; charset=utf-8` when nothing has
+chosen one — it used to send no type at all and let the browser guess, which `nosniff` now
+forbids.
+
+```bash
+grep -rn 'View().Render' --include='*.go' . | grep -v '_test.go'
+```
+
+A sitemap, an RSS feed or a plain-text body rendered through a template needs its type set
+first, and that choice still wins:
+
+```go
+message.Response().SetHeader("Content-Type", "application/xml; charset=utf-8")
+message.View().Render("sitemap", data)
+```
+
+**Do not adopt a CSP as part of this upgrade.** There is deliberately no default one — a
+policy worth having forbids inline script and style, and a server-rendered app routinely
+has both. Measure first, in a separate piece of work:
+
+```go
+routeProvider.ConfigureSecurityHeaders(middleware.SecurityHeadersOptions{
+    ContentSecurityPolicyReportOnly: middleware.RecommendedContentSecurityPolicy,
+})
+```
+
+**Verify:**
+
+```bash
+curl -sI http://localhost:8080/ \
+  | grep -iE 'x-content-type-options|x-frame-options|referrer-policy'
+```
+
+---
+
 ## Phase 5 — Bump the dependency and let the compiler drive
 
 ```bash
@@ -666,8 +1133,15 @@ diff before.json after.json
 # "version v2.0.0 invalid: should be v0 or v1, not v2".
 #
 # Rewrite every import first, then swap the requirement.
-grep -rl '"github.com/osbits/gorgany/v2' --include="*.go" . \
-  | xargs sed -i '' 's|"github.com/osbits/gorgany/v2/|"github.com/osbits/gorgany/v2/|g; s|"github.com/osbits/gorgany/v2"|"github.com/osbits/gorgany/v2"|g'
+#
+# Guard: the next line must print nothing. The rewrite is not idempotent — running it on a
+# tree already on /v2 produces github.com/osbits/gorgany/v2/v2.
+grep -rn '"github.com/osbits/gorgany/v2' --include="*.go" .
+
+grep -rl '"github.com/osbits/gorgany' --include="*.go" . \
+  | xargs sed -i '' \
+      -e 's|"github.com/osbits/gorgany/|"github.com/osbits/gorgany/v2/|g' \
+      -e 's|"github.com/osbits/gorgany"|"github.com/osbits/gorgany/v2"|g'
 gofmt -w .
 
 go mod edit -droprequire=github.com/osbits/gorgany
@@ -980,6 +1454,242 @@ contents are passed through untouched, or out from under `databases.<name>` enti
 This also **compiles and vets cleanly** — it is a `Register`-time panic — so it is another
 boot check rather than a build one.
 
+### 5k. `undefined: core.SessionCookieName`
+
+The constant is gone. Every read and every write of the session cookie has to go through
+the resolver, because which of two names is in use depends on configuration — see Phase 4g.
+
+```go
+// BEFORE
+cookie := messageContext.GetCookieManager().GetCookie(core.SessionCookieName)
+
+messageContext.GetCookieManager().SetCookie(&http.Cookie{
+    Name:     core.SessionCookieName,
+    Value:    session.GetId(),
+    Path:     "/",
+    MaxAge:   maxAge,
+    Secure:   auth.SessionCookieSecure(),
+    HttpOnly: true,
+    SameSite: http.SameSiteLaxMode,
+    Domain:   viper.GetString("auth.session.cookie.domain"),
+})
+
+// AFTER
+cookie := messageContext.GetCookieManager().GetCookie(auth.SessionCookieName())
+
+messageContext.GetCookieManager().SetCookie(
+    auth.NewSessionCookie(session.GetId(), maxAge, http.SameSiteLaxMode))
+```
+
+Use `auth.NewSessionCookie` rather than building the struct yourself. The name, `Secure`
+and `Domain` are one decision, not three: a `__Host-` name paired with a `Domain` produces
+a cookie no browser keeps, with no diagnostic anywhere. `maxAge < 0` expires it.
+
+The constant was deliberately not left as a deprecated alias — code reading the cookie
+under a hard-coded name would still compile and would silently read the wrong cookie.
+
+`core.SessionCookieBaseName` (`"GRG_SESSION_ID"`) and
+`core.HostPrefixedSessionCookieName` exist if you need to name the two forms, for example
+in a test. Do not use either to read or write the cookie.
+
+### 5l. `ISessionStorage` and `Logout` return errors
+
+If you implement `core.ISessionStorage`, four mutators gained an `error` and the read
+gained one:
+
+```go
+// BEFORE
+ClearExpiredSessions()
+AddSession(session ISession)
+DeleteSession(session ISession)
+DeleteSessionById(id string)
+GetSessionById(id string) ISession
+
+// AFTER — the four lifetime/timeout methods are unchanged
+ClearExpiredSessions() error
+AddSession(session ISession) error
+DeleteSession(session ISession) error
+DeleteSessionById(id string) error
+GetSessionById(id string) (ISession, error)
+```
+
+Three rules the compiler will not enforce:
+
+- **Deleting a session the store does not hold is not an error.** Revocation is
+  idempotent; return `nil`.
+- **`GetSessionById` returns `(nil, nil)` for "no such session" and `(nil, err)` for "the
+  lookup failed".** Do not collapse the second into the first — "the store is unreachable"
+  and "this visitor has no cookie" lead to different decisions.
+- **`AddSession` must refuse to recreate a session the store no longer holds.** An
+  identifier that has been revoked and can still be written back is a revocation bypass.
+
+`core.IAuthStrategy.Logout` gained an error too:
+
+```go
+// BEFORE
+Logout(ctx context.Context)
+// AFTER
+Logout(ctx context.Context) error
+```
+
+If you implement it: return an error when the server-side session could not be revoked,
+and **do not expire the session cookie in that case** — the session is still live, and a
+client that has thrown its cookie away cannot ask you to try again.
+
+If you call it, the caller must say so:
+
+```go
+// BEFORE — fail-open: tells the user they are logged out of a live session
+strategy.Logout(message.Context())
+message.Response().Redirect(loginUrl, http.StatusTemporaryRedirect)
+
+// AFTER
+if err := strategy.Logout(message.Context()); err != nil {
+    grgerr.HandleError(err) // github.com/osbits/gorgany/v2/err
+    message.RedirectWithFlash(loginUrl, http.StatusTemporaryRedirect, map[string]any{
+        "error": "We could not end your session. You are still signed in; please try again.",
+    })
+    return
+}
+message.Response().Redirect(loginUrl, http.StatusTemporaryRedirect)
+```
+
+**`core.ISession` and `core.ISimpleStorage` are deliberately unchanged.** `SetUserId`,
+`SetExpiry`, `SetLastActivity`, `GetItem`, `SetItem`, `ClearItem` and `ClearItems` stay
+void, so your request scopes, view scopes and test doubles keep compiling. If you
+implement a session whose write-through can fail, remember the failure and surface it at
+the next operation that *can* report one — the storage call, or `Login`/`Logout`. And
+synchronise every field two requests can touch: `GetUserId` feeds authorization decisions,
+and a login overwrites it on a session other requests are already authorizing against.
+
+Two smaller signature changes in the same area, if you touch them:
+
+```go
+// auth.ISessionRepository
+DeleteById(id string) (bool, error)     // was: error
+// auth.DbSessionMediator
+DeleteSession(id string) (bool, error)  // was: error
+```
+
+Optional and additive, worth implementing if you have your own storage:
+
+```go
+type ISessionRevoker interface {
+	RevokeSession(id string) (bool, error)  // (false, nil) = there was nothing to revoke
+}
+```
+
+Session rotation uses it to refuse to carry a user id over from a session somebody already
+revoked. A storage that does not implement it gets the previous, unconditional rotation
+behaviour.
+
+Finally, if your app persists a session entity itself: hand the ORM a **detached copy**
+(`auth.DbSessionEntity.Snapshot()`), never a shared one. Locking the accessors is not
+enough — the ORM copies the struct through `reflect` and the driver marshals the same
+attribute map inside the round trip, both outside anything the session's mutex guards, and
+a concurrent map iteration is a runtime fatal that takes the process down.
+
+### 5m. `undefined: middleware.AccessCheckerMiddleware` / `core.HttpAccessCommand` / `core.HttpFilterCommand`
+
+All three are deleted.
+
+```bash
+grep -rn 'AccessCheckerMiddleware\|HttpAccessCommand\|HttpFilterCommand\|IsAccessAllowed\|AllowFilterFields' \
+  --include='*.go' .
+```
+
+**If you mounted `AccessCheckerMiddleware`, stop and read this.** It was an authorization
+filter that enforced nothing: the only code that could supply it a decision was commented
+out, so it logged a warning and called the next handler on **every** request, including
+unauthenticated ones. Those routes have had no authorization on them for as long as the
+mount existed. Deleting the mount changes no runtime behaviour. Report this to whoever
+owns the application before you carry on — it may need an incident review, not just a
+code change.
+
+**If you implemented `core.HttpFilterCommand`**, its `AllowFilterFields` was never called
+by anything. If it named the fields you intended to be filterable, that restriction was
+never in effect and query-string filters accepted any real column. Express it through
+`model.AccessControl.ValidateFilterAccess`, reached via `model.NewFilterWithAccess`, which
+*is* consulted.
+
+To migrate:
+
+1. Delete the mount and the interface assertions.
+2. Delete or repurpose the implementations — they were dead code. Keep a `FilterBuilder`
+   method if your own code calls it directly; just drop the `core.HttpAccessCommand`
+   assertion.
+3. Put the authorization somewhere that runs. There is no drop-in replacement,
+   deliberately:
+
+```go
+type AdminOnly struct{}
+
+func (AdminOnly) Handle(next func(core.HttpMessage)) func(core.HttpMessage) {
+    return func(message core.HttpMessage) {
+        if !allowed(message.Context()) {
+            // Every route, not just API ones. Write a response and do NOT call next.
+            grghttp.WriteNegotiatedError(message, core.ForbiddenHttpStatus, "Forbidden")
+            return
+        }
+        next(message)
+    }
+}
+```
+
+Add a test asserting that a request from an unauthorized caller does not reach the
+handler. That assertion is what would have caught the removed middleware.
+
+`core.IQueryBuilder` is unaffected.
+
+### 5n. The app panics at boot: `refusing to boot: … auth.jwt.secret`
+
+Compiles and vets cleanly; fails at boot, in **every** execution mode including the CLI.
+
+Nothing validated `auth.jwt.secret` before. An app could boot with the key absent, empty,
+a YAML null, whitespace, an unresolved `${JWT_SECRET}` literal, or short enough to guess,
+and then sign and verify tokens with it — so whoever knew the key could mint a token
+naming any user and role.
+
+```bash
+# Every environment. A missed one is an outage, not a warning.
+grep -rn 'JWT_SECRET' .env* deploy/ k8s/ docker-compose*.yml 2>/dev/null
+printf '%s' "$JWT_SECRET" | wc -c    # must be >= 32
+```
+
+The rules: at least 32 bytes, not whitespace, not a literal `${VAR}`, and not padding (a
+32-byte value with fewer than 8 distinct bytes is rejected). Generate one:
+
+```bash
+openssl rand -base64 48
+```
+
+```yaml
+auth:
+  jwt:
+    secret: ${JWT_SECRET}
+    lifeTime: 3600
+```
+
+Two things to know:
+
+- **An app that does not use token authentication should have no `auth.jwt` section at
+  all.** The configuration is what answers "is JWT in use here", and an app declaring no
+  `auth.jwt.*` key is not made to invent a secret in order to boot. It is safe without one
+  because every JWT entry point refuses an unusable key at the point of use — including
+  `IsRequestMadeWithStrategy`, which is how an app that never configured JWT could
+  otherwise be dragged into authenticating a bearer token the caller signed themselves.
+- **Rotating the secret invalidates every outstanding token.** Expect clients to
+  re-authenticate.
+
+Tests that mint tokens with a short secret now get an error from `GenerateJwt` and `false`
+from `ValidateJwt`. Give them 32 bytes.
+
+The boot error for an unresolved `${VAR}` on a security-relevant key also changed its
+advice. It used to say "remove the placeholder so the framework's secure default applies",
+which is true for `auth.session.cookie.secure` and **actively dangerous** for
+`auth.jwt.secret`, which has no default — following it converted a caught boot failure
+into a silent authentication bypass. If you ever acted on that advice, check the key.
+
 Then:
 
 ```bash
@@ -987,6 +1697,9 @@ go build ./... && go vet ./...
 ```
 
 Commit: `Adopt gorgany v2 API signatures`.
+
+Then **boot the app**, because 5i, 5j and 5n all pass `build` and `vet` and fail only when
+the process starts.
 
 ---
 
@@ -1373,9 +2086,59 @@ grep -rn '\${' config/
 curl -s -X POST -H 'Content-Type: application/json' --data '{}' \
   http://localhost:8080/api/<a-validated-route>
 
-# 15. The app BOOTS. Two changes compile and vet cleanly and fail only here: the
-#     driver import (5i) and an app-owned key under databases.<name> (5j).
+# 15. The app BOOTS. Three changes compile and vet cleanly and fail only here: the
+#     driver import (5i), an app-owned key under databases.<name> (5j), and the
+#     JWT secret (5n).
 go run cmd/server.go   # or however you start it — read the first 20 lines of output
+```
+
+The security round (Phases 4g–4m and 5k–5n). None of these is a build error; several
+change what a user sees on the first request after the deploy.
+
+```bash
+# 17. A login authenticates, and the NEXT request is still authenticated.
+#     This is the Phase 4h check and the single most important one in this list:
+#     a missing PublishSession builds, boots, and logs nobody in.
+curl -s -c /tmp/j -X POST -d 'username=u&password=p' http://localhost:8080/login >/dev/null
+curl -i -b /tmp/j http://localhost:8080/<a-route-requiring-auth>
+# 200 = correct. 401 or a redirect to /login = PublishSession is missing.
+
+# 18. The session cookie is the prefixed one — or you know why it is not.
+curl -si -X POST -d 'username=u&password=p' http://localhost:8080/login | grep -i 'set-cookie'
+# Expect __Host-GRG_SESSION_ID, Secure, HttpOnly, Path=/, and NO Domain.
+# Two Set-Cookie headers for the session is correct; a client must take the LAST.
+
+# 19. The pre-login identifier is dead, and logout revokes.
+#     Capture the cookie before logging in, log in, then replay the old one.
+#     Then log out and replay the post-login one. Neither may authenticate.
+
+# 20. The CSRF token on the login response is the post-login one, and the client
+#     re-reads it. A client that keeps its pre-login token has every mutating
+#     request rejected with "Invalid CSRF token".
+curl -si -c /tmp/j -X POST -d 'username=u&password=p' http://localhost:8080/login \
+  | grep -i 'x-csrf-token'
+
+# 21. Security headers are on an ordinary response.
+curl -sI http://localhost:8080/ \
+  | grep -iE 'x-content-type-options|x-frame-options|referrer-policy'
+
+# 22. /public/* is inert, and no SVG is referenced from it.
+curl -sI http://localhost:8080/public/<some-file> \
+  | grep -iE 'content-type|content-disposition|x-content-type-options'
+find resource/public -name '*.svg'
+grep -rn 'public/.*\.svg' --include='*.html' --include='*.amber' --include='*.css' \
+  --include='*.js' --include='*.ts' --include='*.vue' .
+
+# 23. An upload of every type your users actually send still succeeds, and check
+#     the extension it was stored under — it now comes from the content.
+ls -lt resource/public | head
+
+# 24. An oversize body is refused, and a malformed multipart body is a 400 rather
+#     than a dropped connection.
+head -c 40000000 /dev/urandom | curl -si -X POST --data-binary @- \
+  http://localhost:8080/<a-body-route> | head -1
+
+# 25. A mail with an ordinary subject still sends, against the real mailer.
 ```
 
 If you use MySQL:
@@ -1418,3 +2181,23 @@ When you finish, report:
 9. Every response shape that moved because of `omitempty` or an embed collision
    (4f) — in particular any `time.Time` field tagged `omitempty`, whose key
    reappears.
+10. **Whether you observed a login working end to end** (4h) — logged in with
+    `curl`, then made a second authenticated request on the cookie you were given.
+    Say plainly if you did not. A green build proves nothing here.
+11. **The deploy-time consequences, addressed to whoever owns the deploy**, not
+    buried in a code summary:
+    - Every signed-in user is logged out on the first request after the deploy
+      (4g), unless you found `auth.session.cookie.secure: false` or
+      `auth.session.cookie.domain` set in that environment — say which.
+    - Every SVG served from `/public/*` stops rendering (4i). List the files and
+      the references you found, and what you did about each.
+    - The infrastructure rules that name `GRG_SESSION_ID` and need the new name.
+12. Whether `auth.jwt.secret` is at least 32 bytes **in every environment** (5n),
+    and that rotating it will force every outstanding token to be re-issued.
+13. Whether you found `AccessCheckerMiddleware` mounted anywhere (5m). If you did,
+    say so prominently and separately: those routes had no authorization on them
+    for as long as the mount existed, which is a finding about the past, not a
+    migration task.
+14. Whether any upload type your users send is now rejected or stored under a
+    different extension (4j), and whether you configured
+    `http.upload.allowedTypes`.

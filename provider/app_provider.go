@@ -6,6 +6,7 @@ import (
 	"github.com/osbits/gorgany/v2/app/core"
 	"github.com/osbits/gorgany/v2/auth"
 	"github.com/osbits/gorgany/v2/err"
+	"github.com/osbits/gorgany/v2/log"
 	"github.com/osbits/gorgany/v2/model"
 	"github.com/osbits/gorgany/v2/service"
 	"github.com/osbits/gorgany/v2/validator"
@@ -73,6 +74,25 @@ func (a AppProvider) Register(container core.IContainer) {
 }
 
 func (a AppProvider) Boot(container core.IContainer) {
+	// The JWT configuration is checked here, immediately before the strategy that depends on
+	// it is armed, and the check panics rather than logging.
+	//
+	// This provider is where JwtAuthStrategy gets registered, so a boot that reaches the
+	// registration with an unusable signing key is a boot that must not continue: every
+	// alternative — a warning, a degraded mode, a strategy that fails per request — leaves an
+	// operator who mistyped one environment variable running a server that accepts tokens
+	// anyone can mint. Both execution modes come through here (ServerApp and ConsoleApp share
+	// Bootstrapper.Bootstrap), so the CLI cannot be the one place a bad key is tolerated —
+	// which matters because migrations and jobs run under the same configuration as the
+	// server and, once past boot, the same code reads the same key.
+	//
+	// A panic is the framework's existing boot-failure mechanism; err.HandleError* only logs,
+	// and a logged line at startup is exactly what nobody reads.
+	// (Named jwtConfigErr because `err` is the error package in this file.)
+	if jwtConfigErr := ValidateJwtConfig(); jwtConfigErr != nil {
+		log.Log().Panicf("gorgany: refusing to boot: %v", jwtConfigErr)
+	}
+
 	container.Invoke(func(authContext core.IAuthContext) {
 		stast := &auth.StandardAuthStrategy{}
 		container.Make(stast)

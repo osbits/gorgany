@@ -71,8 +71,8 @@ func TestTheSweepRemovesOnlyExpiredSessions(t *testing.T) {
 
 	storage.ClearExpiredSessions()
 
-	assert.NotNil(t, storage.GetSessionById("fresh"))
-	assert.Nil(t, storage.GetSessionById("stale"))
+	assert.NotNil(t, sessionById(t, storage, "fresh"))
+	assert.Nil(t, sessionById(t, storage, "stale"))
 }
 
 // TestExpiryIsReadableWhileItIsWritten is the field-level half. A time.Time is three words,
@@ -113,13 +113,20 @@ func TestADbSweepFailureIsReported(t *testing.T) {
 	failing := &failingSessionRepository{}
 	storage := &DbSessionStorage{mediator: NewDbSessionMediator(failing)}
 
-	require.NotPanics(t, func() { storage.ClearExpiredSessions() })
+	var err error
+	require.NotPanics(t, func() { err = storage.ClearExpiredSessions() })
 	require.True(t, failing.clearCalled, "the sweep must reach the repository")
 
-	assert.Contains(t, logged.text(), "expired sessions",
-		"a sweep that failed must not look like one that worked")
-	assert.Contains(t, logged.text(), assert.AnError.Error(),
-		"the underlying cause has to survive to the log")
+	require.Error(t, err, "a sweep that failed must not look like one that worked")
+	assert.ErrorIs(t, err, assert.AnError, "the underlying cause has to survive")
+
+	// The failure is returned rather than logged here, which is a change from the first
+	// version of this fix: the storage has two callers — the scheduled job and `session:gc`
+	// — and both of them can report it, the job through its own error and the command
+	// through what it prints and does not print. Logging it here and returning nothing left
+	// the job exiting 0 on a sweep that had never once succeeded.
+	assert.Empty(t, logged.text(),
+		"the caller reports the failure, so the storage must not also log it")
 }
 
 // TestASuccessfulSweepIsQuiet — the report must be the failure, not every sweep. A line per
@@ -128,8 +135,8 @@ func TestASuccessfulSweepIsQuiet(t *testing.T) {
 	logged := captureTheLog(t)
 
 	storage := &DbSessionStorage{mediator: NewDbSessionMediator(&succeedingSessionRepository{})}
-	storage.ClearExpiredSessions()
 
+	assert.NoError(t, storage.ClearExpiredSessions())
 	assert.Empty(t, logged.text())
 }
 
@@ -248,7 +255,7 @@ func TestTheMemoryStoreBoundsItselfWithNoSchedulerWired(t *testing.T) {
 
 	assert.Equal(t, 1, storage.Len(),
 		"500 abandoned sessions must not accumulate, with no job and no command involved")
-	assert.NotNil(t, storage.GetSessionById("live"))
+	assert.NotNil(t, sessionById(t, storage, "live"))
 }
 
 // TestTheSweepIsRateLimitedNotPerAdd. The pass is O(n) under the store's lock, so running it on
@@ -313,7 +320,7 @@ func TestTheAutomaticSweepIsRaceFree(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 300; i++ {
-			storage.GetSessionById(fmt.Sprintf("a-%d", i))
+			_, _ = storage.GetSessionById(fmt.Sprintf("a-%d", i))
 		}
 	}()
 	go func() {

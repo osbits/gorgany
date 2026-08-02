@@ -38,7 +38,7 @@ func (s *claimsUserService) Save(core.Authenticable) error { return nil }
 // wrong JSON type panicked inside GetUser — reached from JwtMiddleware on any
 // role-guarded route.
 func TestGetUserRejectsAMalformedUsernameClaim(t *testing.T) {
-	const secret = "test-secret"
+	const secret = strongTestSecret
 
 	tests := map[string]jwt.MapClaims{
 		"claim absent":      {"exp": time.Now().Add(time.Hour).Unix()},
@@ -72,7 +72,7 @@ func TestGetUserRejectsAMalformedUsernameClaim(t *testing.T) {
 
 // TestGetUserAcceptsAWellFormedClaim keeps the happy path.
 func TestGetUserAcceptsAWellFormedClaim(t *testing.T) {
-	const secret = "test-secret"
+	const secret = strongTestSecret
 
 	expected := &claimsTestUser{username: "ann"}
 	service := JwtService{userService: &claimsUserService{user: expected}}
@@ -91,7 +91,7 @@ func TestGetUserAcceptsAWellFormedClaim(t *testing.T) {
 // JwtMiddleware used to reach whenever it built its own service outside the
 // container (T3.3).
 func TestGetUserWithoutAUserServiceIsAnError(t *testing.T) {
-	const secret = "test-secret"
+	const secret = strongTestSecret
 	service := JwtService{}
 
 	token := signWithClaims(t, secret, jwt.MapClaims{

@@ -3,6 +3,7 @@ package http
 import (
 	"errors"
 	"fmt"
+	"io"
 	"mime/multipart"
 	"reflect"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"github.com/osbits/gorgany/v2/decoder"
 	mpart "github.com/osbits/gorgany/v2/decoder/multipart"
 	error2 "github.com/osbits/gorgany/v2/err"
+	"github.com/osbits/gorgany/v2/model"
 	"github.com/osbits/gorgany/v2/service/cache"
 	"github.com/osbits/gorgany/v2/util"
 	"github.com/spf13/viper"
@@ -88,9 +90,19 @@ type MultipartParser struct {
 // Parse parses multipart form data into the provided structure
 // It handles both form values and file uploads
 func (p *MultipartParser) Parse(arg interface{}) error {
-	multipartForm := p.message.Request().GetMultipartFormValues()
-
 	limits := resolveUploadLimits()
+
+	multipartForm := p.message.Request().GetMultipartFormValues()
+	if multipartForm == nil {
+		// A nil form means the body was malformed or over a limit; either way there is
+		// nothing to bind. This used to fall straight through to validateFormSize, which
+		// ranged over form.File on the nil pointer — so a malformed multipart body was a
+		// panic on every request, from an unauthenticated caller, with no valid input
+		// needed to reach it.
+		return error2.NewInputBodyParseError("", string(core.MultipartFormData), fmt.Errorf(
+			"the multipart body could not be read: it is malformed, or larger than the %d-byte upload budget",
+			limits.MaxMultipartSize))
+	}
 
 	// Validate total form size
 	if err := p.validateFormSize(multipartForm, limits); err != nil {
@@ -134,32 +146,71 @@ func (p *MultipartParser) Parse(arg interface{}) error {
 		return &validationErrors
 	}
 
-	openedFiles, err := mpart.DecodeFiles(multipartForm.File, arg)
-	defer func() {
-		if len(openedFiles) > 0 {
-			// todo: need to fix the closing (removing) of temp files
-			//for _, file := range openedFiles {
-			//	file.Close()
-			//}
-		}
-	}()
-
+	storedFiles, err := mpart.DecodeFiles(multipartForm.File, arg)
 	if err != nil {
+		// Nothing is bound into the DTO on this path, so the temp copies written before the
+		// failure have no owner and are released immediately.
+		for _, stored := range storedFiles {
+			_ = stored.Close()
+		}
+
+		reason := "Incorrect files"
+		var typeError *model.UploadTypeError
+		if errors.As(err, &typeError) {
+			// The type is the one piece of the failure a client can act on, and it is not
+			// derived from anything the client sent — it is what the bytes sniffed as.
+			reason = fmt.Sprintf("Content of type %s is not allowed", typeError.MediaType)
+		}
+
 		validationErrors := make(error2.ValidationErrors, 0)
 		for key := range multipartForm.File {
 			validationErrors.AddValidationError(error2.ValidationError{
 				Field: sanitizeFieldName(key),
-				Err:   "Incorrect files",
+				Err:   reason,
 			})
 		}
 		return &validationErrors
 	}
 
+	p.releaseWithRequest(storedFiles)
+
 	return nil
+}
+
+// releaseWithRequest hands the temp copies of the bound uploads to the request, which
+// closes them once the handler has finished with them.
+//
+// They cannot be closed here: DecodeFiles has just bound them into the handler's DTO, and
+// publishing one with Write reads from the temp copy this would delete. That is the trap
+// the `todo: need to fix the closing (removing) of temp files` guarded against, and leaving
+// the cleanup commented out meant every upload stayed in resource/temp for good.
+func (p *MultipartParser) releaseWithRequest(storedFiles []io.Closer) {
+	if len(storedFiles) == 0 {
+		return
+	}
+
+	registrar, ok := p.message.(interface{ RegisterCloser(io.Closer) })
+	if !ok {
+		// A message that does not take part in request-scoped cleanup is also not one that
+		// can be handing the DTO to anything outliving this call, so closing now is the
+		// safe reading — and far better than leaking.
+		for _, stored := range storedFiles {
+			_ = stored.Close()
+		}
+		return
+	}
+
+	for _, stored := range storedFiles {
+		registrar.RegisterCloser(stored)
+	}
 }
 
 // validateFormSize checks if the total form size is within limits
 func (p *MultipartParser) validateFormSize(form *multipart.Form, limits uploadLimits) error {
+	if form == nil {
+		return nil
+	}
+
 	var totalSize int64
 	for _, files := range form.File {
 		for _, file := range files {

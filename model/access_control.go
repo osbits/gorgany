@@ -98,12 +98,17 @@ type AccessControlGeneric[T any] interface {
 	AccessControl
 }
 
-// UserContextCache holds cached user information to avoid repeated lookups
+// UserContextCache holds the identity and roles resolved for one request, so that the
+// dozens of access control questions a response asks do not each have to go and ask the
+// auth strategy who the caller is.
+//
+// Treat it as immutable once resolved. Several goroutines of a fanned-out request can be
+// handed the same snapshot, and it is only safe to share because nothing writes to it
+// after resolveUserContext returns.
 type UserContextCache struct {
 	user    core.Authenticable
 	roles   []string
 	isGuest bool
-	isValid bool
 }
 
 // DBFilter represents a database-level filter for RBAC
@@ -164,11 +169,29 @@ type DBRBACConfig struct {
 // CustomFilterProcessor defines a function that can process complex filters
 type CustomFilterProcessor func(ctx context.Context, user core.Authenticable, filter DBFilter) ([]DBFilter, error)
 
-// RoleBasedAccessControl implements AccessControl with role-based validation
+// RoleBasedAccessControl implements AccessControl with role-based validation.
+//
+// The instance carries configuration only, deliberately no per-user state. It used
+// to memoise the resolved user in a map on the instance keyed by the incoming
+// context.Context, and that was wrong in three ways at once. The key is unique to
+// one request, so an entry was never reused by a later request; instead the map
+// grew by one entry for every request the process had ever served, holding the
+// context.Context and the authenticated user behind it alive forever, and nothing
+// on the normal path ever pruned it. The map had no mutex either, and since an
+// application naturally shares one configuration-driven access control object
+// across all of its requests, two concurrent requests writing their own misses
+// into it produced "fatal error: concurrent map writes" - a runtime fatal rather
+// than a panic, so the recovery middleware could not contain it and the process
+// died together with every request in flight.
+//
+// The user is now resolved once per call and threaded through the private helpers, and
+// memoised for the length of one request on the request's own context rather than here -
+// see resolveUserContext. That is the lifetime the data actually has: it is thrown away
+// with the request, it is reachable from nothing that outlives it, and two requests have
+// nowhere to meet.
 type RoleBasedAccessControl struct {
 	config      *AccessControlConfig
 	authContext core.IAuthContext
-	userCache   map[context.Context]*UserContextCache
 }
 
 // NewRoleBasedAccessControl creates a new role-based access control instance
@@ -176,14 +199,17 @@ func NewRoleBasedAccessControl(config *AccessControlConfig, authContext core.IAu
 	return &RoleBasedAccessControl{
 		config:      config,
 		authContext: authContext,
-		userCache:   make(map[context.Context]*UserContextCache),
 	}
 }
 
 // ValidateFieldAccess validates field access based on user roles
 func (rbac *RoleBasedAccessControl) ValidateFieldAccess(ctx context.Context, field string, operation string) error {
-	userRoles := rbac.GetUserRoles(ctx)
-	isGuest := rbac.IsGuest(ctx)
+	return rbac.validateFieldAccess(ctx, rbac.resolveUserContext(ctx), field, operation)
+}
+
+func (rbac *RoleBasedAccessControl) validateFieldAccess(ctx context.Context, userContext *UserContextCache, field string, operation string) error {
+	userRoles := userContext.roles
+	isGuest := userContext.isGuest
 
 	// Check if guest access is allowed
 	if isGuest && !rbac.config.AllowGuestAccess {
@@ -220,8 +246,9 @@ func (rbac *RoleBasedAccessControl) ValidateFieldAccess(ctx context.Context, fie
 
 // ValidateFilterAccess validates filter access based on user roles
 func (rbac *RoleBasedAccessControl) ValidateFilterAccess(ctx context.Context, field string, operator string) error {
-	userRoles := rbac.GetUserRoles(ctx)
-	isGuest := rbac.IsGuest(ctx)
+	userContext := rbac.resolveUserContext(ctx)
+	userRoles := userContext.roles
+	isGuest := userContext.isGuest
 
 	// Check if guest access is allowed
 	if isGuest && !rbac.config.AllowGuestAccess {
@@ -229,7 +256,7 @@ func (rbac *RoleBasedAccessControl) ValidateFilterAccess(ctx context.Context, fi
 	}
 
 	// Check if field is allowed for filtering
-	if err := rbac.ValidateFieldAccess(ctx, field, "filter"); err != nil {
+	if err := rbac.validateFieldAccess(ctx, userContext, field, "filter"); err != nil {
 		return err
 	}
 
@@ -250,8 +277,9 @@ func (rbac *RoleBasedAccessControl) ValidateFilterAccess(ctx context.Context, fi
 
 // ValidateSortAccess validates sort access based on user roles
 func (rbac *RoleBasedAccessControl) ValidateSortAccess(ctx context.Context, field string) error {
-	userRoles := rbac.GetUserRoles(ctx)
-	isGuest := rbac.IsGuest(ctx)
+	userContext := rbac.resolveUserContext(ctx)
+	userRoles := userContext.roles
+	isGuest := userContext.isGuest
 
 	// Check if guest access is allowed
 	if isGuest && !rbac.config.AllowGuestAccess {
@@ -259,7 +287,7 @@ func (rbac *RoleBasedAccessControl) ValidateSortAccess(ctx context.Context, fiel
 	}
 
 	// Check if field is allowed for sorting
-	if err := rbac.ValidateFieldAccess(ctx, field, "sort"); err != nil {
+	if err := rbac.validateFieldAccess(ctx, userContext, field, "sort"); err != nil {
 		return err
 	}
 
@@ -273,16 +301,14 @@ func (rbac *RoleBasedAccessControl) ValidateSortAccess(ctx context.Context, fiel
 	return nil
 }
 
-// GetUserRoles returns the roles for the current user (now uses cache)
+// GetUserRoles returns the roles for the current user
 func (rbac *RoleBasedAccessControl) GetUserRoles(ctx context.Context) []string {
-	cache := rbac.getUserContextCache(ctx)
-	return cache.roles
+	return rbac.resolveUserContext(ctx).roles
 }
 
-// IsGuest checks if the current user is a guest (now uses cache)
+// IsGuest checks if the current user is a guest
 func (rbac *RoleBasedAccessControl) IsGuest(ctx context.Context) bool {
-	cache := rbac.getUserContextCache(ctx)
-	return cache.isGuest
+	return rbac.resolveUserContext(ctx).isGuest
 }
 
 // GetCurrentUser retrieves the current user from context
@@ -290,29 +316,118 @@ func (rbac *RoleBasedAccessControl) GetCurrentUser(ctx context.Context) core.Aut
 	return rbac.getCurrentUser(ctx)
 }
 
-// GetCachedUserContext returns the cached user context for better performance
+// GetCachedUserContext returns the identity and roles resolved for this context, from the
+// request's memo when it has one. The result is a snapshot of one request: it is not stored
+// on the instance, and holding on to it past the request will hold on to a stale user.
 func (rbac *RoleBasedAccessControl) GetCachedUserContext(ctx context.Context) *UserContextCache {
-	return rbac.getUserContextCache(ctx)
+	return rbac.resolveUserContext(ctx)
 }
 
-// ClearUserCache clears the user cache for a specific context
+// ClearUserCache drops whatever identity has been memoised for this request, so the next
+// question about it resolves again.
+//
+// It exists for the case the memo key cannot see. The key covers the session being replaced
+// and the session being re-pointed at another user, which is every way the framework's own
+// strategies change the principal mid-request; an application that changes it some other way
+// - a custom strategy reading it from somewhere else, a role edit that must take effect
+// before the response is written - calls this and is believed. On a context with no request
+// behind it there is nothing memoised and nothing to do.
 func (rbac *RoleBasedAccessControl) ClearUserCache(ctx context.Context) {
-	delete(rbac.userCache, ctx)
+	if memo, _ := requestIdentityMemo(ctx); memo != nil {
+		memo.InvalidateIdentity()
+	}
 }
 
-// ClearAllUserCache clears all user cache entries
+// ClearAllUserCache does nothing, deliberately, and is kept so that existing callers still
+// compile. There is no state spanning requests to clear: each request memoises its own
+// identity on its own context and takes it away with it. What this used to do - swap in a
+// fresh instance-level map while other requests were reading the old one - was itself
+// unsafe on an object every request shares, and the map it cleared was the leak.
 func (rbac *RoleBasedAccessControl) ClearAllUserCache() {
-	rbac.userCache = make(map[context.Context]*UserContextCache)
 }
 
-// getUserContextCache retrieves or creates cached user context
-func (rbac *RoleBasedAccessControl) getUserContextCache(ctx context.Context) *UserContextCache {
-	// Check if we already have cached data for this context
-	if cache, exists := rbac.userCache[ctx]; exists && cache.isValid {
-		return cache
+// resolveUserContext resolves the caller's identity and roles.
+//
+// Exported entry points call it exactly once and hand the result to the private helpers
+// below, so that GetReadableFields does not re-ask the auth strategy for the current user
+// once per field. That covers one call; the memo covers the request. Resolution is not
+// free - a session-backed strategy looks the session up in its store and then loads the
+// user, both database round trips in a real application - and a response asks per row:
+// FieldFilteredDto.MarshalJSON asks for the readable fields once per DTO, so a hundred-row
+// list without a memo performs a hundred session lookups and a hundred user loads for one
+// principal that cannot have changed in between.
+//
+// The memo lives on the request, not here. See core.IRequestIdentityMemo for why: an
+// instance-level map keyed by anything request-shaped is shared mutable state on an object
+// every request drives at once, and nothing prunes it.
+//
+// The key is what keeps it honest, and getting it wrong is worse than having no memo at
+// all - a stale identity is an authorization decision made about the wrong user. It is
+// derived from the session the request currently carries: both its identifier, which moves
+// when the session is replaced (Login rotates it and republishes it, so a memo taken before
+// a login cannot be found after one), and the user id on it, which moves when the same
+// session object is re-pointed at somebody else. Both are reads of an object already in
+// memory, so checking them costs nothing like a resolution. A request carrying no session
+// at all - a bearer token, where the principal is fixed by a header for the whole request -
+// keys as such and is memoised too.
+//
+// Contexts with no per-request carrier on them, which is every CLI command, background job
+// and unit test, resolve every time. That is the previous behaviour and it is correct, just
+// not cheap; the amplification this avoids is a property of serving a request.
+//
+// Resolution deliberately runs outside the memo's lock: it can call into a session store
+// and a database, and holding a request-wide lock across that would serialise a fanned-out
+// handler on it. Two goroutines of the same request may therefore both resolve and both
+// store, which costs one extra lookup and yields the same identity twice.
+func (rbac *RoleBasedAccessControl) resolveUserContext(ctx context.Context) *UserContextCache {
+	memo, key := requestIdentityMemo(ctx)
+	if memo != nil {
+		if memoised, ok := memo.LoadIdentity(key); ok {
+			if cache, ok := memoised.(*UserContextCache); ok {
+				return cache
+			}
+		}
 	}
 
-	// Create new cache entry
+	cache := rbac.resolveUserContextUncached(ctx)
+
+	if memo != nil {
+		memo.StoreIdentity(key, cache)
+	}
+
+	return cache
+}
+
+// requestIdentityMemo returns the memo slot the context carries, if it carries one, along
+// with the key the identity resolved from that context belongs under. A nil memo means
+// "resolve every time", which is what a context with no request behind it gets.
+func requestIdentityMemo(ctx context.Context) (core.IRequestIdentityMemo, string) {
+	if ctx == nil {
+		return nil, ""
+	}
+
+	carrier := ctx.Value(core.MessageContextKey)
+	memo, ok := carrier.(core.IRequestIdentityMemo)
+	if !ok {
+		return nil, ""
+	}
+
+	messageContext, ok := carrier.(core.IMessageContext)
+	if !ok {
+		return memo, ""
+	}
+
+	session := messageContext.GetSession()
+	if session == nil {
+		return memo, ""
+	}
+
+	// The separator matters: without it a session id ending in a digit and a user id
+	// beginning with one could collide with a different pairing of the two.
+	return memo, "session:" + session.GetId() + "\x00" + session.GetUserId()
+}
+
+func (rbac *RoleBasedAccessControl) resolveUserContextUncached(ctx context.Context) *UserContextCache {
 	cache := &UserContextCache{}
 
 	// Get user from auth context
@@ -352,15 +467,12 @@ func (rbac *RoleBasedAccessControl) getUserContextCache(ctx context.Context) *Us
 		}
 	}
 
-	cache.isValid = true
-	rbac.userCache[ctx] = cache
 	return cache
 }
 
-// getCurrentUser retrieves the current user from context (now uses cache)
+// getCurrentUser retrieves the current user from context
 func (rbac *RoleBasedAccessControl) getCurrentUser(ctx context.Context) core.Authenticable {
-	cache := rbac.getUserContextCache(ctx)
-	return cache.user
+	return rbac.resolveUserContext(ctx).user
 }
 
 // validateDomainLevelAccess validates domain-level access
@@ -542,9 +654,10 @@ func (b *AccessControlBuilder) Build() *AccessControlConfig {
 
 // CanReadField checks if the current user can read a specific field
 func (rbac *RoleBasedAccessControl) CanReadField(ctx context.Context, field string, entity any) bool {
-	// Use cached user context for better performance
-	userCache := rbac.getUserContextCache(ctx)
+	return rbac.canReadField(ctx, rbac.resolveUserContext(ctx), field, entity)
+}
 
+func (rbac *RoleBasedAccessControl) canReadField(ctx context.Context, userCache *UserContextCache, field string, entity any) bool {
 	// Check if guest access is allowed
 	if userCache.isGuest && !rbac.config.AllowGuestAccess {
 		return false
@@ -601,8 +714,7 @@ func (rbac *RoleBasedAccessControl) CanReadField(ctx context.Context, field stri
 
 // GetReadableFields returns the list of fields the current user can read
 func (rbac *RoleBasedAccessControl) GetReadableFields(ctx context.Context, entity any) []string {
-	// Use cached user context for better performance
-	userCache := rbac.getUserContextCache(ctx)
+	userCache := rbac.resolveUserContext(ctx)
 
 	// If domain implements AccessibleEntity interface, use its custom logic
 	if accessibleEntity, ok := entity.(core.AccessibleEntity); ok {
@@ -622,9 +734,10 @@ func (rbac *RoleBasedAccessControl) GetReadableFields(ctx context.Context, entit
 		allFields = rbac.config.DefaultFields
 	}
 
-	// Check each field for read access
+	// Check each field for read access, reusing the identity resolved above rather
+	// than resolving it again for every field
 	for _, field := range allFields {
-		canRead := rbac.CanReadField(ctx, field, entity)
+		canRead := rbac.canReadField(ctx, userCache, field, entity)
 		if canRead {
 			readableFields = append(readableFields, field)
 		}
@@ -676,9 +789,10 @@ func (rbac *RoleBasedAccessControl) isOwner(entity any, currentUser core.Authent
 
 // CanAccessEntity checks if the current user can access the domain for a specific operation
 func (rbac *RoleBasedAccessControl) CanAccessEntity(ctx context.Context, entity any, operation string) bool {
-	// Use cached user context for better performance
-	userCache := rbac.getUserContextCache(ctx)
+	return rbac.canAccessEntity(ctx, rbac.resolveUserContext(ctx), entity, operation)
+}
 
+func (rbac *RoleBasedAccessControl) canAccessEntity(ctx context.Context, userCache *UserContextCache, entity any, operation string) bool {
 	// Check if guest access is allowed
 	if userCache.isGuest && !rbac.config.AllowGuestAccess {
 		return false
@@ -726,10 +840,12 @@ func (rbac *RoleBasedAccessControl) CanAccessEntity(ctx context.Context, entity 
 
 // GetAccessibleEntities filters a list of entities based on access permissions
 func (rbac *RoleBasedAccessControl) GetAccessibleEntities(ctx context.Context, entities []any, operation string) []any {
+	userCache := rbac.resolveUserContext(ctx)
+
 	var accessibleEntities []any
 
 	for _, entity := range entities {
-		if rbac.CanAccessEntity(ctx, entity, operation) {
+		if rbac.canAccessEntity(ctx, userCache, entity, operation) {
 			accessibleEntities = append(accessibleEntities, entity)
 		}
 	}
@@ -739,8 +855,7 @@ func (rbac *RoleBasedAccessControl) GetAccessibleEntities(ctx context.Context, e
 
 // GetReadableFieldsForCollection returns fields readable for a collection (optimized for collections)
 func (rbac *RoleBasedAccessControl) GetReadableFieldsForCollection(ctx context.Context, entityType any) []string {
-	// Use cached user context for better performance
-	userCache := rbac.getUserContextCache(ctx)
+	userCache := rbac.resolveUserContext(ctx)
 
 	// If entity type implements AccessibleEntity interface, use its custom logic
 	if accessibleEntity, ok := entityType.(core.AccessibleEntity); ok {
@@ -799,22 +914,26 @@ func (rbac *RoleBasedAccessControl) GetReadableFieldsForCollection(ctx context.C
 
 // GetAccessibleEntitiesWithFields filters entities and returns optimized field list for collections
 func (rbac *RoleBasedAccessControl) GetAccessibleEntitiesWithFields(ctx context.Context, entities []any, operation string) ([]any, []string) {
+	userCache := rbac.resolveUserContext(ctx)
+
 	// Simplified approach: Check entity type access first
-	if !rbac.CanAccessEntityType(ctx, operation) {
+	if !rbac.canAccessEntityType(userCache, operation) {
 		return []any{}, []string{}
 	}
 
 	// If entity type access is granted, all entities are accessible
 	// Get inherited field permissions
-	readableFields := rbac.GetInheritedFieldPermissions(ctx, operation)
+	readableFields := rbac.inheritedFieldPermissions(userCache, operation)
 
 	return entities, readableFields
 }
 
 // CanAccessEntityType checks if user can access the entity type (simplified check)
 func (rbac *RoleBasedAccessControl) CanAccessEntityType(ctx context.Context, operation string) bool {
-	userCache := rbac.getUserContextCache(ctx)
+	return rbac.canAccessEntityType(rbac.resolveUserContext(ctx), operation)
+}
 
+func (rbac *RoleBasedAccessControl) canAccessEntityType(userCache *UserContextCache, operation string) bool {
 	// Check if guest access is allowed
 	if userCache.isGuest && !rbac.config.AllowGuestAccess {
 		return false
@@ -839,8 +958,10 @@ func (rbac *RoleBasedAccessControl) CanAccessEntityType(ctx context.Context, ope
 
 // GetInheritedFieldPermissions returns field permissions that inherit from entity roles
 func (rbac *RoleBasedAccessControl) GetInheritedFieldPermissions(ctx context.Context, operation string) []string {
-	userCache := rbac.getUserContextCache(ctx)
+	return rbac.inheritedFieldPermissions(rbac.resolveUserContext(ctx), operation)
+}
 
+func (rbac *RoleBasedAccessControl) inheritedFieldPermissions(userCache *UserContextCache, operation string) []string {
 	// Get entity roles for this operation
 	entityRoles := rbac.getEntityRolesForOperation(operation)
 
@@ -928,13 +1049,14 @@ func (rbac *RoleBasedAccessControl) intersectRoles(entityRoles []string, fieldRo
 
 // CanUseDBLevelRBAC checks if RBAC can be handled at DB level
 func (rbac *RoleBasedAccessControl) CanUseDBLevelRBAC(ctx context.Context, operation string) bool {
+	return rbac.canUseDBLevelRBAC(rbac.resolveUserContext(ctx), operation)
+}
+
+func (rbac *RoleBasedAccessControl) canUseDBLevelRBAC(userCache *UserContextCache, operation string) bool {
 	// Check if DB-level RBAC is enabled
 	if rbac.config.DBRBAC == nil || !rbac.config.DBRBAC.EnableDBLevelRBAC {
 		return false
 	}
-
-	// Check if user context allows DB-level filtering
-	userCache := rbac.getUserContextCache(ctx)
 
 	// For guests, we can only use DB-level RBAC if:
 	// 1. Guest access is allowed, AND
@@ -980,11 +1102,12 @@ func (rbac *RoleBasedAccessControl) CanUseDBLevelRBAC(ctx context.Context, opera
 
 // GenerateDBFilters generates database-level filters for RBAC
 func (rbac *RoleBasedAccessControl) GenerateDBFilters(ctx context.Context, operation string) ([]DBFilter, error) {
-	if !rbac.CanUseDBLevelRBAC(ctx, operation) {
+	userCache := rbac.resolveUserContext(ctx)
+
+	if !rbac.canUseDBLevelRBAC(userCache, operation) {
 		return nil, fmt.Errorf("DB-level RBAC not available for this context")
 	}
 
-	userCache := rbac.getUserContextCache(ctx)
 	var filters []DBFilter
 
 	// Generate ownership-based filters (only if not skipped for this user's roles)

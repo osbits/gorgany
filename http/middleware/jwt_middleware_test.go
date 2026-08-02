@@ -3,7 +3,9 @@ package middleware
 import (
 	"net/http"
 	"testing"
+	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/osbits/gorgany/v2/app/core"
 	"github.com/osbits/gorgany/v2/auth"
 	error2 "github.com/osbits/gorgany/v2/err"
@@ -35,7 +37,10 @@ func (s *stubUserService) GetByUsername(string) (core.Authenticable, error) {
 }
 func (s *stubUserService) Save(core.Authenticable) error { return nil }
 
-const jwtTestSecret = "test-secret-for-jwt-middleware"
+// jwtTestSecret is long enough to be a usable HMAC-SHA256 key. It used to be
+// "test-secret-for-jwt-middleware", two bytes short of the floor the framework now
+// enforces, which is a fair illustration of how easy the weak-key mistake is to make.
+const jwtTestSecret = "PyD8yhvAyBFC0Qs4Q9k1TfKp7cJmVn2xLr6WdZbGtHs"
 
 func withJwtSecret(t *testing.T) {
 	t.Helper()
@@ -214,7 +219,68 @@ func TestNilJwtServiceFailsThroughTheErrorChain(t *testing.T) {
 
 func wrongSecretToken(t *testing.T, user core.Authenticable) string {
 	t.Helper()
-	token, err := auth.NewJwtService().GenerateJwt(user, "a-completely-different-secret")
+	token, err := auth.NewJwtService().GenerateJwt(user, "Ww4sQ7nDkR2vTgYhJ8mLzXcVbN5pFq3aSdEuIoP1rTy")
 	require.NoError(t, err)
 	return token
+}
+
+// TestAnUnusableConfiguredSecretRejectsEveryRequest.
+//
+// The middleware read auth.jwt.secret and handed it to ValidateJwt with no check of its
+// own, so with the key empty a token the caller signed themselves — identity and role of
+// their choosing — passed both the signature check and, through the user service, the role
+// check. Rejecting here as well as in the service means a deployment that somehow gets past
+// boot validation still answers 401 rather than trusting the caller.
+func TestAnUnusableConfiguredSecretRejectsEveryRequest(t *testing.T) {
+	for name, secret := range map[string]string{
+		"empty":              "",
+		"whitespace only":    "   ",
+		"unresolved literal": "${JWT_SECRET}",
+		"weak":               "s3cret",
+	} {
+		t.Run(name, func(t *testing.T) {
+			previous := viper.Get("auth.jwt.secret")
+			viper.Set("auth.jwt.secret", secret)
+			viper.Set("auth.jwt.lifeTime", 3600)
+			t.Cleanup(func() { viper.Set("auth.jwt.secret", previous) })
+
+			user := &jwtTestUser{username: "admin", role: roleAdmin}
+			forged := forgedToken(t, secret, "admin", roleAdmin)
+
+			for _, roles := range [][]core.UserRole{nil, {roleAdmin}} {
+				mw := containerResolvedMiddleware(t, roles, user)
+				handler := mw.Handle(func(core.HttpMessage) {
+					t.Fatal("a forged token must not reach the handler")
+				})
+
+				func() {
+					defer func() {
+						recovered := recover()
+						require.NotNil(t, recovered, "must panic so the error chain runs")
+						_, ok := recovered.(*error2.JwtAuthError)
+						assert.Truef(t, ok, "must panic with *JwtAuthError, got %T", recovered)
+					}()
+					handler(newMessage(http.MethodGet, "/api/protected", map[string]string{
+						"Authorization": "Bearer " + forged,
+					}))
+				}()
+			}
+		})
+	}
+}
+
+// forgedToken signs a token directly with the jwt library, the way an attacker who knows
+// the app's key would. It deliberately does not go through JwtService, which now refuses
+// these keys.
+func forgedToken(t *testing.T, secret, username string, role core.UserRole) string {
+	t.Helper()
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"username": username,
+		"role":     string(role),
+		"exp":      time.Now().Add(24 * time.Hour).Unix(),
+	})
+	signed, err := token.SignedString([]byte(secret))
+	require.NoError(t, err)
+	return signed
 }

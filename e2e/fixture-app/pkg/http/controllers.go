@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/osbits/gorgany/v2/app/core"
+	grghttp "github.com/osbits/gorgany/v2/http"
 	"github.com/osbits/gorgany/v2/http/middleware"
 	"github.com/osbits/gorgany/v2/http/router"
 	"github.com/osbits/gorgany/v2/service/dto"
@@ -59,8 +60,23 @@ func (c *WebController) Login(message core.HttpMessage) {
 		return
 	}
 
-	if _, err := c.AuthContext.ResolveAuthStrategyByContext(message.Context()).Login(user, message.Context()); err != nil {
+	strategy := c.AuthContext.ResolveAuthStrategyByContext(message.Context())
+
+	session, err := strategy.Login(user, message.Context())
+	if err != nil {
 		message.Response().Text("login failed", http.StatusInternalServerError)
+		return
+	}
+
+	// Authenticating rotates the session identifier, so the session this request resolved on
+	// the way in has been deleted. Publishing the new one is what the rest of the request —
+	// here and in any app handler — needs in order to see the login at all.
+	grghttp.PublishSession(message, session)
+
+	// Answered from the post-login state rather than assumed, so the live suites can tell a
+	// login that took effect from one that only wrote a cookie.
+	if !strategy.IsLoggedIn(message.Context()) {
+		message.Response().Text("login did not take effect", http.StatusInternalServerError)
 		return
 	}
 
@@ -77,8 +93,15 @@ func (c *WebController) Protected(message core.HttpMessage) {
 	message.Response().Text(fmt.Sprintf("protected:%s:%s", user.GetUsername(), user.GetRole()), http.StatusOK)
 }
 
+// Logout answers 500 when the session could not be revoked, so the live suites can tell a
+// logout that happened from one that only looked like it did.
 func (c *WebController) Logout(message core.HttpMessage) {
-	c.AuthContext.ResolveAuthStrategyByContext(message.Context()).Logout(message.Context())
+	if err := c.AuthContext.ResolveAuthStrategyByContext(message.Context()).
+		Logout(message.Context()); err != nil {
+		message.Response().Text(fmt.Sprintf("logout failed: %v", err), http.StatusInternalServerError)
+		return
+	}
+
 	message.Response().Text("logged out", http.StatusOK)
 }
 

@@ -7,7 +7,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [2.0.0] — 2026-07-29
+## [2.0.0] — 2026-08-02
+
+> **The `v2.0.0` tag predates this entry and must be re-cut.**
+>
+> A `v2.0.0` tag was created locally on `fd0d31e` and never pushed — `git ls-remote
+> --tags` shows `v1.5.2` and earlier and no `v2.0.0`. Everything in the security round
+> below landed *after* that tag, so the tag does not point at the tree this entry
+> describes. Delete it and re-tag the release commit. Because the tag was never
+> published, no consumer can have resolved `v2.0.0` to the older tree, and this stays
+> one 2.0.0 release rather than becoming a 2.0.1: there is nothing to be compatible
+> with. `constants.go` still reads `FrameworkVersion = "2.0.0"` and is correct.
 
 ### Why 2.0.0 and not 1.6.0
 
@@ -23,18 +33,400 @@ This release contains source-breaking changes, so a major bump is required:
 - `provider.EventProvider.Boot` no longer returns an `error` (it previously did
   not satisfy `core.IProvider` at all).
 
+The security round added a second wave of source breaks, all in the session and auth
+layer: every `core.ISessionStorage` mutator returns an `error`, `GetSessionById`
+returns `(ISession, error)`, `core.IAuthStrategy.Logout` returns an `error`,
+`core.SessionCookieName` is gone, and `core.HttpAccessCommand` /
+`core.HttpFilterCommand` / `middleware.AccessCheckerMiddleware` are deleted. See
+**Security** below and MIGRATION_v2.md §24–§34.
+
 There are also five **behaviour** changes that no compiler will catch — a memoized
 query builder, `json:"-"`, a role-mismatch status code, `OPTIONS` routing, and
 connection-pool limits that start being enforced. Those are the ones most likely to
 surprise, and they are why [`MIGRATION_v2.md`](MIGRATION_v2.md) leads with them.
 
-`e2e/fixture-app`, the only v1.5.1-compatible sample app in this repo, needed
-**no source changes at all**, and its full dockerised suite (7 tests over a real
-Postgres, exercising routing, session auth, JWT, relations, validation, multipart
-and the CLI) passes against v2. That is a useful signal about blast radius, not a
-claim that no app is affected: an app that calls `builder.ToSQL()` directly,
-implements `SQLDialect`, or relies on any of the five behaviour changes will need
-work.
+`e2e/fixture-app`, the only v1.5.1-compatible sample app in this repo, needed **no
+source changes** for the database and routing work, which was a useful signal about
+that part's blast radius. The security round changed that: the fixture needed three
+edits — `grghttp.PublishSession` after `Login`, a `Logout` that reports the error it
+now receives, and a `JWT_SECRET` long enough to boot with. Those three are a fair
+sample of what a real app has to do. An app that calls `builder.ToSQL()` directly,
+implements `SQLDialect`, implements `core.ISessionStorage`, has its own login
+handler, or relies on any of the behaviour changes will need work.
+
+### Security
+
+This section is first because it is the reason the tag has to be re-cut, and because
+most of what is in it also breaks source or behaviour — the entries below are the ones
+to read before the `Breaking` list, not after it.
+
+A pre-release audit (`SECURITY_RELEASE_BLOCKERS.md`, rev 2) produced eight
+release-gating findings. All eight are fixed here, together with the defects the fix
+work itself turned up: a login handler that donated accounts, a second dead
+authorization interface, a session middleware that never told the request its session
+had been rotated, a CSRF regression introduced by the first version of the rotation
+fix, and an identity-resolution amplification introduced by the first version of the
+RBAC fix. `SECURITY_RELEASE_BLOCKERS.md` carries the per-finding status and the
+regression test that fences each one.
+
+Two of these are, by a distance, the most likely to be noticed on upgrade:
+
+1. **The session cookie is renamed, which logs every signed-in user out.** See below.
+2. **`/public/*` no longer renders SVG.** An `<img src="/public/logo.svg">` breaks.
+   See below.
+
+#### The session cookie is `__Host-` prefixed by default, logging every session out
+
+`core.SessionCookieName` (the constant, `"GRG_SESSION_ID"`) is **gone**. The cookie is
+now named `__Host-GRG_SESSION_ID` unless the app opts out. A browser holding the old
+cookie sends a name the framework no longer reads, so on the first request after the
+upgrade every signed-in user starts a fresh anonymous session. There is deliberately no
+fallback to the old name: reading the unprefixed cookie when the prefixed one is absent
+reopens exactly the hole the prefix closes.
+
+The prefix is the load-bearing part of the session-fixation fix. An unprefixed name is a
+token *any* host under the registrable domain can write, even when the app's own cookie
+is host-only: `sibling.example.com` sends
+`Set-Cookie: GRG_SESSION_ID=chosen; Domain=example.com; Path=/login`, RFC 6265
+serialises the more specific path first, `http.Request.Cookie` returns the first match,
+and the framework reads the identifier the sibling chose. A browser refuses to let any
+other host set a `__Host-` cookie for yours.
+
+| Configuration | Cookie name | Why |
+|---|---|---|
+| default (nothing set) | `__Host-GRG_SESSION_ID` | Secure, `Path=/`, no `Domain` |
+| `auth.session.cookie.secure: false` | `GRG_SESSION_ID` | a `__Host-` cookie is only accepted when Secure |
+| `auth.session.cookie.domain: example.com` | `GRG_SESSION_ID` | a `__Host-` cookie may not carry a `Domain` |
+
+Both fallbacks are explicit opt-outs, keep the pre-upgrade cookie name, log nobody out —
+and keep the exposure. The form in use is logged once, with its reason, on the first
+resolution. New API: `core.SessionCookieBaseName`,
+`core.HostPrefixedSessionCookieName`, `auth.SessionCookieName()`,
+`auth.SessionCookieDomain()`, `auth.ConfigSessionCookieDomain` and
+`auth.NewSessionCookie(value, maxAge, sameSite)` — the only correct way to build the
+cookie, since the name, `Secure` and `Domain` are one decision and a `__Host-` name
+paired with a `Domain` is a cookie no browser keeps. The old constant was **not** kept
+as a deprecated alias: code reading the cookie under a hard-coded name would still
+compile and would silently read the wrong cookie. See MIGRATION_v2.md §24.
+
+#### `Login` rotates the session identifier, and callers must republish
+
+`StandardAuthStrategy.Login` used to assign the user id to whatever session the client
+presented. A party who can plant a session cookie in someone's browser therefore held a
+live cookie for the victim's authenticated session from the moment the victim signed in;
+neither existing rotation trigger helped, because both fire on idleness and age and the
+victim's own page loads keep the activity stamp fresh. `Login` now revokes the presented
+session, mints a fresh identifier, carries over only the user id and last-activity
+stamp, and issues a **new** CSRF token. It fails closed: if the old session cannot be
+revoked or the new one cannot be persisted, it returns an error and no session.
+
+Because the identifier changes, the session the request resolved on the way in no longer
+exists when `Login` returns, and two places cache it for the life of the request — the
+message's session scope, and the message context, which the strategy consults *before*
+the cookie. New helper `http.PublishSession(message, session)` updates both, drops the
+per-request identity memo, and rewrites `X-CSRF-Token` on the response. **Any app with
+its own login handler has to call it.** See MIGRATION_v2.md §25.
+
+Two consequences worth knowing: a login response now carries two `Set-Cookie` headers
+for the session when the request arrived without one (middleware starts a session, login
+rotates it) — a hand-written client that takes the *first* match picks up an identifier
+that has just been revoked; and every login creates and immediately revokes one extra
+session.
+
+#### Session revocation fails closed, and works across replicas
+
+Revocation was fail-open and raceable. Storage failures were discarded, so a logout that
+could not delete the server-side session still expired the browser's cookie and reported
+success. The mediator's cache decided whether a session existed and was never
+revalidated, so a logout handled by one replica left the session authenticating on every
+other replica indefinitely. A concurrent request could re-publish a session a logout had
+just removed, and rotation then laundered it into a new durable row. The attribute map
+was marshalled for the database under no lock, which is `fatal error: concurrent map
+iteration and map write` — a runtime fatal `RecoveryMiddleware` cannot contain.
+
+- `core.ISessionStorage`'s four mutators return `error`; `GetSessionById` returns
+  `(ISession, error)`, distinguishing "no such session" from "the store could not
+  answer". `core.IAuthStrategy.Logout` returns `error`.
+- `core.ISession` and `core.ISimpleStorage` are **deliberately unchanged and stay
+  void.** See MIGRATION_v2.md §26 for what that means if you implement one.
+- New optional `core.ISessionRevoker` (`RevokeSession(id) (bool, error)`), so rotation
+  can refuse to carry a user id over from a session somebody already revoked.
+- `DbSessionMediator.GetSession` consults the row on every call. The cache still
+  guarantees one session object per identifier per process, but no longer decides
+  whether the session exists.
+- Every accessor on `auth.Session` and `auth.DbSessionEntity` takes the session's mutex,
+  `GetUserId` included. The mediator persists a detached `Snapshot()` rather than the
+  live entity.
+- `auth.ISessionRepository.DeleteById` returns `(bool, error)`;
+  `DbSessionRepository.DeleteById` is one `DELETE` rather than find-then-delete, so
+  revoking twice is no longer an error that left the cache entry alive.
+- `LoginController.Logout` redirects with a flash naming the failure instead of
+  pretending the logout happened.
+- `StandardAuthStrategy.Logout` invalidates the request's identity memo. Without it the
+  memo key (session id plus user id) is unchanged across a logout and the revoked
+  session is still on the message context, so anything access-controlled rendered later
+  in the same request would be filtered for the user who just logged out. A logout that
+  *failed* to revoke deliberately keeps the memo, because the caller is still
+  authenticated.
+
+See MIGRATION_v2.md §26.
+
+#### `POST /login` always verifies the credentials it is given
+
+`LoginController.Login` answered an already-authenticated request with a redirect home,
+so the posted credentials were never compared to anything. Turned around, that is an
+account donation: a party who can plant a cookie plants their own **signed-in** session,
+the victim's login bounces off the guard, and the victim spends the visit inside the
+planted account while the planter holds a live cookie for it. The guard is removed.
+Authenticating over a live session is safe precisely because `Login` now replaces the
+session rather than reusing it. `GET /login` keeps its redirect — a GET carries no
+credentials. A failed attempt deliberately changes nothing: ending the live session on a
+failed attempt would be a remote logout for anyone able to make a browser post the form.
+Both handlers now `return` after redirecting; `ShowLogin` used to render the login form
+into a response that already carried the 301.
+
+#### JWT configuration fails closed
+
+Nothing validated `auth.jwt.secret` anywhere. An app could boot — server or CLI, dev or
+prod — with the key absent, empty, a YAML null, whitespace, an unresolved
+`${JWT_SECRET}` literal, or short enough to guess, and then sign and accept tokens with
+it. `GenerateJwt(user, "")` returned a working token and a `nil` error. Four boundaries
+now refuse an unusable key: `AppProvider.Boot` (panics, via `provider.ValidateJwtConfig`),
+`config.ResolveEnvPlaceholders` (registers the placeholder default so an absent key
+becomes visible to the security-relevant guard at all), the exported `JwtService`
+methods, and `JwtAuthStrategy.IsRequestMadeWithStrategy` — which matters most, because
+the strategy is registered under `"api"` for *every* app, so an unusable key let any
+request carrying a self-signed bearer token capture strategy resolution even in an app
+that only ever configured session auth. `auth.MinJwtSecretLength` is 32 bytes, and a
+value that reaches the length with fewer than eight distinct bytes is rejected as
+padding. An app that declares no `auth.jwt` section is not made to invent a secret. See
+MIGRATION_v2.md §28.
+
+`jwt.Parse` is pinned to HS256 at all three call sites. To be precise about what that
+buys: golang-jwt/jwt v5 already refuses `alg: none`, its case variants and cross-family
+substitution. What was accepted before is substitution *within* the HMAC family — a
+token re-signed as HS384 or HS512 against the same secret verified.
+
+The boot error for an unresolved security-relevant placeholder no longer gives dangerous
+advice. It used to end "remove the placeholder so the framework's secure default
+applies" for every key in `SecurityRelevantKeys`. True for
+`auth.session.cookie.secure`; false for `auth.jwt.secret`, which has no default at all,
+so an operator following the framework's own instruction converted a caught boot failure
+into a silent authentication bypass. Keys in the new `config.KeysWithoutSecureFallback`
+get advice that fits them.
+
+#### Uploads are stored by sniffed content, not by the client's filename
+
+Three behaviours combined into same-origin script execution:
+
+- **The stored extension now comes from the content.** `model.NewMultipartFile` sniffs
+  the first 512 bytes with `http.DetectContentType`, looks the media type up in an
+  allowlist, and stores the file under the extension that allowlist gives. A type with
+  no entry is refused. Previously `filepath.Ext(originalFileName)` was appended verbatim
+  while only the base name was sanitised, so a part named `payload.html` was stored as
+  `…-payload.html`. `text/html`, `image/svg+xml` and the XML types are deliberately
+  absent from the allowlist — they are script hosts, and there is no extension that
+  makes them safe to serve back. `application/octet-stream` **is** present, mapped to
+  `.bin`, so a binary format Go has no signature for is stored rather than rejected.
+- **The allowlist is applied to the sniffed type, on every path.** `FormFile` and
+  `GetFiles` checked `fh.Header.Get("Content-Type")` — a value the uploading client
+  writes — so declaring `image/png` on a part full of HTML satisfied it. The
+  DTO-binding path (`decoder/multipart.DecodeFiles`, a `core.IFile` field on a DTO, the
+  documented way to receive an upload) had **no** content check at all.
+- **`PublicController` never names a script-capable type.** See the next entry.
+
+New config key `http.upload.allowedTypes`, a map from sniffed media type to stored
+extension. Setting it **replaces the built-in table wholesale**, so an app that needs one
+extra type has to restate the ones it still wants. See MIGRATION_v2.md §30.
+
+The strongest mitigation is one this change cannot make for you: serve user uploads from
+a separate origin.
+
+#### `/public/*` is `nosniff` + `attachment`, and SVG stops rendering
+
+Every `/public/*` response now carries `X-Content-Type-Options: nosniff` and
+`Content-Disposition: attachment`, and the `Content-Type` is passed through only for a
+render-safe allowlist: `image/*` **except SVG**, `audio/*`, `video/*`, `font/*`,
+`text/plain`, `text/css`, `text/csv`, JavaScript, `application/json` and
+`application/pdf`. Everything else — `text/html` and `image/svg+xml` included — is
+served as `application/octet-stream`.
+
+**The SVG change is the breakage most likely to be noticed.** `Content-Disposition`
+does not apply to a subresource load, so stylesheets, scripts, raster images and fonts
+served from `/public/*` keep working. The retyping *does* apply to them, and SVG is the
+casualty: an SVG answered as `application/octet-stream` under `nosniff` is one the
+browser refuses to render, so `<img src="/public/logo.svg">`, an SVG `background-image`
+and an SVG `<use>` reference all break. There is no way to keep them that does not also
+serve an *uploaded* SVG as `image/svg+xml`, which is a document that runs script on this
+origin. SVG icons are a common static asset, so check for them before deploying — serve
+them from a route of your own, or from somewhere that is not also the upload root. See
+MIGRATION_v2.md §31.
+
+Also fixed here: the containment check compared against the resource root with a bare
+string prefix, which a sibling directory named `resources` or `resource-backups` would
+have satisfied.
+
+#### Security headers are emitted by default
+
+`middleware.SecurityHeadersMiddleware` is new, and `RouteProvider` registers it as a
+`/**` filter immediately after the recovery filter. The framework emitted no security
+headers anywhere before.
+
+| Header | Default | Notes |
+|---|---|---|
+| `X-Content-Type-Options` | `nosniff` | not configurable |
+| `X-Frame-Options` | `SAMEORIGIN` | `DENY` is stronger; set it if the app frames none of its own pages |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` | |
+| `Strict-Transport-Security` | `max-age=31536000`, **TLS responses only** | no `includeSubDomains`, no `preload` |
+| `Content-Security-Policy` | **not sent** | see below |
+
+**There is no default CSP, on purpose.** A policy worth having forbids inline script and
+inline style, and a server-rendered app built on this framework's view engines routinely
+has both — so a default strict enough to be worth the bytes would break working pages on
+upgrade, and one loose enough not to (`unsafe-inline`, `unsafe-eval`) buys close to
+nothing. Adopt one explicitly, measuring with `ContentSecurityPolicyReportOnly` first;
+`middleware.RecommendedContentSecurityPolicy` is a starting point. HSTS is decided from
+the request (`r.TLS`, or `X-Forwarded-Proto: https` for a TLS-terminating proxy; set
+`TrustForwardedProto: false` for a server facing the internet directly). Any header
+other than `nosniff` can be suppressed with `"off"` (`HSTSMaxAge: -1` for HSTS), and the
+whole filter with `RouteProvider.DisableSecurityHeadersMiddleware()`.
+
+One consequence of shipping `nosniff` everywhere: `HTTPViewScope.Render` now sets
+`Content-Type: text/html; charset=utf-8` when nothing has chosen one. It used to write
+the rendered template with no type at all and let net/http's sniffer guess, which
+browsers forgave; under `nosniff` they do not, and `http.DetectContentType` recognises
+only a fixed list of opening tags, so a fragment beginning `<ul>`, `<span>`, `<section>`,
+`<form>` or `<tr>` was answered `text/plain` and shown as source. An app that renders
+something that is not HTML — a sitemap, a feed, a plain-text mail body — sets the type
+before calling `Render` and that choice still wins.
+
+#### Request bodies are capped before they are read
+
+Nothing capped a request body before. The server was built with `ReadTimeout`,
+`WriteTimeout` and `MaxHeaderBytes` and no body limit, `http.MaxBytesReader` appeared
+nowhere in the tree, and the multipart parser read the whole form and consulted its size
+limits afterwards — the argument to `ParseMultipartForm` is only the *in-memory* budget,
+so a single unauthenticated POST could write as many bytes to the OS temp directory as
+it cared to send and the 10 MB per-file check ran once they were on disk.
+
+- `app.MaxRequestBodyBytes()` resolves a ceiling; `http.MaxBytesReader` applies it at the
+  server boundary in `ServerApp.Run` **and** per request in `Message.Init`, before any
+  middleware, handler or parser sees the body. The second is what protects an app that
+  mounts the router in a server of its own.
+- The ceiling **derives from the upload budget** so the two cannot disagree:
+  `max(32 MB, http.upload.maxMultipartSize) + 1 MB` of framing allowance. Override it
+  outright with the new `http.security.body.maxRequestBytes` (bytes).
+- `ParseMultipartForm` is now called with the body already capped at
+  `http.upload.maxMultipartSize` plus the framing allowance, so the total upload budget
+  is enforced *while* the parse runs. The in-memory budget is the smaller of
+  `http.security.body.maxSizeMB` (default 10 MB) and the total upload budget; `FormFile`
+  and `GetFiles` used to pass `http.security.file.maxSizeMB`, default **100 MB**, per
+  concurrent request.
+
+**Breaking:** a body larger than the resolved ceiling now fails at the reader. An app
+that streams large bodies by hand must raise `http.security.body.maxRequestBytes`. See
+MIGRATION_v2.md §29.
+
+#### A malformed multipart body is a 400, not a panic
+
+`GetMultipartFormValues` returns nil when the form cannot be parsed, and
+`MultipartParser.Parse` ranged straight over `form.File` on that nil pointer — so any
+client could panic any multipart endpoint with a truncated body, unauthenticated, with
+no valid input needed. `Parse` now returns `err.InputBodyParseError` (400) and
+`validateFormSize` nil-guards.
+
+#### Email header injection via `Subject`, `To`, `Cc` and attachment names
+
+Message headers were assembled with `fmt.Sprintf` and no CRLF filtering, so a CR or LF
+in the subject, a recipient, a CC entry, the sender or an attachment file name did not
+produce a header containing a newline — it produced *extra headers* and, after a blank
+line, an entire replacement body. `smtp.SendMail` validates only the envelope, so the
+attacker could not add envelope recipients or speak SMTP, but a subject of
+`hi\r\nReply-To: attacker@evil\r\nContent-Type: text/html\r\n\r\n<phishing>` sent a
+message they authored in full from the application's authenticated SMTP identity, with
+the application's own SPF and DKIM vouching for it. Any app that puts user-supplied text
+in a subject — a contact form, a "new message from ⟨name⟩" notification, a password
+reset that greets the user by name — was a vector.
+
+`MailService.buildBody` now **rejects** such a value with an error rather than stripping
+it, so `Send` fails before the SMTP conversation and the operator sees the probe in the
+log instead of a plausible-looking delivered message. The check covers the sender, every
+recipient, every CC entry, the subject, every attachment file name and content id, and
+(in `Send`) every BCC entry. See MIGRATION_v2.md §32.
+
+#### `AccessCheckerMiddleware` and two dead authorization interfaces are deleted
+
+`middleware.AccessCheckerMiddleware` was an authorization filter that enforced nothing.
+The only code that could supply it an access decision was commented out, so its "no
+decision available" branch fired on every request: it logged a warning and called the
+next handler. **Any route it was mounted on had no authorization applied** — not weak
+authorization, none, including for unauthenticated requests. A second fail-open sat
+behind it: even with a decision, a denial produced a `403` only when the `namespace`
+path parameter was `api`.
+
+`core.HttpAccessCommand` is deleted with it. `core.HttpFilterCommand` — its twin,
+`AllowFilterFields(ctx) []string` — is deleted too: it had no implementations and no
+callers anywhere, so nothing ever invoked `AllowFilterFields` and an app that
+implemented it in the belief filtering was restricted to the fields it named was
+filtering on anything a request asked for. Removing it changes no enforcement;
+request-derived filters are validated in `model.NewFilter`, and restricting them beyond
+"must be a real column" is `model.AccessControl.ValidateFilterAccess`, reached through
+`model.NewFilterWithAccess`. See MIGRATION_v2.md §27.
+
+#### `RoleBasedAccessControl` is safe to share across requests
+
+The user/role lookup was memoised in a plain `map[context.Context]*UserContextCache`
+field with **no mutex**. Because the key was the per-request `context.Context`, no entry
+was ever reused: every request was a miss and therefore a map *write*. An app naturally
+shares one access-control object across every request, so two concurrent requests
+through any RBAC entry point raced on that map — a DATA RACE under `-race`, and without
+it `fatal error: concurrent map writes`, a runtime fatal `RecoveryMiddleware` cannot
+contain, taking the process down together with every request in flight. The same map was
+an unbounded leak: nothing pruned it on the normal path (`ClearUserCache` had no call
+site), so it grew by one entry per request served and held each request's
+`context.Context` and the `core.Authenticable` behind it alive forever.
+
+The identity is now resolved once per exported call, threaded through private helpers,
+and memoised for the length of one request on the **request's own context** — see
+`core.IRequestIdentityMemo` under Added. Authorization decisions are unchanged. No API
+signature changed; `ClearUserCache(ctx)` drops the request's memo, and
+`ClearAllUserCache()` is a deliberate no-op because there is no longer any state
+spanning requests. See MIGRATION_v2.md §33.
+
+#### What these fixes cost, and what is still open
+
+None of this is free, and an app author deciding when to upgrade should have the bill.
+
+- **Database session storage is chattier.** The mediator's cache no longer decides
+  whether a session exists, so resolving a session is a `SELECT` on every request rather
+  than a map read after the first. Creating one costs `SELECT` (uniqueness check) +
+  `SELECT` (does the store already hold it) + `INSERT` + `UPDATE` (the CSRF token,
+  written through `SetItem`). That is the price of a logout on one replica taking effect
+  on the others, and there is no version of cross-process revocation that reads only
+  local memory. **It is not benchmarked.** If your session table is hot, measure before
+  you deploy.
+- **Every login creates and immediately revokes one extra session** — one extra `INSERT`
+  and `DELETE` on database storage — because rotation mints the new identifier through
+  the same `NewSessionWithoutUser` path everything else uses.
+- **`db/orm/fields.go` still copies an entity through `reflect` under no lock.** Any
+  entity shared between goroutines can therefore race inside the ORM, whatever locking
+  its own accessors do. The session layer is safe only because
+  `DbSessionMediator.persist` hands the ORM a detached `Snapshot()`; anything else in an
+  app that persists a shared entity has the same problem and needs the same treatment.
+  This is a known open defect, not a closed one.
+- **The live e2e suite has not been run against the fixed tree.** The Docker registry was
+  unreachable in the audit environment, so `sh e2e/run.sh` could not execute — which is
+  also how the harness's own "green means nothing" faults were found by reading rather
+  than by running. Everything above is verified by `go build ./...`, `go vet ./...`,
+  `go test ./...` and `go test -race ./auth ./event ./http/... ./job ./model
+  ./provider`; the live cross-engine exit criterion is **unverified, not passed.**
+- **`RB-10` … `RB-15` from the audit are untouched** and remain open follow-ups:
+  `RecoveryMiddleware` echoing the panic value in production, `AllowedProtectedFields()`
+  collapsing the protected-field boundary, filter-pattern matching normalising
+  differently from chi routing, RBAC `DBFilter.Field` taking user-controlled
+  substitution into documented raw SQL, `buildSubquerySQL` rendering `ORDER BY` without
+  the dialect hardening, and `MemoryRateLimitStore` sweeping at most every ten minutes.
+  So is RB-2 (dependency and toolchain floor).
 
 ### Breaking
 
@@ -167,6 +559,58 @@ work.
   silently. `config.KeepUnresolvedLiterals()` opts out. **Behaviour change, no
   compiler error.**
 
+The security round's breaks, each detailed under **Security** above:
+
+- **`core.SessionCookieName` is deleted** and the session cookie is renamed to
+  `__Host-GRG_SESSION_ID`. **This logs every existing session out on upgrade.**
+  MIGRATION_v2.md §24.
+- **`core.ISessionStorage` reshaped.** `ClearExpiredSessions`, `AddSession`,
+  `DeleteSession` and `DeleteSessionById` return `error`; `GetSessionById` returns
+  `(ISession, error)`. `core.ISession` and `core.ISimpleStorage` are unchanged.
+  MIGRATION_v2.md §26.
+- **`core.IAuthStrategy.Logout` returns `error`.** MIGRATION_v2.md §26.
+- **`auth.ISessionRepository.DeleteById` returns `(bool, error)`**, and
+  `auth.DbSessionMediator.DeleteSession` with it.
+- **`StandardAuthStrategy.Login` rotates the session identifier and mints a fresh CSRF
+  token**, so a caller must republish with `http.PublishSession`. **Behaviour change
+  for the framework's own `LoginController`, compile-clean break for an app's own login
+  handler** — it will build and quietly log nobody in. MIGRATION_v2.md §25.
+- **`LoginController.Login` no longer short-circuits an authenticated request**, so a
+  `POST /login` with valid credentials switches user instead of being ignored.
+  **Behaviour change, no compiler error.**
+- **`middleware.AccessCheckerMiddleware`, `core.HttpAccessCommand` and
+  `core.HttpFilterCommand` are deleted.** MIGRATION_v2.md §27.
+- **Boot fails for an absent, empty, placeholder or weak `auth.jwt.secret`** (32-byte
+  floor), and the exported `JwtService` methods refuse an unusable key. Compile-clean,
+  boot-time break. MIGRATION_v2.md §28.
+- **Request bodies are capped by `MaxBytesReader`.** New
+  `http.security.body.maxRequestBytes`. **Behaviour change, no compiler error.**
+  MIGRATION_v2.md §29.
+- **An upload is stored under the extension its *content* sniffs to, and a type outside
+  the allowlist is refused.** New `http.upload.allowedTypes` replaces the built-in table
+  wholesale. **Behaviour change, no compiler error.** MIGRATION_v2.md §30.
+- **`/public/*` sends `nosniff` and `Content-Disposition: attachment`, and retypes
+  everything outside a render-safe allowlist to `application/octet-stream` —
+  including SVG.** An `<img src="/public/logo.svg">` stops rendering. **Behaviour
+  change, no compiler error.** MIGRATION_v2.md §31.
+- **`MultipartFile.Close()` no longer deletes a file `Write` has published.** Use
+  `Delete()`. It also became idempotent, and now deletes the recorded *temp* path rather
+  than resolving through the public one. **Behaviour change, no compiler error.**
+- **`MailService.Send` fails for a value it previously accepted**: a CR or LF in the
+  sender, subject, a recipient, a CC or BCC entry, or an attachment name or content id.
+  The generated message also uses CRLF throughout and RFC 2047-encodes non-ASCII header
+  text. **Behaviour change, no compiler error.** MIGRATION_v2.md §32.
+- **`mail`'s internal `bodyBuilder.String()` is `Build() ([]byte, error)`**, and
+  `boundaryContent.FormatEmail` returns `(*bytes.Buffer, error)`. Unexported; listed
+  because a fork or a vendored copy will see it.
+- **Security headers are on by default** as a `/**` filter. `X-Frame-Options:
+  SAMEORIGIN` is the one that can break a working page (an app framed by a third party).
+  `RouteProvider.DisableSecurityHeadersMiddleware()` opts out.
+- **`HTTPViewScope.Render` sets `Content-Type: text/html; charset=utf-8`** when nothing
+  has chosen one. **Behaviour change, no compiler error.**
+- **`CsrfController.Token` no longer writes to session storage.** The
+  `SessionStorage` field is still injected and is now unused.
+
 ### Added
 
 - **MySQL support** (`db/sql/gorm/mysql/v2`): `MySQLDialect` and a MySQL
@@ -263,6 +707,61 @@ work.
   running: `db/sql/builder` 96.6%, MySQL dialect 95.3%, Postgres dialect 96.6%.
   A `livedb`-tagged suite additionally verifies the Tier-1 fixes against real
   MySQL 8 and Postgres 16.
+
+From the security round:
+
+- **`http.PublishSession(message core.HttpMessage, session core.ISession)`**: installs a
+  session as the one the rest of the request sees — the session scope, the message
+  context, the identity memo and the `X-CSRF-Token` header, which the open-coded
+  `message.Session().(core.IEditableSessionScope).Set(...)` dance did not cover.
+- **`core.IRequestIdentityMemo`** (`LoadIdentity`, `StoreIdentity`,
+  `InvalidateIdentity`): an optional interface a per-request context may implement so
+  the caller's identity is resolved once per request rather than once per question. The
+  framework's own message context implements it. An app that supplies its own message
+  context can implement it and get the same memoisation; a context that does not — a
+  CLI command, a background job, a unit test — resolves every time, as before. The
+  memoised value is an `any` because `app/core` sits underneath the package that owns
+  the resolved type; a carrier stores it and hands it back, keyed, and never inspects
+  it.
+- **`core.ISessionRevoker`** (`RevokeSession(id) (bool, error)`), optional and additive.
+  Both shipped storages implement it; one that does not gets the previous
+  (unconditional) rotation behaviour.
+- **`middleware.SecurityHeadersMiddleware`**, `middleware.SecurityHeadersOptions`,
+  `middleware.RecommendedContentSecurityPolicy`,
+  `middleware.DefaultReferrerPolicy` / `DefaultFrameOptions` / `DefaultHSTSMaxAge`, and
+  `RouteProvider.ConfigureSecurityHeaders` / `DisableSecurityHeadersMiddleware`.
+- **`core.SessionCookieBaseName`**, `core.HostPrefixedSessionCookieName`,
+  `auth.SessionCookieName()`, `auth.SessionCookieDomain()`,
+  `auth.ConfigSessionCookieDomain` and `auth.NewSessionCookie`.
+- **`auth.ValidateJwtSecret`**, `auth.MinJwtSecretLength`, `provider.ValidateJwtConfig`,
+  `config.JwtIsConfigured`, `config.JwtSecretKey` and
+  `config.KeysWithoutSecureFallback`.
+- **`auth.NewDbSessionStorageWithRepository`**: builds a storage over a repository given
+  directly. `NewDbSessionStorage` leaves the mediator to be injected, so nothing outside
+  the container could build a working storage — including a test that wants to prove a
+  revoked session stops authenticating, or an app whose sessions live in a table its own
+  repository owns.
+- **`auth.DbSessionEntity.Snapshot` / `AdoptPersistedMeta` / `IsPersisted`**, and
+  `auth.SessionTombstoneRetention` (25 h).
+- **`orm.UpdateExisting` and `orm.ErrRowGone`.** `Save`, `Create`, `Update` and `Delete`
+  are unchanged, and `Update` still does not treat zero matched rows as an error:
+  Postgres reports matched rows, but MySQL reports *changed* rows unless the DSN carries
+  `clientFoundRows`, so a no-op update of a live row legitimately reports zero there.
+  `UpdateExisting` resolves the ambiguity by checking for the row only when the statement
+  matched none. `updateEntity` now records the statement result on
+  `EntityMeta.QueryResult` unconditionally.
+- **`model.MultipartFile.MediaType()`**, `model.UploadTypePolicy`,
+  `model.ResolveUploadTypePolicy`, `model.DetectUploadMediaType`,
+  `model.UploadTypeError` and `model.ConfigAllowedUploadTypes`.
+- **`Message.RegisterCloser(io.Closer)`** and `HTTPRequestScope.CapBody(int64)`.
+- **`app.MaxRequestBodyBytes()`**, `app.ConfigMaxRequestBytes`,
+  `app.DefaultMaxRequestBytes`.
+- **Config keys**: `http.upload.allowedTypes` and
+  `http.security.body.maxRequestBytes` are new.
+  `auth.session.cookie.domain` is not new but now has a named constant, a resolver and a
+  documented consequence — setting it opts the app out of the `__Host-` cookie name.
+- Another 29 test files, all of them regression tests for the audit findings; they are
+  named per finding in `SECURITY_RELEASE_BLOCKERS.md`.
 
 ### Fixed
 
@@ -515,6 +1014,104 @@ work.
 - **`Container.bind` overwrote silently.** Rebinding still works, but replacing a
   core interface now warns.
 
+#### Sessions and uploads (from the security round)
+
+Bugs found alongside the security work, none of them exploitable on their own:
+
+- **A request that rotated its session was anonymous.** `CurrentSession` rotates once a
+  session is idle past the activity timeout or older than the rotation interval, and the
+  rotation deletes the identifier the request resolved on — but `SessionMiddleware` never
+  told the request. Both of the request's caches named the deleted identifier, so
+  `IsLoggedIn` and `CurrentUser` found nothing: a returning visitor was bounced through
+  the login page once per idle period, on a request carrying a perfectly good cookie. It
+  also orphaned a row — a login arriving past the activity timeout took `Login`'s "no
+  existing session" branch and minted a third session while the live one was never
+  revoked, leaving three `Set-Cookie` headers, two rows, and an `X-CSRF-Token` bound to
+  neither. `SessionMiddleware` now publishes the session it resolved; when nothing
+  rotated it is a no-op.
+- **A CSRF token now survives an idle or age rotation** and is deliberately *replaced* by
+  a login. Rotation used to mint a fresh token and leave the client holding one the next
+  request rejects — a spurious 403 at the activity threshold and the rotation interval,
+  on a request the client did not ask to rotate anything on, which it has no way to
+  learn about. `docs/CSRF.md` is corrected: a session keeps one token for as long as it
+  is the same session **and the same principal**, and re-reading `X-CSRF-Token` from
+  every response is required rather than merely tidy.
+- **`Request().Body()`'s "body too large" error reported the wrong limit** —
+  `maxFileBytes`, a much larger number than the `maxBodyBytes` actually applied, so the
+  message told an operator the body was under the limit it had just been rejected for.
+- **Temp copies of uploads were never removed.** The cleanup sat commented out behind a
+  `// todo: need to fix the closing (removing) of temp files`, so every upload received
+  through a DTO stayed in `resource/temp` for good. The todo was warranted:
+  `MultipartFile.Close` resolved the file to delete through the *public* path as soon as
+  `Write` had published the upload, so a request-scoped cleanup would have deleted the
+  stored file — and it closed the handle before asking for the path, so the temp copy
+  was in fact never removed either. Whoever wrote the cleanup had to choose between
+  leaking every upload and destroying every upload. `Close` now deletes the recorded temp
+  path only and is idempotent; `Message.RegisterCloser` releases the copies when the
+  request ends.
+- **`Message.Close` deleted no spilled multipart parts.** It looped over the parts
+  opening each one and closing the *new* handle, which removes nothing, so every part the
+  parser spilled past its in-memory budget stayed in the OS temp directory for the life
+  of the process. It calls `request.MultipartForm.RemoveAll()` now.
+- **`decoder/multipart.DecodeFiles` discarded the error from `NewMultipartFile`** and
+  bound the nil result onto the DTO anyway, producing a non-nil `core.IFile` holding a
+  nil pointer, so the handler's first call on it panicked somewhere unrelated to the
+  upload.
+- **`MultipartFile.Write(path, nil)` on a released file dereferenced a nil reader**
+  inside `io.Copy` instead of reporting that the upload was gone.
+- **An upload with a very long filename was refused** with "file name too long" from
+  `os.Create` — an ordinary browser upload from someone with a verbose filename, not an
+  attack. The base name is now bounded, and one that sanitises down to nothing is stored
+  as `upload<ext>` rather than with an empty name component.
+- **`DbSessionRepository.Save` called an update against a row that was gone a success.**
+  An `UPDATE` keyed on a primary key that no longer exists matches nothing and succeeds,
+  so a session whose row had been deleted was written "successfully" and every caller
+  above believed the state was persisted. It goes through `orm.UpdateExisting` now.
+- **Six dropped errors on `DbSessionEntityWithMediator`'s setters.** Each mutates the
+  entity and writes it back, and each called `UpdateSession` as a bare statement, so a
+  session whose store was unreachable behaved exactly like one that had been saved.
+- **`session:gc` and `ClearExpiredSessionsJob` reported success for a sweep that
+  failed.** The storage swallowed the error; both callers now report it, and the command
+  prints "expired sessions were NOT cleared" rather than "cleared".
+- **A mail with neither a body nor an attachment panicked** on a nil MIME boundary. It
+  now produces a valid headers-only message.
+- **A `.svg` served from `/public/*` was `image/svg+xml`** and a `.html` was
+  `text/html; charset=utf-8`, both from the application's own origin. See Security.
+
+#### The e2e harness reported success for runs that executed nothing
+
+Three independent faults, all of which made a green harness meaningless:
+
+- **`e2e/run.sh` exited 0 no matter what failed.** Its `EXIT` trap ends in `|| true` —
+  it has to, since tearing down a stack that never came up is not an error — and on any
+  shell that predates POSIX settling on `$?` being preserved across a trap, the script's
+  status becomes the trap's. That was observed, not feared: a base image would not pull,
+  no test executed, and the script reported success. `cleanup` now reads `$?` on its
+  first line and `exit`s with it on its last, dumps `ps -a` and the container logs before
+  `down` deletes them, and the `up` steps use `--wait` so a service that starts and
+  immediately dies is caught rather than walked past.
+- **Every case in the live suite skipped itself when its dependency was unreachable**,
+  and `go test` reports a run of nothing but skips as `ok` with exit 0 — so twelve skips
+  read exactly like twelve passes to anything downstream of the exit code. Skipping is
+  the right default for a developer running `go test ./...`; it is the wrong default for
+  the harness. `E2E_REQUIRE_LIVE=1`, set by the compose file, turns every gate fatal, and
+  a `TestMain` fails a run that executed **zero** live cases at all — which is what
+  catches a `-run` pattern that matched nothing or a build tag that left the file out of
+  the binary.
+- **MySQL was never started, and could not have been reached if it had been.** The
+  harness brought up only `postgres` and ran `go test` without the `livedb` tag, so the
+  whole of the MySQL coverage was compiled out; and the live suite hardcoded
+  `127.0.0.1:3307`, which from inside the runner container is the runner itself. The
+  compose file now starts `postgres-live` and `mysql-live` alongside the fixture's own
+  database, the runner depends on all of them being healthy, the test command carries
+  `-tags=livedb`, and `E2E_PG_HOST` / `E2E_PG_PORT` / `E2E_MYSQL_HOST` /
+  `E2E_MYSQL_PORT` redirect the suite at the compose network. The cross-engine case
+  refuses to fall back to a second Postgres database under `E2E_REQUIRE_LIVE`.
+- `e2e/fixture-app/.env` carried `JWT_SECRET=fixture-secret`, 14 bytes, which the new
+  validation rejects — so the fixture app panicked at boot and took the whole suite with
+  it. It is a 42-byte value now. Worth naming because it is exactly the upgrade failure a
+  real app will hit.
+
 ### What a real migration found
 
 A separate round of work (`FINDINGS_v2_FROM_FLOW8.md`) came from migrating a real
@@ -684,6 +1281,37 @@ survive verification:
    What it did not follow through on is that leaving the literal in place is
    *actively worse* than blanking for an optional key, because a literal `${VAR}` is
    a value no consumer accepts. Corrected in this round; see the Breaking entry.
+
+Four more from the security round, against `SECURITY_RELEASE_BLOCKERS.md` rev 2 and
+against the fix work's own first attempts:
+
+7. **RB-5's scope was one interface too small.** It called for deleting
+   `core.HttpAccessCommand` and left `core.HttpFilterCommand` alone. The twin has the
+   same defect for the same reason — no implementations, no callers, and a name that
+   reads as a control — so it is deleted too. `core.IQueryBuilder` is genuinely
+   unaffected.
+8. **RB-4's API break did not have to reach `core.ISession`.** Giving the setters errors
+   would break every request scope, view scope and test double downstream for a signal
+   almost no caller can act on. They stay void; the failure surfaces at the next
+   operation that *can* report one — the storage call, or `Login`/`Logout` — and
+   `StandardAuthStrategy.Login` now persists through the storage after setting the user
+   id, which is both a reportable step and positive confirmation the write landed.
+9. **Carrying the CSRF token across a rotation was right, and then wrong.** The first
+   version of the RB-3 fix carried the token onto every new identifier, including the
+   one a login mints. That is a complete CSRF bypass for an app that opted out of the
+   `__Host-` name: a sibling host plants a session, reads its token from `/csrf`, the
+   login moves the victim onto an identifier the sibling cannot guess — and the sibling,
+   being same-site, still gets the victim's `SameSite=Lax` cookie sent on its POSTs and
+   presents the token it already knows. `RotateSession` still carries the token, because
+   the idle and age rotations happen on requests the client did not ask to rotate
+   anything on; `Login` replaces it, because a login is a request the client made and
+   reads the response to.
+10. **Resolving the RBAC identity per call was a real regression.** The first version of
+    the RB-6 fix removed the shared map and resolved on every exported call, which for a
+    session-backed strategy is a session lookup plus a user load — once per row, because
+    `FieldFilteredDto.MarshalJSON` runs per DTO. A hundred-row list performed a hundred
+    of each. The memo is back, on the request's own context where the data's lifetime
+    actually is, keyed on the session id and user id so a login mid-request misses it.
 
 ---
 

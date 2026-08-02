@@ -5,12 +5,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,6 +37,76 @@ const (
 	fixtureRelationTagAID = "tag-red"
 	fixtureRelationTagBID = "tag-blue"
 )
+
+// requireLiveEnvVar names the switch that turns every gate in this package from a skip
+// into a failure.
+//
+// Every case in this file gates itself on E2E_BASE_URL, and every case in live_db_test.go
+// gates itself on an engine it can dial. Skipping is the correct default: a developer
+// running `go test ./...` must not be made to stand up PostgreSQL, MySQL and a dockerised
+// fixture app to see the framework's own suite go green.
+//
+// It is the wrong default for the harness. `go test` reports a run in which all of these
+// cases skipped as `ok` with exit 0, so a run that never reached a single live dependency
+// was indistinguishable from a run that verified all of them — twelve skips and a zero
+// status read exactly like twelve passes to anything downstream of the exit code. A green
+// harness is treated as evidence that the integration paths were exercised, and it could
+// not carry that meaning while the failure mode of the whole environment (an image that
+// would not build, an engine that never came up) was silence.
+//
+// So e2e/run.sh sets E2E_REQUIRE_LIVE=1 and each gate becomes fatal there, while a bare
+// `go test` keeps skipping politely.
+const requireLiveEnvVar = "E2E_REQUIRE_LIVE"
+
+// liveRunIsRequired reports whether the caller demanded that the live cases actually run.
+func liveRunIsRequired() bool {
+	return os.Getenv(requireLiveEnvVar) == "1"
+}
+
+// executedLiveCases counts the cases that got past their gate against a real dependency.
+// It is atomic because nothing stops these tests from being run with -parallel.
+var executedLiveCases atomic.Int64
+
+// recordLiveCase marks that a gate admitted a case, which is the only evidence available
+// that the run touched something real.
+func recordLiveCase() {
+	executedLiveCases.Add(1)
+}
+
+// skipUnlessLiveRequired skips the case, or fails it when a real run was demanded. The
+// message is the same either way, so the reason a case could not run is reported whichever
+// mode the suite is in.
+func skipUnlessLiveRequired(t *testing.T, format string, args ...any) {
+	t.Helper()
+
+	reason := fmt.Sprintf(format, args...)
+	if liveRunIsRequired() {
+		t.Fatalf("%s is set, so this case must run for real rather than skip: %s", requireLiveEnvVar, reason)
+	}
+	t.Skip(reason)
+}
+
+// TestMain catches what a per-case gate cannot see.
+//
+// Turning each skip into a failure only helps for cases that were selected to run at all.
+// A -run pattern that matches nothing, a build tag that left live_db_test.go out of the
+// binary, or a package with its test files renamed away all still exit 0 with no gate ever
+// consulted. Under E2E_REQUIRE_LIVE a run that executed zero live cases is therefore a
+// failure in its own right: the harness asked for proof and got an empty result.
+func TestMain(m *testing.M) {
+	code := m.Run()
+
+	if code == 0 && liveRunIsRequired() && executedLiveCases.Load() == 0 {
+		fmt.Fprintf(
+			os.Stderr,
+			"%s is set but no live case executed, so this run proves nothing and is not a pass\n",
+			requireLiveEnvVar,
+		)
+		code = 1
+	}
+
+	os.Exit(code)
+}
 
 func TestBootstrapAndRouting(t *testing.T) {
 	waitForServer(t)
@@ -97,9 +169,12 @@ func TestSessionAuthenticationFlow(t *testing.T) {
 		t.Fatalf("expected login success 200, got %d body=%s", resp.StatusCode, string(resp.Body))
 	}
 
-	sessionCookie := cookieByName(resp.Cookies, "GRG_SESSION_ID")
+	sessionCookie := sessionCookieFrom(resp.Cookies)
 	if sessionCookie == nil {
-		t.Fatal("expected GRG_SESSION_ID cookie to be set")
+		t.Fatalf("expected a session cookie to be set, got %v", resp.Cookies)
+	}
+	if !strings.HasPrefix(sessionCookie.Name, "__Host-") {
+		t.Fatalf("expected the host-locked session cookie by default, got %q", sessionCookie.Name)
 	}
 
 	resp = mustRequest(t, http.MethodGet, baseURL()+"/web/protected", "", nil, []*http.Cookie{sessionCookie}, false)
@@ -622,7 +697,7 @@ func waitForServer(t *testing.T) {
 	t.Helper()
 
 	if os.Getenv("E2E_BASE_URL") == "" {
-		t.Skip("skipping docker e2e test outside configured E2E environment")
+		skipUnlessLiveRequired(t, "E2E_BASE_URL is unset, so there is no fixture app to talk to")
 	}
 
 	deadline := time.Now().Add(45 * time.Second)
@@ -631,6 +706,7 @@ func waitForServer(t *testing.T) {
 		if err == nil {
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
+				recordLiveCase()
 				return
 			}
 		}
@@ -746,6 +822,23 @@ func cookieByName(cookies []*http.Cookie, name string) *http.Cookie {
 		}
 	}
 	return nil
+}
+
+// sessionCookieFrom picks the session cookie out of a response, whichever of its two names is
+// in use — the name carries a `__Host-` prefix unless the app opted out of it.
+//
+// It takes the *last* match, which is what a browser does. A login response carries two of
+// them: the session middleware starts a session for a request that arrives without one, and
+// then the login rotates the identifier, so the second Set-Cookie supersedes the first.
+// Taking the first would hand the following request an identifier that has just been revoked.
+func sessionCookieFrom(cookies []*http.Cookie) *http.Cookie {
+	var found *http.Cookie
+	for _, cookie := range cookies {
+		if strings.HasSuffix(cookie.Name, "GRG_SESSION_ID") {
+			found = cookie
+		}
+	}
+	return found
 }
 
 func openDB(t *testing.T) *sql.DB {

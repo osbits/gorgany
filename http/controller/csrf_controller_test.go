@@ -168,15 +168,16 @@ func controllerForStrategy(strategy *stubStrategy) *CsrfController {
 	return c
 }
 
-// stubSessionStorage records the upsert. It matters because ISession.SetItem is in-memory
-// only for the DB-backed store, so a token that is never AddSession'd is lost.
+// stubSessionStorage records anything the controller writes to storage, which should be
+// nothing at all — see CsrfController.SessionStorage.
 type stubSessionStorage struct {
 	core.ISessionStorage
 	added []core.ISession
 }
 
-func (s *stubSessionStorage) AddSession(session core.ISession) {
+func (s *stubSessionStorage) AddSession(session core.ISession) error {
 	s.added = append(s.added, session)
+	return nil
 }
 
 // -------------------------------------------------------------------- tests
@@ -268,11 +269,16 @@ func TestAnExistingSessionIsNotReplaced(t *testing.T) {
 	assert.Zero(t, strategy.newCalls)
 }
 
-// TestTheTokenIsPersisted. ISession.SetItem writes DbSessionEntity's Attributes map and
-// nothing else, so a token that is not AddSession'd survives only until the response ends —
-// and the next request's CSRF check then rejects it. SessionMiddleware upserts for the same
-// reason.
-func TestTheTokenIsPersisted(t *testing.T) {
+// TestTheTokenIsPersistedByTheSessionItself, not by this endpoint writing to storage.
+//
+// This test used to assert the opposite — that Token() ends with AddSession — on the belief
+// that ISession.SetItem is in-memory only. It is not: a DB-backed session writes through to
+// its row on every SetItem, and a memory store hands out the object it is holding, so the
+// upsert added nothing. What it did add was a way for a public, unauthenticated endpoint to
+// put a session back into storage after it had been revoked, so it is gone; the assertion
+// that pinned it is inverted here rather than deleted, because "the token still survives the
+// response" is the property that mattered and it has to keep being checked.
+func TestTheTokenIsPersistedByTheSessionItself(t *testing.T) {
 	session := &stubSession{items: map[string]string{}}
 	strategy := &stubStrategy{session: session}
 	controller := controllerForStrategy(strategy)
@@ -280,8 +286,11 @@ func TestTheTokenIsPersisted(t *testing.T) {
 
 	controller.Token(newStubMessage())
 
-	require.Len(t, storage.added, 1, "the session carrying the new token must be persisted")
-	assert.Same(t, core.ISession(session), storage.added[0])
+	assert.NotEmpty(t, session.GetItem(core.CSRFSessionKey),
+		"the token is written into the session, which is what persists it")
+	assert.Empty(t, storage.added,
+		"the endpoint must not write a session back to storage: it resolves the session at "+
+			"the top of the handler, so anything it upserts may already have been revoked")
 }
 
 // TestASessionlessStrategySaysSoRatherThanFailing. JwtAuthStrategy.NewSessionWithoutUser

@@ -26,7 +26,7 @@ func TestGeneratedTokensCarryTheRole(t *testing.T) {
 	t.Cleanup(viper.Reset)
 	viper.Set("auth.jwt.lifeTime", 3600)
 
-	const secret = "test-secret"
+	const secret = strongTestSecret
 	service := JwtService{}
 
 	token, err := service.GenerateJwt(&roleUser{username: "ann", role: "admin"}, secret)
@@ -76,7 +76,7 @@ func TestAnEmptyRoleIsStillWritten(t *testing.T) {
 	t.Cleanup(viper.Reset)
 	viper.Set("auth.jwt.lifeTime", 3600)
 
-	const secret = "test-secret"
+	const secret = strongTestSecret
 	service := JwtService{}
 
 	token, err := service.GenerateJwt(&roleUser{username: "ann", role: ""}, secret)
@@ -101,7 +101,7 @@ func TestTheRoleClaimIsNotTheAuthorityForAuthorisation(t *testing.T) {
 	t.Cleanup(viper.Reset)
 	viper.Set("auth.jwt.lifeTime", 3600)
 
-	const secret = "test-secret"
+	const secret = strongTestSecret
 
 	// A token minted while the user was an admin.
 	user := &roleUser{username: "ann", role: "admin"}
