@@ -181,6 +181,13 @@ func (m *MockSessionStorage) ClearExpiredSessions() error {
 	return args.Error(0)
 }
 
+// RevokeSession is required by core.ISessionStorage. Nothing in this package's tests revokes,
+// so the default answer is "there was a session and it is gone" rather than an expectation
+// every test would have to set.
+func (m *MockSessionStorage) RevokeSession(id string) (bool, error) {
+	return true, nil
+}
+
 func (m *MockSessionStorage) GetSessionRotationInterval() time.Duration {
 	args := m.Called()
 	return args.Get(0).(time.Duration)

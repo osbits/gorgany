@@ -19,6 +19,15 @@ import (
 // why zero matched rows is not, on its own, evidence of anything.
 var ErrRowGone = errors.New("orm: the row this entity was loaded from no longer exists")
 
+// ErrRowConflict reports a guarded update whose guard did not match a row that is still there.
+//
+// It is returned only when EntityMeta.UpdateGuard is set, and it is deliberately distinct from
+// ErrRowGone. Gone means the row was deleted and the caller must fail closed; conflict means
+// somebody else wrote the row first and the caller has to re-read it and decide what its own
+// pending changes mean on top of the new state. Collapsing the two would make a lost update
+// look like a revocation.
+var ErrRowConflict = errors.New("orm: the row this entity was loaded from has changed since it was read")
+
 // Save saves an domain (creates if new, updates if existing)
 func (o *ORM[T]) Save(entity T) error {
 	if isNilValue(entity) {
@@ -308,6 +317,13 @@ func (o *ORM[T]) createEntity(entity T) error {
 // What is unconditional is recording the result on the entity's meta. Before, the statement
 // result was thrown away entirely: an update against a deleted row was indistinguishable
 // from one that landed, for every caller, with no way to find out.
+//
+// EntityMeta.UpdateGuard turns the same zero-row result into a decidable one without needing
+// requireRow, and the MySQL caveat above is why: a guarded write, by construction, sets a
+// column to a value the row does not currently hold — the version it is guarding on — so a
+// guard that matched always reports at least one changed row on both engines. Zero rows under
+// a guard therefore means either the row is gone or the guard lost, and the existence probe
+// below tells them apart.
 func (o *ORM[T]) updateEntity(entity T, requireRow bool) error {
 	meta := entity.GetMeta()
 	if meta == nil {
@@ -369,12 +385,28 @@ func (o *ORM[T]) updateEntity(entity T, requireRow bool) error {
 		return fmt.Errorf("cannot update domain with zero primary key value")
 	}
 
+	// A DirtyColumns set that named nothing writable leaves no SET clause, and an UPDATE with
+	// no SET is a syntax error rather than a no-op. Nothing was asked for, so nothing is done —
+	// but the meta is still refreshed below, because the caller's view of the entity has not
+	// changed either.
+	if len(updateFields) == 0 {
+		meta.IsDirty = false
+		meta.IsLoaded = true
+		return nil
+	}
+
 	// Add WHERE clause for primary key
 	builder = builder.Where(&dbCore.BinaryCondition{
 		Left:     meta.PrimaryKey,
 		Operator: "=",
 		Right:    pkValue,
 	})
+
+	// And the caller's own guard, if it set one. Successive Where calls are ANDed, so this
+	// narrows the statement rather than replacing the key predicate.
+	for _, guard := range meta.UpdateGuard {
+		builder = builder.Where(guard)
+	}
 
 	// Execute the query
 	queryRes := o.db.Executor().Exec(context.Background(), builder)
@@ -383,13 +415,20 @@ func (o *ORM[T]) updateEntity(entity T, requireRow bool) error {
 	}
 	meta.QueryResult = &queryRes
 
-	if requireRow && queryRes.RowsAffected == 0 {
+	if (requireRow || len(meta.UpdateGuard) > 0) && queryRes.RowsAffected == 0 {
 		exists, existsErr := o.rowExists(tableName, meta.PrimaryKey, pkValue)
 		if existsErr != nil {
 			return existsErr
 		}
 		if !exists {
 			return fmt.Errorf("%w: %s where %s = %v", ErrRowGone, tableName, meta.PrimaryKey, pkValue)
+		}
+		// The row is there and the statement still matched nothing, so it was the guard that
+		// refused. Only reachable when a guard was set: without one, zero matched rows against
+		// a row that exists is the ordinary MySQL "wrote the values it already held" case
+		// described above, and must not be reported as a failure.
+		if len(meta.UpdateGuard) > 0 {
+			return fmt.Errorf("%w: %s where %s = %v", ErrRowConflict, tableName, meta.PrimaryKey, pkValue)
 		}
 	}
 

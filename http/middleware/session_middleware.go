@@ -75,6 +75,18 @@ func (thiz SessionMiddleware) Handle(next func(core.HttpMessage)) func(core.Http
 			thiz.markFlashUsed(session)
 			session.SetLastActivity(time.Now())
 
+			// These setters are void, so a database-backed session's write-through can fail
+			// with nowhere to say so, and this branch has no error-bearing call after it —
+			// which is what made the heartbeat one of the two paths where a lost write was
+			// invisible to everyone but the log. It is reported and the request continues,
+			// for the same reason the expired-session branch below does: refusing here would
+			// turn an unreachable store into an outage on every page, and the heartbeat hands
+			// the client nothing to be wrong about. The one thing it does hand over — the CSRF
+			// token — is covered a layer down, in CsrfService.
+			if err := core.PendingWriteError(session); err != nil {
+				err2.HandleError(err)
+			}
+
 			// Publish the token on this response too. This branch used to return
 			// without it, so X-CSRF-Token appeared on exactly one response per
 			// session — the one that created it. A client that missed that response

@@ -308,12 +308,21 @@ func (thiz *MemorySession) revokeLocked(id string) bool {
 		if thiz.tombstones == nil {
 			thiz.tombstones = make(map[string]time.Time)
 		}
+		evictOldestLocked(thiz.tombstones, MaxSessionTombstones)
 		thiz.tombstones[id] = now.Add(SessionTombstoneRetention)
 	}
 	thiz.sweepTombstonesLocked(now)
 
 	return held
 }
+
+// RevocationPending implements core.ISessionRevocationStatus, and always answers false.
+//
+// That is a fact about this store rather than a stub. Revoking here is a map delete under a
+// mutex: it cannot fail, so there is never a revocation left owed, and there is nothing for a
+// caller to withhold a replacement session over. The database store, whose delete can fail
+// halfway, is the one that has something to say.
+func (thiz *MemorySession) RevocationPending(string) bool { return false }
 
 // Len is the number of sessions currently held.
 //
@@ -383,6 +392,7 @@ func (thiz *MemorySession) GetSessionActivityTimeout() time.Duration {
 }
 
 var (
-	_ core.ISessionStorage = (*MemorySession)(nil)
-	_ core.ISessionRevoker = (*MemorySession)(nil)
+	_ core.ISessionStorage          = (*MemorySession)(nil)
+	_ core.ISessionRevoker          = (*MemorySession)(nil)
+	_ core.ISessionRevocationStatus = (*MemorySession)(nil)
 )

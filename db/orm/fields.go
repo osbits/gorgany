@@ -143,8 +143,10 @@ func extractUpdateFieldsFromStruct(val reflect.Value, meta *EntityMeta, pkValue 
 			continue
 		}
 		if columnName == meta.PrimaryKey {
+			// Never filtered by DirtyColumns: the primary key identifies the row rather than
+			// being written to it, and dropping it would leave the statement with no WHERE.
 			*pkValue = field.Interface()
-		} else {
+		} else if meta.isDirtyColumn(columnName) {
 			updateFields[columnName] = field.Interface()
 		}
 		columnMap[columnName] = true

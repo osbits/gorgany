@@ -30,6 +30,38 @@ type EntityMeta struct {
 	QueryResult   *dbCore.QueryResult
 	RelationMeta  map[string]*RelationMeta
 	DataSource    dbCore.IDataSource
+
+	// DirtyColumns, when non-empty, restricts an UPDATE's SET list to these columns.
+	//
+	// Nil or empty means "write every column", which is what every caller before this did and
+	// what Save still does — so an entity that never sets it is unaffected. Only updateEntity
+	// consults it; an INSERT writes the whole row by definition, and the primary key is never
+	// skipped because it is the WHERE, not a SET.
+	//
+	// It exists because a full-row UPDATE writes columns the caller never touched, using
+	// whatever the in-memory copy happens to hold. For an entity two processes share — a
+	// session row is the one the framework ships — that turns a routine heartbeat into a
+	// silent overwrite of state the other process changed.
+	DirtyColumns map[string]bool
+
+	// UpdateGuard is ANDed into an UPDATE's WHERE on top of the primary key. It is how a
+	// caller says "only if the row still looks the way I read it".
+	//
+	// A guarded statement that matches nothing, against a row that is still there, is
+	// ErrRowConflict — a different answer from ErrRowGone, and callers act on them
+	// differently: gone means fail closed, conflict means re-read and reconcile.
+	UpdateGuard []dbCore.Condition
+}
+
+// isDirtyColumn reports whether an UPDATE should carry this column.
+//
+// An empty DirtyColumns set means "all of them", so the default is the pre-existing
+// full-row behaviour and only an entity that opts in narrows its writes.
+func (e *EntityMeta) isDirtyColumn(columnName string) bool {
+	if len(e.DirtyColumns) == 0 {
+		return true
+	}
+	return e.DirtyColumns[columnName]
 }
 
 func (e *EntityMeta) IsRelationLoaded(relationName string) bool {

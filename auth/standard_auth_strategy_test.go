@@ -27,6 +27,12 @@ type MockSessionFactory struct {
 }
 
 func (m *MockSessionStorage) hasExpectation(method string) bool {
+	return hasExpectation(&m.Mock, method)
+}
+
+// hasExpectation reports whether a test has set any expectation for this method, so a double
+// can supply a harmless default instead of failing a test that is not about this call.
+func hasExpectation(m *mock.Mock, method string) bool {
 	for _, call := range m.ExpectedCalls {
 		if call.Method == method {
 			return true
@@ -70,6 +76,26 @@ func (m *MockSessionStorage) DeleteSession(session core.ISession) error {
 
 func (m *MockSessionStorage) DeleteSessionById(id string) error {
 	return errorArg(m.Called(id), 0)
+}
+
+// RevokeSession is required by core.ISessionStorage rather than asserted for at the call
+// site. This double not having it is why StandardAuthStrategy.revoke's old fallback was not
+// dead code in the test suite: TestStandardAuthStrategy_RotateSession passed only because
+// the fallback answered "the session was live" for a delete that reported nothing at all.
+//
+// A test that has not said otherwise gets (true, nil): "there was a session and it is gone"
+// is what a rotation test means by a successful revoke, and it keeps the expectations that
+// were written as .Return() reading the way they did.
+func (m *MockSessionStorage) RevokeSession(id string) (bool, error) {
+	if !m.hasExpectation("RevokeSession") {
+		return true, nil
+	}
+	args := m.Called(id)
+	if len(args) == 0 {
+		return true, nil
+	}
+	wasLive, _ := args.Get(0).(bool)
+	return wasLive, errorArg(args, 1)
 }
 
 func (m *MockSessionStorage) GetSessionById(id string) (core.ISession, error) {
@@ -165,7 +191,16 @@ func (m *MockMessageContext) GetPathParam(name string) string {
 	return args.String(0)
 }
 
+// GetSession answers nil when a test has said nothing about it.
+//
+// Minting a session now resolves whatever identifier the client presented first, so it can
+// refuse to replace one whose revocation is still owed — see NewSessionWithoutUser. That put
+// GetSession on the path of every test that mints, none of which are about the presented
+// session. A default of "this request presents none" keeps those tests saying what they mean.
 func (m *MockMessageContext) GetSession() core.ISession {
+	if !hasExpectation(&m.Mock, "GetSession") {
+		return nil
+	}
 	args := m.Called()
 	if args.Get(0) == nil {
 		return nil
@@ -205,7 +240,12 @@ func (m *MockCookieManager) SetCookie(cookie *http.Cookie) {
 	m.Called(cookie)
 }
 
+// GetCookie answers nil when a test has said nothing about it, for the same reason as
+// MockMessageContext.GetSession above.
 func (m *MockCookieManager) GetCookie(key string) *http.Cookie {
+	if !hasExpectation(&m.Mock, "GetCookie") {
+		return nil
+	}
 	args := m.Called(key)
 	if args.Get(0) == nil {
 		return nil
@@ -517,7 +557,16 @@ func TestStandardAuthStrategy_RotateSession(t *testing.T) {
 	mockStorage.On("AddSession", mock.Anything).Return()
 	// The old identifier is revoked before the new one inherits the user id, and rotation is
 	// abandoned when there was nothing to revoke — see RotateSession.
-	mockStorage.On("DeleteSessionById", oldSession.GetId()).Return()
+	//
+	// The expectation names RevokeSession, not DeleteSessionById, and the difference is the
+	// whole of SEC-H04. Rotation needs to know whether the session it is carrying an identity
+	// off was still live; DeleteSessionById cannot say, because deleting an absent session is
+	// deliberately not an error. This test used to pass against DeleteSessionById only because
+	// StandardAuthStrategy.revoke fell back to it for a storage with no RevokeSession — and
+	// this double was such a storage — reporting every successful delete as live. The fallback
+	// looked like dead code (both shipped storages implement the revoker) while in fact being
+	// the only path this test ever exercised.
+	mockStorage.On("RevokeSession", oldSession.GetId()).Return(true, nil)
 
 	// Create a test session for the factory
 	testSession := &Session{

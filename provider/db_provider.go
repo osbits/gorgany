@@ -209,8 +209,10 @@ func sortedNames(connections map[string]dbCore.IDataSource) []string {
 }
 
 func (p *DbProvider) Boot(c core.IContainer) {
-	// Register sessions migration
+	// Register sessions migrations. Order matters on a fresh install: the version column is
+	// added to a table create_sessions_table has to have made first.
 	c.Invoke(func(dataContext core.IDataContext) {
 		dataContext.AddMigration(migration.NewSessionsMigration())
+		dataContext.AddMigration(migration.NewSessionsVersionMigration())
 	})
 }

@@ -57,6 +57,10 @@ type IAuthStrategy interface {
 // to propagate the error must still fail closed — refuse the request, not trust the
 // session — and report through err.HandleError rather than discarding it.
 type ISessionStorage interface {
+	// RevokeSession is required, not optional. See ISessionRevoker for what it has to
+	// answer and why a storage that cannot answer it must return an error rather than a
+	// guess.
+	ISessionRevoker
 	// ClearExpiredSessions removes all expired sessions
 	ClearExpiredSessions() error
 	// AddSession adds a new session to storage, or persists the current state of one
@@ -83,8 +87,8 @@ type ISessionStorage interface {
 	GetSessionActivityTimeout() time.Duration
 }
 
-// ISessionRevoker is an optional interface a session storage may implement to report
-// whether a revocation removed anything.
+// ISessionRevoker reports whether a revocation actually removed something. It is part of
+// ISessionStorage, which embeds it, and every session storage must implement it.
 //
 // It exists for session rotation. Rotation carries the old session's user id over to a
 // new identifier, and it must only do that while the old session is still live: if the
@@ -94,12 +98,84 @@ type ISessionStorage interface {
 // DeleteSessionById cannot express the difference, because deleting an absent session
 // is deliberately not an error.
 //
-// Optional rather than part of ISessionStorage so a storage that cannot answer the
-// question keeps compiling; both storages the framework ships implement it.
+// It used to be optional, asserted for at the call site, so that "a storage that cannot
+// answer the question keeps compiling". What the storage got instead of a compile error
+// was a guess, and the guess was yes: the fallback deleted through DeleteSessionById and
+// reported the session as having been live, which is the one answer that turns the
+// rotation guard off. A third-party storage therefore lost the guard silently, and the
+// only signal was its absence.
+//
+// The distinction worth keeping, since two other optional interfaces in this package look
+// superficially similar (ISessionWriteStatus, ISessionRevocationStatus): optional is right
+// when *absence is itself a truthful answer*. An in-memory session genuinely cannot fail a
+// write, so "no pending write error" is a fact rather than an assumption. Absence here
+// forced an assumption about liveness instead, which is why this one is mandatory. A
+// storage that truly cannot tell must return an error and let rotation fail closed.
 type ISessionRevoker interface {
 	// RevokeSession deletes the session with this id and reports whether the store
 	// held it. (false, nil) means there was nothing to revoke.
 	RevokeSession(id string) (bool, error)
+}
+
+// ISessionWriteStatus is an optional interface a session may implement to report a
+// write-through that never reached the store.
+//
+// ISession's setters are void and must stay void — see ISession for why — so this is how the
+// obligation that doc comment states is actually met: "an implementation whose write-through
+// can fail must remember the failure and surface it at the next operation that *can* report
+// one". Before this existed the obligation was written down and not implemented: the
+// database-backed session logged the error and carried on, so a CSRF token was handed to a
+// client whose session the store never received, and a heartbeat that vanished looked exactly
+// like one that landed.
+//
+// Optional is right here, on the test in ISessionRevoker's doc: absence is a truthful answer.
+// The in-memory session cannot fail a write, so "no pending error" is a fact about it rather
+// than an assumption made on its behalf.
+//
+// Implementations must report rather than consume. A caller asking must not clear the failure
+// for the next one, or which caller sees it depends on call order.
+type ISessionWriteStatus interface {
+	// PendingWriteError returns the failure of the most recent write-through that did not
+	// land and has not since been superseded by a successful write of the same state, or
+	// nil.
+	PendingWriteError() error
+}
+
+// PendingWriteError asks a session whether its writes have been reaching the store.
+//
+// A session that cannot fail a write does not implement ISessionWriteStatus and answers nil,
+// so a caller can use this unconditionally.
+func PendingWriteError(session ISession) error {
+	if reporter, ok := session.(ISessionWriteStatus); ok {
+		return reporter.PendingWriteError()
+	}
+	return nil
+}
+
+// ISessionRevocationStatus is an optional interface a session storage may implement to report
+// that it was asked to revoke an identifier and could not.
+//
+// It exists so a replacement session is never minted for such an identifier. A revocation that
+// failed leaves the row live, and the client's copy of that identifier is the only remaining
+// handle on it — issue a new cookie and the handle is gone, so the user's retry revokes the
+// replacement while the original stays authenticated on every replica. Withholding is keyed on
+// the presented id and nothing else: a visitor with no cookie, or with a different session, is
+// unaffected, so an unreachable store does not become an outage for everyone.
+//
+// Optional on the test in ISessionRevoker's doc: absence is truthful. The in-memory store's
+// revocation is a map delete that cannot get stuck, so false is a fact about it.
+type ISessionRevocationStatus interface {
+	// RevocationPending reports that this store still owes a revocation for this id.
+	RevocationPending(id string) bool
+}
+
+// RevocationPending asks a storage whether it still owes a revocation for this id. A storage
+// that cannot get stuck does not implement the interface and answers false.
+func RevocationPending(storage ISessionStorage, id string) bool {
+	if reporter, ok := storage.(ISessionRevocationStatus); ok {
+		return reporter.RevocationPending(id)
+	}
+	return false
 }
 
 // ISession defines the interface for session management.

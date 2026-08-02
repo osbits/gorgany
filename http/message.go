@@ -2,6 +2,7 @@
 package http
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -29,6 +30,22 @@ import (
 	"github.com/osbits/gorgany/v2/model"
 )
 
+// ResponseWriterWrapper adapts the http.ResponseWriter the server handed us so the framework
+// can observe the status code and the last body written.
+//
+// The four optional interfaces are embedded as fields rather than implemented, and the router
+// fills in only the ones the underlying writer actually satisfies (see http/router/gorgany.go).
+// That is deliberate — but embedding puts the promoted method in this type's method set
+// whether or not the field behind it is nil, so `wrapper.(io.ReaderFrom)` succeeds against a
+// writer that has no ReadFrom and the call then dereferences nil. Nothing in the framework
+// triggered it while every response went through Write, which is why it sat here unnoticed;
+// http.ServeContent does, because io.Copy prefers a destination's ReadFrom, and so does any
+// websocket or reverse-proxy handler that reaches for Hijack.
+//
+// Each of the four is therefore shadowed by an explicit method that checks the field first.
+// They stay in the method set — that part is load-bearing, since a writer that *can* stream or
+// hijack should still be reachable through the wrapper — but the fallback is now defined
+// instead of fatal.
 type ResponseWriterWrapper struct {
 	http.Flusher
 	http.Hijacker
@@ -55,6 +72,59 @@ func (thiz *ResponseWriterWrapper) Header() http.Header {
 func (thiz *ResponseWriterWrapper) Write(b []byte) (int, error) {
 	thiz.Body = io.NopCloser(bytes.NewBuffer(b))
 	return thiz.ResponseWriter.Write(b)
+}
+
+// writeOnly hides everything but Write from io.Copy.
+//
+// Copying with io.Copy(wrapper, r) would find the wrapper's own ReadFrom and call it, which is
+// the function doing the copying — so the fallback has to hand io.Copy something that offers
+// no shortcut back. Wrapping is how the standard library expresses this too; the alternative
+// is a hand-rolled buffer loop that duplicates what io.Copy already does correctly.
+type writeOnly struct{ w io.Writer }
+
+func (o writeOnly) Write(p []byte) (int, error) { return o.w.Write(p) }
+
+// ReadFrom streams r into the response, using the underlying writer's own ReadFrom when it has
+// one and copying through Write when it does not.
+//
+// The fallback goes through thiz.Write rather than straight to the underlying writer so there
+// is one write path and the wrapper's bookkeeping applies to a streamed response as it does to
+// a buffered one. The consequence is that Body ends up holding the final chunk rather than the
+// whole payload — which is already what Write does for the last of several writes, and nothing
+// in the framework reads Body.
+func (thiz *ResponseWriterWrapper) ReadFrom(r io.Reader) (int64, error) {
+	if thiz.ReaderFrom != nil {
+		return thiz.ReaderFrom.ReadFrom(r)
+	}
+	return io.Copy(writeOnly{thiz}, r)
+}
+
+// WriteString writes s, using the underlying writer's own WriteString when it has one.
+func (thiz *ResponseWriterWrapper) WriteString(s string) (int, error) {
+	if thiz.StringWriter != nil {
+		return thiz.StringWriter.WriteString(s)
+	}
+	return thiz.Write([]byte(s))
+}
+
+// Flush flushes buffered output when the underlying writer can, and does nothing when it
+// cannot. A writer with no Flusher has nothing buffered to lose, so a silent no-op is the
+// truthful answer rather than a swallowed failure.
+func (thiz *ResponseWriterWrapper) Flush() {
+	if thiz.Flusher != nil {
+		thiz.Flusher.Flush()
+	}
+}
+
+// Hijack takes over the connection when the underlying writer supports it, and reports that it
+// does not when it cannot. http.ErrNotSupported is what callers already handle — net/http
+// returns it from its own non-hijackable writers — so a caller that checks gets the answer it
+// expects instead of a panic RecoveryMiddleware turns into a 500.
+func (thiz *ResponseWriterWrapper) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if thiz.Hijacker != nil {
+		return thiz.Hijacker.Hijack()
+	}
+	return nil, nil, http.ErrNotSupported
 }
 
 // ----------------- HTTPRequestScope -----------------

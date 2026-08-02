@@ -36,6 +36,18 @@ func (thiz *CsrfService) GenerateCSRFToken(ctx context.Context, session core.ISe
 	// Store the token in the session
 	session.SetItem(csrfTokenKey, token)
 
+	// SetItem is void, so a database-backed session's write-through has nowhere to report a
+	// failure and this used to return the token regardless — a token the store never
+	// received. The client then holds one the server cannot match: every mutating request it
+	// makes is refused by the CSRF check, and on a second replica the row carries a different
+	// token entirely. The endpoint that does this is /csrf, registered by default and needing
+	// no authentication, so the failure is reachable by anyone.
+	if err := core.PendingWriteError(session); err != nil {
+		return "", fmt.Errorf(
+			"the CSRF token for session %s was not stored and will not be issued: %w",
+			session.GetId(), err)
+	}
+
 	return token, nil
 }
 
@@ -60,6 +72,10 @@ func (thiz *CsrfService) ValidateCSRFToken(ctx context.Context, session core.ISe
 }
 
 // GetCSRFToken returns the current CSRF token from the session or generates a new one if none exists
+//
+// The reuse branch deliberately does not consult PendingWriteError. It performs no write, and
+// the token it returns is one the session genuinely holds; refusing because some *earlier*
+// write failed would stop handing out a working token over an unrelated problem.
 func (thiz *CsrfService) GetCSRFToken(ctx context.Context, session core.ISession) (string, error) {
 	// Check if a token already exists in the session
 	token := session.GetItem(csrfTokenKey)

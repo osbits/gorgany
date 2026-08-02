@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/db/orm"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -33,6 +36,14 @@ type fakeSessionRepo struct {
 	// sleeping.
 	beforeSave   func(id string)
 	beforeDelete func(id string)
+
+	// dirtySink receives the column set of each save. See recordDirty.
+	dirtySink *map[string]bool
+
+	// savesBeforeFailure and saveErrAfter let a test fail a save partway through a
+	// multi-step operation. See failSaveAfter.
+	savesBeforeFailure int
+	saveErrAfter       error
 }
 
 func newFakeSessionRepo() *fakeSessionRepo {
@@ -46,6 +57,7 @@ func cloneRow(s *DbSessionEntity) *DbSessionEntity {
 		Expiry:       s.Expiry,
 		CreatedAt:    s.CreatedAt,
 		LastActivity: s.LastActivity,
+		Version:      s.Version,
 	}
 	row.Meta = *s.GetMeta()
 	row.Meta.IsLoaded = true
@@ -57,6 +69,29 @@ func cloneRow(s *DbSessionEntity) *DbSessionEntity {
 		row.Attributes = attrs
 	}
 	return row
+}
+
+// recordDirty points the repo at a variable that receives the column set of every subsequent
+// save, so a test can assert the *shape* of a write and not only its outcome. Which columns a
+// statement names is the whole of SEC-H01: a heartbeat that names the user id overwrites it
+// whether or not this particular test would have noticed the value change.
+func (r *fakeSessionRepo) recordDirty(into *map[string]bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.dirtySink = into
+}
+
+// failSaveAfter lets the next `writes` saves succeed and fails every one after that.
+//
+// This is how a test reaches the *middle* of a multi-step operation. Login creates a session
+// and then does several more things that can fail, and the interesting window is precisely
+// between them — a repo that failed from the start would never create the session whose
+// survival is the defect.
+func (r *fakeSessionRepo) failSaveAfter(writes int, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.savesBeforeFailure = writes
+	r.saveErrAfter = err
 }
 
 func (r *fakeSessionRepo) put(s *DbSessionEntity) {
@@ -89,6 +124,9 @@ func (r *fakeSessionRepo) Save(session *DbSessionEntity) error {
 	if r.saveErr != nil {
 		return r.saveErr
 	}
+	if err := r.countdownSaveFailure(); err != nil {
+		return err
+	}
 
 	// What the ORM does with whatever entity it is handed: extractFieldsForUpdate
 	// copies the whole struct through reflect, and the driver then asks
@@ -100,13 +138,104 @@ func (r *fakeSessionRepo) Save(session *DbSessionEntity) error {
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, exists := r.rows[session.GetId()]; !exists && session.GetMeta().IsLoaded {
+
+	meta := session.GetMeta()
+	if r.dirtySink != nil {
+		recorded := make(map[string]bool, len(meta.DirtyColumns))
+		for column := range meta.DirtyColumns {
+			recorded[column] = true
+		}
+		*r.dirtySink = recorded
+	}
+
+	existing, exists := r.rows[session.GetId()]
+	if !exists && meta.IsLoaded {
 		// An UPDATE whose WHERE matches nothing. No error, no row.
 		return nil
 	}
+
+	if exists && meta.IsLoaded {
+		// The version guard is part of the WHERE, so a row whose version has moved on
+		// matches nothing — which orm.updateEntity reports as a conflict once it has
+		// established the row itself is still there.
+		if expected, guarded := guardedVersion(meta); guarded && existing.Version != expected {
+			return fmt.Errorf("%w: sessions where id = %s", orm.ErrRowConflict, session.GetId())
+		}
+		r.rows[session.GetId()] = mergeRowColumns(existing, session, meta.DirtyColumns)
+		meta.IsLoaded = true
+		return nil
+	}
+
 	r.rows[session.GetId()] = cloneRow(session)
-	session.GetMeta().IsLoaded = true
+	meta.IsLoaded = true
 	return nil
+}
+
+// guardedVersion reads the version an UPDATE's guard is matching on, if it has one.
+func guardedVersion(meta *orm.EntityMeta) (int64, bool) {
+	for _, guard := range meta.UpdateGuard {
+		condition, ok := guard.(*dbCore.BinaryCondition)
+		if !ok || condition.Left != SessionColumnVersion {
+			continue
+		}
+		if version, ok := condition.Right.(int64); ok {
+			return version, true
+		}
+	}
+	return 0, false
+}
+
+// mergeRowColumns applies only the columns an UPDATE actually names, which is what makes a
+// column-scoped write observable in a test: a stale writer's untouched columns have to stay
+// as the row has them, not as the writer remembers them.
+func mergeRowColumns(existing, incoming *DbSessionEntity, columns map[string]bool) *DbSessionEntity {
+	if len(columns) == 0 {
+		return cloneRow(incoming)
+	}
+
+	merged := cloneRow(existing)
+	for column := range columns {
+		switch column {
+		case SessionColumnUserID:
+			merged.UserID = incoming.UserID
+		case SessionColumnExpiry:
+			merged.Expiry = incoming.Expiry
+		case SessionColumnCreatedAt:
+			merged.CreatedAt = incoming.CreatedAt
+		case SessionColumnLastActivity:
+			merged.LastActivity = incoming.LastActivity
+		case SessionColumnVersion:
+			merged.Version = incoming.Version
+		case SessionColumnAttributes:
+			if incoming.Attributes == nil {
+				merged.Attributes = nil
+				continue
+			}
+			attributes := make(AttributesMap, len(incoming.Attributes))
+			for key, value := range incoming.Attributes {
+				attributes[key] = value
+			}
+			merged.Attributes = attributes
+		}
+	}
+	merged.Meta.IsLoaded = true
+	return merged
+}
+
+// countdownSaveFailure reports the delayed failure failSaveAfter armed, once the grace
+// period of successful writes has been used up.
+func (r *fakeSessionRepo) countdownSaveFailure() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.saveErrAfter == nil {
+		return nil
+	}
+	if r.savesBeforeFailure > 0 {
+		r.savesBeforeFailure--
+		return nil
+	}
+	return r.saveErrAfter
 }
 
 func (r *fakeSessionRepo) Delete(session *DbSessionEntity) error {
