@@ -7,6 +7,108 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [2.2.0] — 2026-08-02
+
+> **This supersedes 2.0.0, which is burned.** A second security audit of the tree that
+> resulted from the 2.0.0 remediation found thirteen further release blockers and no
+> confirmed Critical. All thirteen are closed here, together with three Medium findings
+> that live in the same functions and would otherwise have been re-opened immediately.
+> `v2.0.0` was tagged and never released; anyone who pulled it should read
+> `MIGRATION_v2.md` §35–§49 as well as the rest.
+
+### Security — release blockers closed
+
+| ID | What it was |
+|---|---|
+| SEC-H01 | A stale replica restored revoked session state. The cache won over the row for everything but a *later* expiry, and every write re-sent the whole struct — so a routine heartbeat put back an MFA flag, an identity or a long expiry another replica had just cleared. |
+| SEC-H02 | Database-backed session mutations discarded persistence failures. `/csrf` handed out tokens the store never received. |
+| SEC-H03 | Login could fail after issuing a live authenticated session: the cookie went out at session creation, and nothing rolled back. The user was told the login failed and was signed in on the next request. |
+| SEC-H04 | `ISessionRevoker` was optional, and the fallback reported every successful delete as "the session was live" — which is the one answer that turns the rotation guard off. |
+| SEC-H05 | A failed logout was recorded as a tombstone, so the next request minted a replacement and overwrote the client's only handle on the still-live session. |
+| SEC-H06 | "Nobody is logged in" and "we could not find out" were one value, so a store that blinked served everyone as a guest — and guests were exempt from `RequiredRoles`, so a rule requiring `admin` admitted anonymous visitors. |
+| SEC-H07 | `GetAccessibleEntitiesWithFields` returned its input unfiltered after one type-level check. |
+| SEC-H08 | **Authorization SQL injection.** User attributes were substituted into `DBFilter.Field`, which is emitted as SQL. A username of `x' OR 'a'='a` produced a predicate true for every row. |
+| SEC-H09 | Owner and access-level rules read `Allowed` and ignored `RequiredRoles`, and the access level is a free-form string the application's own entity returns. |
+| SEC-H10 | `/public/*` served the whole `resource/` tree — temp uploads, template sources, translations, configuration. |
+| SEC-H11 | A multipart part naming an incompatible DTO field panicked *after* writing the upload, orphaning it. Unauthenticated, repeatable disk fill. |
+| SEC-H12 | The built-in browser login accepted an unprotected form POST. |
+| SEC-H13 | Seventeen reachable vulnerabilities, a dead chi v1 module path, and no CI of any kind. |
+
+Riding along, because they are the same functions: **SEC-M02** (multipart limits counted
+map keys, and `FormFile`/`GetFiles` enforced neither the total nor the count cap),
+**SEC-M05** (tombstone lifetime, session-id length cap, cardinality bounds) and
+**SEC-M11** (`MaxFilters`/`MaxSorts` were configuration nothing read).
+
+### Also fixed — found while implementing, not in the audit
+
+- `ResponseWriterWrapper`'s promoted `ReadFrom`/`WriteString`/`Flush`/`Hijack` were in the
+  method set while their embedded interface fields were nil, so a type assertion succeeded
+  and the call dereferenced nil. `http.ServeContent` reaches `ReadFrom`.
+- `DBJoin` bound its right key as a *value*, so every join-based RBAC filter compared a
+  column to the name of the other column.
+- `CustomFilters` role keys were looked up lower-cased against maps every shipped example
+  keys upper-case, so those filters never matched at all.
+- `getUserContextValue` defaulted an unknown key to the caller's user id — a mistyped
+  `tenant_id` compared the tenant column to a user id.
+- `newSessionWithoutUser` created the row and then generated the CSRF token, orphaning the
+  row if that failed.
+- `isOwner` passed `context.Background()` into application code, and inferred ownership
+  from an entity id that happened to equal the caller's.
+- `AccessControlConfig.DefaultRoles` was written by the builder and read by nothing.
+
+### Corrections to the audit
+
+Three findings were overstated and one was wrong; the fixes are shaped accordingly.
+
+- **SEC-H01** — row *deletion* was already authoritative. The defect was in-row state.
+- **SEC-H03** — the "pre-login CSRF token crosses the boundary" claim was already handled
+  on the success path. The load-bearing defect is cookie ordering and the absent rollback.
+- **SEC-H08** — only `Field` was exploitable; `Value`, `Values` and `Pattern` were already
+  bound. Conversely the audit understated the operator problem: an unrecognised operator
+  *dropped* the filter, and a dropped restriction is no restriction.
+- **SEC-H12** — the claim that `CSRFMiddleware` fails open with no session is **false**. It
+  rejects, and an existing test pins that. Nothing was changed there.
+
+### Breaking
+
+Every one of these has a section in `MIGRATION_v2.md`.
+
+| Change | Kind |
+|---|---|
+| `core.ISessionStorage` embeds `ISessionRevoker` | source |
+| `sessions` table gains a `version` column (`add_sessions_version_column`) | schema |
+| `DBFilter.Field` is an identifier; raw SQL moves to `RawSQL`/`RawArgs` | source, config |
+| `ApplyDBFiltersToQueryBuilder` and the `PaginationParams.Apply*` family return errors | source |
+| `/public/*` serves only `resource/public`; `resource/assets` must move | behaviour |
+| `MultipartFile.PublicPath()` is a rooted single-segment URL | behaviour |
+| `POST /login` and `POST /logout` require a same-origin request | behaviour |
+| Guests are no longer exempt from `required_roles`; a failed identity lookup denies | behaviour |
+| Ownership and access-level rules are role-checked and can deny | behaviour |
+| Upload limits apply uniformly across DTO parsing, `FormFile` and `GetFiles` | behaviour |
+| chi import path is `github.com/go-chi/chi/v5` | source |
+| An expression in a condition's identifier slot must be `dbCore.Raw` | source |
+
+### Added
+
+- `core.ISessionWriteStatus`, `core.ISessionRevocationStatus`, `model.ComplexityLimiter`,
+  `model.IdentityResolutionReporter` — all optional interfaces, so nothing downstream breaks.
+- `dbCore.Raw`, `dbCore.Identifier`, `dbCore.IsSimpleIdentifier`, `dbCore.ValidatingCondition`.
+- `orm.EntityMeta.DirtyColumns`, `orm.EntityMeta.UpdateGuard`, `orm.ErrRowConflict`.
+- `middleware.SameOriginMiddleware` and `RouteProvider.EnableSameOriginProtection`.
+- A `csrf` view helper, and `core.CSRFFormFieldName`.
+- `controller.NewPublicControllerAt`, `core.HEAD`.
+- CI: `.github/workflows/ci.yml` and `.github/workflows/govulncheck.yml`. There was none.
+
+### Verification
+
+`go build ./...`, `go vet ./...`, `go test ./...` and `govulncheck ./...` all pass;
+govulncheck reports **zero** reachable vulnerabilities, down from seventeen, with no
+exception file. `go test -race` passes on every package this work touched. The live
+PostgreSQL and MySQL suites are wired into CI but **have not been executed here** — see
+the note in `SECURITY_RELEASE_BLOCKERS.md`; that criterion is still outstanding.
+
+---
+
 ## [2.0.0] — 2026-08-02
 
 > **The `v2.0.0` tag predates this entry and must be re-cut.**

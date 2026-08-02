@@ -1,4 +1,9 @@
-# Migrating an app from gorgany v1.5.1 to v2.0.0
+# Migrating an app from gorgany v1.5.1 to v2.2.0
+
+> **This document targets v2.2.0.** A second security audit of the v2.0.0 remediation found
+> thirteen further release blockers; closing them added §35–§49, several of which are
+> behaviour changes the compiler will not catch. **If you already pulled the `v2.0.0` tag,
+> read §35–§49 as well as the rest** — that tag was never released and is superseded.
 
 This document has one section per breaking change. Each says what broke and why,
 gives compiling before/after code, tells you how to detect whether you are
@@ -3360,6 +3365,691 @@ curl -i http://localhost:8080/ | grep -iE 'x-content-type|x-frame|referrer-polic
 **Nothing to do** for most apps — the defaults are chosen to be non-breaking. **Judgement**
 on two: whether `SAMEORIGIN` breaks a partner embed, and when to adopt a CSP. The second is
 real work and is worth scheduling separately from this upgrade.
+
+---
+
+## 35. `core.ISessionStorage` requires `RevokeSession` (source, security)
+
+### What broke and why it had to
+
+`RevokeSession(id) (bool, error)` was an optional interface the strategy asserted for. A
+storage that did not implement it got a fallback: delete through `DeleteSessionById`, then
+report `(true, nil)`. Deleting a session the store does not hold is deliberately *not* an
+error, so that fallback answered "there was a live session here" for a delete that removed
+nothing — and that is precisely the answer `RotateSession`'s guard reads as permission to
+carry an identity onto a brand-new durable session. A third-party storage lost the guard
+silently, and the only signal was its absence.
+
+There is no correct value for the framework to guess. Both shipped storages already
+implemented the method, so nothing changes at runtime; a third-party storage now gets a
+compile error instead of a wrong answer.
+
+### Before / after
+
+```go
+func (s *MyStorage) DeleteSessionById(id string) error { /* ... */ }
+
+// after: add this.
+//
+// It must answer whether the store *held* the session, not whether the delete
+// statement succeeded. If you genuinely cannot tell, return an error — rotation will
+// fail closed, which is correct — rather than guessing true.
+func (s *MyStorage) RevokeSession(id string) (bool, error) {
+	held := s.has(id)
+	if err := s.DeleteSessionById(id); err != nil {
+		return false, err
+	}
+	return held, nil
+}
+```
+
+### How to detect whether you are affected
+
+`go build ./...`. If you implement `core.ISessionStorage`, it fails with
+`missing method RevokeSession`.
+
+### Mechanical or judgement?
+
+Mechanical, unless your store cannot report liveness — then read the paragraph above.
+
+---
+
+## 36. The `sessions` table gains a `version` column (schema, behaviour)
+
+### What broke and why it had to
+
+Database-backed sessions are shared between replicas, and every write used to send the whole
+row from whatever the writing replica last read. A write that changes the user id or the
+attribute bag is now guarded on a version counter, so a replica writing from a copy another
+replica has already superseded is refused and reconciles instead of silently winning. See
+§37 for what the reconciliation does with your data.
+
+Run the migration **before** deploying:
+
+```bash
+go run . db:migrate up
+```
+
+The new migration is `add_sessions_version_column`. `create_sessions_table` is deliberately
+untouched — applied migrations are keyed by name and skipped, so amending it would change
+nothing for any database that has already run it.
+
+`version BIGINT NOT NULL DEFAULT 0` is metadata-only on PostgreSQL 11+ and MySQL 8, so it
+does not rewrite the table however large it is. Existing rows read as `0`.
+
+### The rolling-deploy caveat
+
+An old binary's struct has no `Version` field, so its writes leave the column untouched and a
+new replica's guard cannot see them. A mixed-version fleet therefore falls back to 2.0.0 write
+semantics for the duration of the rollout. Migrate, then deploy; do not run the two versions
+side by side for longer than you have to.
+
+### How to detect whether you are affected
+
+You are affected if `auth.session.storage` is `database`. Apps on the in-memory store need no
+migration.
+
+### Mechanical or judgement?
+
+Mechanical, with an ordering constraint.
+
+---
+
+## 37. A session write that did not reach the store is reported (behaviour, security)
+
+### What broke and why it had to
+
+`core.ISession`'s setters are void and stay void — giving them errors would break every
+request scope, view scope and test double downstream for a signal almost no caller can act
+on. The contract on that interface already said what an implementation owes in exchange:
+*"an implementation whose write-through can fail must remember the failure and surface it at
+the next operation that can report one"*. It was written down and not implemented. The
+database-backed session logged the error and forgot it.
+
+Two paths reached a client with nothing able to report afterwards. `/csrf` — registered by
+default, needing no authentication — handed out a token the store never received, so every
+mutating request the client then made was refused by the CSRF check. And
+`SessionMiddleware`'s per-request heartbeat vanished silently.
+
+`GenerateCSRFToken`, `NewSessionWithoutUser` and `Login` now fail where they used to succeed
+with unstored state. The heartbeat reports and continues, deliberately: refusing there would
+turn an unreachable store into an outage on every page, and it hands the client nothing to be
+wrong about.
+
+### Before / after
+
+Nothing to change. For a custom `core.ISession` whose writes can fail, implement the new
+optional interface:
+
+```go
+func (s *MySession) PendingWriteError() error { return s.lastWriteErr }
+```
+
+Report, do not consume: the failure stays until a write succeeds, or which caller sees it
+depends on call order.
+
+### How to detect whether you are affected
+
+Only if you relied on `/csrf` answering while the session store was unreachable. The token it
+gave you was already useless.
+
+### Mechanical or judgement?
+
+Nothing to do.
+
+---
+
+## 38. A failed login writes no cookie; a stuck revocation is not papered over (behaviour, security)
+
+### What broke and why it had to
+
+**Login.** The session cookie was written inside `NewSessionWithoutUser`, and `CookieManager`
+writes straight into the live `ResponseWriter` — so once it ran the header was on the wire.
+`Login` then set the user id, minted a CSRF token and persisted, any of which could fail, and
+a failure returned an error with no rollback. The store kept an authenticated row whose cookie
+the browser already had, while the handler rendered "we could not sign you in". The next
+request was signed in.
+
+The cookie now goes out only after the final durable write, and any failure after the session
+exists revokes it. `NewSessionWithoutUser` and `RotateSession` keep both their signatures and
+their behaviour, so `SessionMiddleware` and `CsrfController` are untouched.
+
+**Logout.** A revocation the store could not perform was recorded as a *tombstone* —
+indistinguishable from "the row is gone". So the id stopped resolving, the next request minted
+a replacement session and wrote its cookie over the client's only copy of the identifier that
+still needed revoking; the user pressed "try again" and revoked the replacement while the
+original stayed authenticated on every replica. It is now recorded as *pending* and retried on
+the next request that presents the id, and no replacement is issued for that id until it
+succeeds.
+
+That refusal is per-identifier. A visitor with no cookie, or a different session, is
+unaffected — an unreachable database does not become an outage for everybody.
+
+### Also in this section
+
+- `auth.SessionIdMaxLength` (128) caps an identifier before it is used as a map key or a
+  database predicate. It is a length bound and not a format check, because `ISessionFactory`
+  is a public extension point.
+- A revocation is remembered until the revoked session's own expiry rather than a fixed 25
+  hours, and both memory sets are bounded by cardinality as well as by time.
+- `core.ISessionRevocationStatus` is the optional interface a storage implements to report a
+  stuck revocation. A store whose delete cannot fail does not implement it.
+
+### How to detect whether you are affected
+
+A login that fails now leaves no cookie — if you had a test asserting one, it was asserting
+the defect. `NewSessionWithoutUser` can now return `auth.ErrRevocationPending`;
+`SessionMiddleware` already handles it by proceeding anonymously.
+
+### Mechanical or judgement?
+
+Nothing to do.
+
+---
+
+## 39. Guests are no longer exempt from `required_roles` (behaviour, security)
+
+### What broke and why it had to
+
+`CanAccessEntity` and `CanAccessEntityType` contained this:
+
+```go
+if len(domainConfig.RequiredRoles) > 0 {
+	if userCache.isGuest && rbac.config.AllowGuestAccess {
+		return true          // <- an anonymous caller satisfies any role requirement
+	}
+	return rbac.hasAnyRole(userCache.roles, domainConfig.RequiredRoles)
+}
+```
+
+So `AddDomainOperation("read", true, "admin")` with `AllowGuestAccess` on granted read to an
+anonymous visitor while correctly refusing an authenticated non-admin. That is an inversion,
+not a loosening. The exemption was also absent from `CanReadField` and
+`ValidateFieldAccess`, so the two halves of the surface disagreed about the same caller.
+
+An admitted guest already carries the `guest` role, so a configuration that means to let
+guests in lists it and passes the ordinary check. The short-circuit only ever fired when
+`guest` was *absent* from the list — exactly the case the author wrote the list to exclude.
+
+### Before / after
+
+```yaml
+# before — relied on the exemption
+domain_operations:
+  read: { allowed: true, required_roles: ["admin"] }
+allow_guest_access: true
+
+# after — say so
+domain_operations:
+  read: { allowed: true, required_roles: ["admin", "guest"] }
+allow_guest_access: true
+```
+
+### How to detect whether you are affected
+
+Grep your configuration for `allow_guest_access: true` together with any
+`required_roles` that does not list `guest`. Anonymous callers were reaching those
+operations and will now be refused.
+
+### Mechanical or judgement?
+
+**Judgement.** For each such operation, decide whether guests were supposed to reach it. If
+they were, add `guest` to the list. If they were not, this was a vulnerability and the fix is
+the whole point.
+
+---
+
+## 40. A failed identity lookup is a denial, not a guest (behaviour, security)
+
+### What broke and why it had to
+
+`CurrentUser` returns `(nil, nil)` for "there is no session" and `(nil, err)` for "the store
+could not answer", and the comment on it says the two mean very different things. Access
+control bound the error and never looked at it, so both became a guest. A session store or
+user table that blinked demoted every authenticated caller to the guest role rather than
+failing the request — and with `AllowGuestAccess` on, the guest role is a *different*
+privilege set, not a smaller one, so the demotion granted as well as removed.
+
+Identity is now tri-state. Resolution failure fails closed on every surface, and
+`AllowGuestAccess` deliberately does not rescue it: it is a statement about callers we have
+established carry no identity, and we have established nothing.
+
+### Before / after
+
+A handler that wants to answer 503 rather than 403:
+
+```go
+if reporter, ok := accessControl.(model.IdentityResolutionReporter); ok {
+	if err := reporter.IdentityResolutionError(ctx); err != nil {
+		// the request could not be decided, rather than decided against
+		return serviceUnavailable(err)
+	}
+}
+```
+
+`IsGuest` still returns `true` for both, which is the safe label; the tri-state is what the
+decisions use internally.
+
+### How to detect whether you are affected
+
+You are affected during an outage of your session store or user table, and not otherwise.
+Previously those requests were served as guests.
+
+### Mechanical or judgement?
+
+Nothing to do unless you want the 503.
+
+---
+
+## 41. Ownership and access-level rules are role-checked, and can deny (behaviour, security)
+
+### What broke and why it had to
+
+`canAccessEntity` had two branches that read `domainConfig.Allowed` and never read
+`domainConfig.RequiredRoles`, then returned `true` — bypassing the general rule and its role
+check entirely. The second is the dangerous one: `core.OwnershipInfo.AccessLevel` is a
+free-form string the *application's own entity* returns, and it is concatenated into a rule
+name. An entity reporting `AccessLevel: "admin"` selected `read_admin` and was granted
+whatever roles that rule declared.
+
+### The precedence, in full
+
+First row that matches ends the decision.
+
+| # | Condition | Result |
+|---|---|---|
+| 0 | identity unresolved | **DENY** |
+| 1 | anonymous and `!allow_guest_access` | **DENY** |
+| 2 | `allowed_access_levels` set and the level is not in it | **DENY** |
+| 3 | `IsOwner`, rule `<op>_owner` exists, `deny: true` | **DENY** |
+| 4 | `IsOwner`, rule `<op>_owner` exists, allowed, roles satisfied | **ALLOW** |
+| 5 | `AccessLevel` set, rule `<op>_<level>` exists, `deny: true` | **DENY** |
+| 6 | `AccessLevel` set, rule `<op>_<level>` exists, allowed, roles satisfied | **ALLOW** |
+| 7 | rule `<op>` missing, or denies | **DENY** |
+| 8 | rule `<op>` allowed and roles satisfied | **ALLOW** |
+| 9 | fallthrough | **DENY** |
+
+Rows 4 and 6 grant-or-fall-through rather than grant-or-deny: the smaller break, closing the
+bypass without revoking access from anyone whose owner rule grants *and* whose general rule
+also would. Write `deny: true` for terminal refusal.
+
+### Also in this section
+
+- `AccessControlConfig.AllowedAccessLevels` bounds which rule an entity-supplied level may
+  select. Empty means unbounded, which is the previous behaviour.
+- `AccessControlConfig.OwnershipField` now actually restricts field reads. Both arms of the
+  check used to return `true`, so it had no effect at all: a field that declares an `owner`
+  operation is owner-*restricted* now, not owner-bonused.
+- `isOwner` no longer infers ownership from an entity id that happens to equal the caller's —
+  a grant on a coincidence for any type sharing an id space with users — and takes the
+  request's context rather than `context.Background()`.
+- `SetDefaultRoles` is deprecated and warns. It never had an effect; wiring it in would
+  *grant* roles that are absent today, which is the wrong direction for a security release.
+
+### How to detect whether you are affected
+
+Grep for `_owner` and `_<level>` keys in `domain_operations` that declare `required_roles`.
+Those roles were being ignored and now apply. Grep for `ownership_field` on a config whose
+`field_access` declares an `owner` operation — that combination did nothing and now restricts.
+
+### Mechanical or judgement?
+
+**Judgement**, for the same reason as §39.
+
+---
+
+## 42. `GetAccessibleEntitiesWithFields` filters per entity (behaviour, security)
+
+### What broke and why it had to
+
+It made one type-level check and returned the input slice verbatim — the comment said "If
+entity type access is granted, all entities are accessible" — so every per-entity ownership
+decision was skipped. Its sibling `GetAccessibleEntities`, which a caller reasonably treats
+as the same function plus a field list, decided each entity properly.
+
+It now decides per entity, by the same predicate. The half of the optimisation that was real
+is kept: the field list is still computed once for the collection. The type-level pre-check is
+gone rather than kept as a short-circuit, because it cannot see the `_owner` rules and would
+have refused an owner before the loop ran.
+
+`GetReadableFields`, `GetReadableFieldsForCollection` and `GetInheritedFieldPermissions` also
+apply the global guest gate *before* delegating to your entity's own field logic, which they
+previously called with a nil user for a caller the configuration refuses outright.
+
+### How to detect whether you are affected
+
+If you call it and your entities implement `core.AccessibleEntity`, you were returning rows
+the policy excludes. There is nothing to change.
+
+### Mechanical or judgement?
+
+Nothing to do.
+
+---
+
+## 43. `DBFilter.Field` is an identifier; raw SQL moves to `raw_sql` (source, **config format**, security)
+
+### What broke and why it had to
+
+This is the most serious finding in the release. `Field` was documented as being able to hold
+raw SQL, the caller's attributes were substituted into it by string replacement, and `Field`
+is emitted into the query as SQL syntax. An attacker's own username rewrote the authorization
+predicate:
+
+```
+config:    field: "author_name = '{{user_username}}'"
+username:  x' OR 'a'='a
+rendered:  WHERE author_name = 'x' OR 'a'='a' = ?      args=[true]
+```
+
+Postgres reads that as `author_name = 'x' OR true`. One placeholder, one argument — nothing
+downstream could notice — and because the WHERE clause is joined with bare `AND`/`OR`, the
+injected `OR` neutralises sibling predicates too.
+
+### Before / after
+
+```yaml
+# before — the vulnerable idiom
+- field: "author_name = '{{user_username}}'"
+  operator: "="
+  value: true
+
+# after, option 1: put the user context in `value`, which is bound
+- field: "author_name"
+  operator: "="
+  value: "{{.Username}}"
+
+# after, option 2: a predicate you vouch for, with its parameters bound.
+# Placeholders are NOT expanded into raw_sql — user context reaches it only via raw_args.
+- raw_sql: "author_name = ? AND published = true"
+  raw_args: ["{{.Username}}"]
+  logic: "AND"
+```
+
+A filter naming a custom processor uses `processor:` rather than putting the processor's name
+in `field:`; `field:` is still accepted as a fallback when it names a registered processor, so
+existing configurations keep working.
+
+### Also in this section
+
+- Role keys under `custom_filters:` are matched case-insensitively. They were not, and every
+  shipped example keys them upper-case while the lookup lower-cased — so those filters
+  matched nothing and the restrictions they describe were never applied. This is a fix, but
+  it means filters that were dead may now start applying.
+- An unknown `user_context_fields` name is an error. It used to default to the caller's user
+  id, so a mistyped `tenant_id` compared the tenant column against a user id.
+- An empty scoping attribute (`tenant_id`, `department_id`, `manager_id`) is an error rather
+  than an empty predicate.
+- A failed custom filter processor fails the whole call instead of logging and continuing.
+
+### How to detect whether you are affected
+
+```bash
+grep -rnE 'field: *"[^"]*[ =<>()'"'"']' --include='*.yml' --include='*.yaml' .
+grep -rn 'Field: *"[^"]*[ =<>()]' --include='*.go' .
+```
+
+Anything that matches is a `field:` that is not a column reference. `GenerateDBFilters` now
+refuses it with a message naming `raw_sql`.
+
+### Mechanical or judgement?
+
+**Judgement.** Each one needs deciding: is the user context a *value* (option 1, almost
+always) or is the predicate genuinely SQL (option 2)?
+
+---
+
+## 44. The filter appliers return errors (source)
+
+### What broke and why it had to
+
+`ApplyDBFiltersToQueryBuilder` and the `PaginationParams.Apply*` family silently dropped a
+filter they could not emit — an unrecognised operator, an `in` whose value was not exactly
+`[]interface{}` (which a `[]string` from YAML is not), a subquery operator outside the four
+handled — each ending in a bare `return builder`.
+
+These are *restrictions*. A filter that fails to apply does not deny, it stops denying, so
+each of those silently widened the query to exactly the rows the policy meant to keep out.
+
+### Before / after
+
+```go
+// before
+builder = model.ApplyDBFiltersToQueryBuilder(builder, filters)
+
+// after — the error means "do not run this query"
+builder, err := model.ApplyDBFiltersToQueryBuilder(builder, filters)
+if err != nil {
+	return nil, err
+}
+```
+
+`in`/`not in` now accept any slice, not only `[]interface{}`.
+
+### How to detect whether you are affected
+
+`go build ./...`.
+
+### Mechanical or judgement?
+
+Mechanical. Do not discard the error.
+
+---
+
+## 45. An expression in a condition's identifier slot must be `dbCore.Raw` (source)
+
+### What broke and why it had to
+
+`BinaryCondition.Left`, and the field slot of the `In`, `Between`, `Like` and `IsNull`
+conditions, emitted a string verbatim into the SQL. That is what made §43 reach the query at
+all, and it applies to anything else that puts caller-influenced text in those slots. A
+column reference is emitted; anything else is now bound as a value, and the dialect refuses
+outright so you are told rather than silently getting a comparison against a string.
+
+Aggregates are the case this affects: `COUNT(*)` in a `HAVING` is not a column.
+
+### Before / after
+
+```go
+// before
+Having(&dbCore.BinaryCondition{Left: "COUNT(*)", Operator: ">", Right: 5})
+
+// after
+Having(&dbCore.BinaryCondition{Left: dbCore.Raw("COUNT(*)"), Operator: ">", Right: 5})
+```
+
+The rendered SQL is identical — `dbCore.Raw` changes nothing but the fact that you said it.
+`dbCore.Identifier` is the matching marker for a *value* slot that should hold a column, which
+is how a join compares two columns rather than a column against the other column's name.
+
+### How to detect whether you are affected
+
+Your query build returns an error naming the slot and telling you to use `core.Raw`. Grep for
+`Left:` and `Field:` values containing `(`.
+
+### Mechanical or judgement?
+
+Mechanical, and the error tells you where.
+
+---
+
+## 46. `/public/*` serves only `resource/public` (behaviour, security)
+
+### What broke and why it had to
+
+The controller joined the request path against `resource`, not `resource/public`. So an
+unauthenticated `GET /public/temp/…` read in-flight and crash-orphaned uploads,
+`/public/view/…` read template source, `/public/i18n/…` read translations, and
+`/public/config/…` read whatever an app had put there. Containment was purely lexical, so a
+symlink under the served root pointed wherever it liked.
+
+It is anchored at `model.PublicStorage` now, contained with `os.OpenRoot` — which resolves
+each path component against a held directory descriptor and refuses anything that escapes,
+symlinks included — and streamed with `http.ServeContent` instead of buffering the whole
+asset per request. Range requests, conditional requests and `HEAD` work as a result.
+
+`MultipartFile.PublicPath()` returns a rooted single-segment URL (`/public/<path>/<name>`).
+It used to be relative and one segment short of the route, so the value handed to your
+templates was a 404 and the URL that actually worked had `public` in it twice.
+
+### Before / after
+
+```bash
+# static assets move under the served root
+git mv resource/assets resource/public/assets
+```
+
+`util.AssetPath` and `util.PublicPath` keep their signatures and their output strings; only
+the directory they resolve to moves.
+
+### How to detect whether you are affected
+
+```bash
+ls resource                      # anything here other than public/ was reachable and no longer is
+grep -rn '/public/public/' --include='*.gohtml' --include='*.go' .
+grep -rn 'AssetPath\|PublicPath' --include='*.gohtml' .
+```
+
+Nothing stored needs migrating: `File.Value` persists `path.Join(Path, Name)` and every URL is
+computed at render time.
+
+To keep serving another tree deliberately:
+
+```go
+controller.NewPublicControllerAt("/legacy/*", "resource/legacy")
+```
+
+### Mechanical or judgement?
+
+Mechanical, plus one `git mv`.
+
+---
+
+## 47. `POST /login` and `POST /logout` require a same-origin request (behaviour, security)
+
+### What broke and why it had to
+
+The built-in browser login accepted an unprotected form POST. An attacker submits *their own*
+valid credentials from a page the victim visits; the victim's browser sends it, the login
+succeeds, and the victim spends the visit inside the attacker's account — typing into it,
+uploading to it — while the attacker holds the other half of the session.
+
+Mounting `CSRFMiddleware` was not available as the fix. The token could not exist: the
+framework ships no login template, there was no view helper that could emit the hidden field,
+and the token is published only as a response header. And `CSRFMiddleware` requires a
+session, correctly, while `SessionMiddleware` is not in the default middleware set — so a
+first-time visitor's login POST legitimately arrives without one and would be refused by
+construction.
+
+`middleware.SameOriginMiddleware` needs nothing of the template, the client or the session.
+
+### The decision table
+
+| Signal | Value | Result |
+|---|---|---|
+| method | GET / HEAD / OPTIONS / TRACE | allow |
+| `Sec-Fetch-Site` | `same-origin` or `none` | allow |
+| `Sec-Fetch-Site` | `cross-site` | **refuse** |
+| `Sec-Fetch-Site` | `same-site` | **refuse** unless `AllowSameSite` |
+| `Origin` | matches this origin | allow, else **refuse** |
+| `Referer` | matches this origin | allow, else **refuse** |
+| none of the three | — | allow, unless `RequireOriginHeader` |
+
+`same-site` is refused by default because the session cookie is already `SameSite=Lax`: what
+this adds over the cookie attribute is the sibling subdomain. All-absent is allowed by default
+because a browser cannot be made to omit all three on a cross-site form POST, so that case is
+a non-browser client.
+
+### What this breaks
+
+- A browser posting the login form from a sibling subdomain. Intentional; `AllowSameSite`
+  opts back in.
+- A reverse proxy that rewrites `Host` without setting `X-Forwarded-Proto`, on an app with
+  `app.server.url` set to `https`. Set `TrustForwardedProto` — it is off by default because
+  the header is client-settable unless a proxy overwrites it.
+- A test suite posting `/login` with an explicit foreign `Origin`.
+
+Configuration: `http.security.origin.allowSameSite`, `.required`, `.trustForwardedProto`.
+`RouteProvider.EnableSameOriginProtection` applies it to every state-changing request — read
+the note on the middleware first; it will also refuse a legitimate cross-origin browser fetch
+that CORS is there to authorise.
+
+### Moving up to token protection
+
+Now possible, because the view helper exists:
+
+```gohtml
+<form method="post" action="{{ UrlByName "cp.login" }}">
+  {{ csrf }}
+  ...
+</form>
+```
+
+then mount `middleware.NewCSRFMiddleware()` on the route. It additionally requires
+`SessionMiddleware` to cover `/login`, or the request is refused with "No active session".
+
+### Mechanical or judgement?
+
+Judgement, if you are behind a proxy or post across your own subdomains.
+
+---
+
+## 48. Upload limits apply uniformly (behaviour)
+
+### What broke and why it had to
+
+The file-count limit counted map keys, so a hundred parts all named `file` counted as one
+against a limit of a hundred — which is the shape an attacker sends, not the shape a form
+does. And `FormFile`/`GetFiles` enforced neither the total-size nor the count cap that DTO
+parsing enforces, while using a per-file limit ten times larger: the same upload was accepted
+or refused depending on which API the handler happened to use, and the more permissive was on
+the hand-rolled path.
+
+`http.security.file.maxSizeMB` is now a *ceiling*, not the only limit: the effective per-file
+cap is the smaller of it and `http.upload.maxFileSize`.
+
+### How to detect whether you are affected
+
+If your uploads sit between `http.upload.maxFileSize` (10 MB default) and
+`http.security.file.maxSizeMB` (100 MB default) and you receive them through `FormFile` or
+`GetFiles`, they start being rejected. Raise `http.upload.maxFileSize`.
+
+### Mechanical or judgement?
+
+One configuration value, if it affects you.
+
+---
+
+## 49. The chi import path is `github.com/go-chi/chi/v5` (source)
+
+### What broke and why it had to
+
+`github.com/go-chi/chi` without a suffix is the v1 module path, and it is dead — it receives
+no fixes, so every advisory against it needs an exception rather than an upgrade. No gorgany
+API changes: `Engine()` still returns `http.Handler`, and both chi fields on the router
+adapter are unexported.
+
+### Before / after
+
+```bash
+grep -rl '"github.com/go-chi/chi"' --include='*.go' . | xargs sed -i '' \
+  's|"github.com/go-chi/chi"|"github.com/go-chi/chi/v5"|'
+go get github.com/go-chi/chi/v5@latest && go mod tidy
+```
+
+### How to detect whether you are affected
+
+Only if you import chi directly. Most apps reach for `message.Request().PathParam` instead.
+
+### Note on the toolchain
+
+`go.mod` moves to `toolchain go1.26.5`, and the `go` directive stays at `1.24.0`. The
+directive is the consumer floor, so your app can still be built by Go 1.24; only the toolchain
+that compiles a release moves.
+
+### Mechanical or judgement?
+
+Mechanical.
 
 ---
 
