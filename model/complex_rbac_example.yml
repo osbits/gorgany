@@ -1,4 +1,14 @@
 # Complex Hierarchical RBAC Example
+#
+# NOTE on `field:` — it is a column reference and nothing else. It was once able to hold raw
+# SQL with the caller's attributes substituted into it, which is SQL injection through the
+# authorization predicate; a `field:` that is not a bare or dotted column name is now refused.
+# Put user context in `value:` (bound as a parameter), or use `raw_sql:` + `raw_args:` for a
+# predicate that genuinely has to be SQL. See model/rbac_sql_examples.md.
+#
+# The role keys below are matched case-insensitively. Before 2.2 they were not, and these
+# upper-case keys therefore matched nothing — the filters in this file described restrictions
+# that were never applied.
 # Scenario: User → Team → Manager Role → Access to Team Members
 
 api:

@@ -17,24 +17,19 @@ func (c *BinaryCondition) ToSQL() (string, []interface{}) {
 	var args []interface{}
 	var leftSQL, rightSQL string
 
-	// Handle left operand
-	switch v := c.Left.(type) {
-	case string:
-		leftSQL = v
-	case *Query:
-		sql, subArgs := buildSubquerySQL(v)
-		leftSQL = fmt.Sprintf("(%s)", sql)
-		args = append(args, subArgs...)
-	default:
-		leftSQL = "?"
-		args = append(args, v)
-	}
+	// The left operand sits in an identifier position: a column name is emitted, anything
+	// else is bound. See identifierOperandSQL.
+	leftSQL, args = identifierOperandSQL(c.Left, args)
 
-	// Handle right operand
+	// The right operand sits in a value position, so a bare string is a value — which is
+	// correct and is what every caller wants. Raw and Identifier are how a caller says it
+	// means a column there instead; without them a join comparing two columns bound the
+	// second one as a string and compared the first against its name.
 	switch v := c.Right.(type) {
-	case string:
-		rightSQL = "?"
-		args = append(args, v)
+	case Raw:
+		rightSQL = string(v)
+	case Identifier:
+		rightSQL, args = identifierOperandSQL(v, args)
 	case *Query:
 		sql, subArgs := buildSubquerySQL(v)
 		rightSQL = fmt.Sprintf("(%s)", sql)
@@ -58,17 +53,7 @@ func (c *UnaryCondition) ToSQL() (string, []interface{}) {
 	var args []interface{}
 	var operandSQL string
 
-	switch v := c.Operand.(type) {
-	case string:
-		operandSQL = v
-	case *Query:
-		sql, subArgs := buildSubquerySQL(v)
-		operandSQL = fmt.Sprintf("(%s)", sql)
-		args = append(args, subArgs...)
-	default:
-		operandSQL = "?"
-		args = append(args, v)
-	}
+	operandSQL, args = identifierOperandSQL(c.Operand, args)
 
 	return fmt.Sprintf("%s %s", c.Operator, operandSQL), args
 }
@@ -87,18 +72,8 @@ func (c *InCondition) ToSQL() (string, []interface{}) {
 	var args []interface{}
 	var fieldSQL string
 
-	// Handle field
-	switch v := c.Field.(type) {
-	case string:
-		fieldSQL = v
-	case *Query:
-		sql, subArgs := buildSubquerySQL(v)
-		fieldSQL = fmt.Sprintf("(%s)", sql)
-		args = append(args, subArgs...)
-	default:
-		fieldSQL = "?"
-		args = append(args, v)
-	}
+	// The field sits in an identifier position. See identifierOperandSQL.
+	fieldSQL, args = identifierOperandSQL(c.Field, args)
 
 	operator := "IN"
 	if c.Not {
@@ -132,18 +107,8 @@ func (c *BetweenCondition) ToSQL() (string, []interface{}) {
 	var args []interface{}
 	var fieldSQL string
 
-	// Handle field
-	switch v := c.Field.(type) {
-	case string:
-		fieldSQL = v
-	case *Query:
-		sql, subArgs := buildSubquerySQL(v)
-		fieldSQL = fmt.Sprintf("(%s)", sql)
-		args = append(args, subArgs...)
-	default:
-		fieldSQL = "?"
-		args = append(args, v)
-	}
+	// The field sits in an identifier position. See identifierOperandSQL.
+	fieldSQL, args = identifierOperandSQL(c.Field, args)
 
 	operator := "BETWEEN"
 	if c.Not {
@@ -214,18 +179,8 @@ func (c *LikeCondition) ToSQL() (string, []interface{}) {
 	var args []interface{}
 	var fieldSQL string
 
-	// Handle field
-	switch v := c.Field.(type) {
-	case string:
-		fieldSQL = v
-	case *Query:
-		sql, subArgs := buildSubquerySQL(v)
-		fieldSQL = fmt.Sprintf("(%s)", sql)
-		args = append(args, subArgs...)
-	default:
-		fieldSQL = "?"
-		args = append(args, v)
-	}
+	// The field sits in an identifier position. See identifierOperandSQL.
+	fieldSQL, args = identifierOperandSQL(c.Field, args)
 
 	operator := "LIKE"
 	if c.Not {
@@ -264,18 +219,8 @@ func (c *IsNullCondition) ToSQL() (string, []interface{}) {
 	var args []interface{}
 	var fieldSQL string
 
-	// Handle field
-	switch v := c.Field.(type) {
-	case string:
-		fieldSQL = v
-	case *Query:
-		sql, subArgs := buildSubquerySQL(v)
-		fieldSQL = fmt.Sprintf("(%s)", sql)
-		args = append(args, subArgs...)
-	default:
-		fieldSQL = "?"
-		args = append(args, v)
-	}
+	// The field sits in an identifier position. See identifierOperandSQL.
+	fieldSQL, args = identifierOperandSQL(c.Field, args)
 
 	operator := "IS NULL"
 	if c.Not {

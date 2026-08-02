@@ -259,7 +259,7 @@ func TestFormatGroupByEmptyEmitsNothing(t *testing.T) {
 
 func TestFormatHaving(t *testing.T) {
 	sql, args, err := d().FormatHaving(&dbCore.HavingClause{
-		Condition: &dbCore.BinaryCondition{Left: "COUNT(*)", Operator: ">", Right: 5},
+		Condition: &dbCore.BinaryCondition{Left: dbCore.Raw("COUNT(*)"), Operator: ">", Right: 5},
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "HAVING COUNT(*) > ?", sql)
@@ -573,7 +573,7 @@ func TestFullSelectClauseOrder(t *testing.T) {
 		LeftJoin("orders o", &dbCore.RawCondition{SQL: "o.user_id = u.id"}).
 		Eq("u.status", "active").
 		GroupBy("u.id").
-		Having(&dbCore.BinaryCondition{Left: "COUNT(o.id)", Operator: ">", Right: 2}).
+		Having(&dbCore.BinaryCondition{Left: dbCore.Raw("COUNT(o.id)"), Operator: ">", Right: 2}).
 		OrderBy("u.id", "desc").
 		Limit(10).
 		Offset(20).

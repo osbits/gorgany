@@ -104,6 +104,14 @@ func (d *PostgresDialect) FormatWhere(where *dbCore.WhereClause) (string, []inte
 	allArgs := make([]any, 0)
 	var conditions []string
 	for _, condition := range where.Conditions {
+		// Refuse before rendering. A condition whose identifier slot holds something that is
+		// not an identifier renders as a bound value — a comparison against the *text* of a
+		// predicate rather than the predicate — which is safe but silently wrong. On this path
+		// the caller can be told, so it is.
+		if err := dbCore.ValidateCondition(condition); err != nil {
+			return "", nil, fmt.Errorf("cannot render WHERE: %w", err)
+		}
+
 		sql, args := condition.ToSQL()
 		if sql == "" {
 			continue
@@ -221,6 +229,9 @@ func (d *PostgresDialect) FormatGroupBy(groupBy *dbCore.GroupByClause) (string, 
 func (d *PostgresDialect) FormatHaving(condition *dbCore.HavingClause) (string, []interface{}, error) {
 	if condition == nil {
 		return "", nil, nil
+	}
+	if err := dbCore.ValidateCondition(condition.Condition); err != nil {
+		return "", nil, fmt.Errorf("cannot render HAVING: %w", err)
 	}
 	sql, args := condition.Condition.ToSQL()
 	return fmt.Sprintf("HAVING %s", sql), args, nil

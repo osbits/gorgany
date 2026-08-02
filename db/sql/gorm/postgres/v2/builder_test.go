@@ -82,7 +82,7 @@ func TestBuilder_GroupBy(t *testing.T) {
 
 func TestBuilder_Having(t *testing.T) {
 	condition := &dbCore.BinaryCondition{
-		Left:     "COUNT(*)",
+		Left:     dbCore.Raw("COUNT(*)"),
 		Operator: ">",
 		Right:    5,
 	}
@@ -232,7 +232,7 @@ func TestBuilder_ToSQL(t *testing.T) {
 					From("orders").
 					GroupBy("user_id").
 					Having(&dbCore.BinaryCondition{
-						Left:     "COUNT(*)",
+						Left:     dbCore.Raw("COUNT(*)"),
 						Operator: ">",
 						Right:    5,
 					})
@@ -543,7 +543,7 @@ func TestBuilder_ComplexSubquery(t *testing.T) {
 		},
 		Having: &dbCore.HavingClause{
 			Condition: &dbCore.BinaryCondition{
-				Left:     "COUNT(*)",
+				Left:     dbCore.Raw("COUNT(*)"),
 				Operator: ">",
 				Right:    5,
 			},

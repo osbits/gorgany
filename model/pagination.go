@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -11,7 +12,6 @@ import (
 	sqlbuilder "github.com/osbits/gorgany/v2/db/sql/builder"
 	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
 	err2 "github.com/osbits/gorgany/v2/err"
-	"github.com/osbits/gorgany/v2/log"
 	"github.com/osbits/gorgany/v2/service/cache"
 	"gorm.io/gorm/schema"
 )
@@ -289,6 +289,16 @@ func NewPaginationParams(page int, pageSize int, sortParams []SortParam, filters
 func NewPaginationParamsWithAccess(page int, pageSize int, sort []SortParam, filters []Filter, accessControl AccessControl, ctx context.Context) (*PaginationParams, error) {
 	// Validate access control for all filters
 	if accessControl != nil {
+		// The configured caps are checked *before* iterating, not after and not at all.
+		// MaxFilters and MaxSorts were configuration nothing read — an application could set
+		// them, see them in its config, and still have every request it received build as
+		// many predicates as the query string asked for.
+		if limiter, ok := accessControl.(ComplexityLimiter); ok {
+			if err := limiter.CheckComplexity(len(filters), len(sort)); err != nil {
+				return nil, fmt.Errorf("PaginationParams: %w", err)
+			}
+		}
+
 		for _, filter := range filters {
 			if err := accessControl.ValidateFilterAccess(ctx, filter.Field, filter.Operator); err != nil {
 				return nil, fmt.Errorf("PaginationParams: %w", err)
@@ -304,6 +314,17 @@ func NewPaginationParamsWithAccess(page int, pageSize int, sort []SortParam, fil
 	}
 
 	return NewPaginationParams(page, pageSize, sort, filters), nil
+}
+
+// ComplexityLimiter is implemented by an access control that bounds how many filters and sorts
+// one request may ask for.
+//
+// Optional rather than part of AccessControl, which applications implement: an implementation
+// that does not bound complexity keeps compiling and is simply not asked.
+type ComplexityLimiter interface {
+	// CheckComplexity refuses a request asking for more filters or sorts than the
+	// configuration permits.
+	CheckComplexity(filters int, sorts int) error
 }
 
 type PaginationParams struct {
@@ -355,10 +376,31 @@ func (thiz PaginationParams) ApplyAllToQueryBuilder(builder dbCore.IQueryBuilder
 	return builder
 }
 
-// ApplyDBFiltersToQueryBuilder applies database-level RBAC filters to a query builder
-func ApplyDBFiltersToQueryBuilder(builder dbCore.IQueryBuilder, dbFilters []DBFilter) dbCore.IQueryBuilder {
+// ApplyDBFiltersToQueryBuilder applies database-level RBAC filters to a query builder.
+//
+// It returns an error now, and the signature change is the point rather than a side effect.
+// These filters are *restrictions*: a filter that fails to apply does not deny, it stops
+// denying, so silently dropping one widens the query to exactly the rows the policy meant to
+// keep out. The old code did that in three places — an operator it did not recognise, an `in`
+// whose value was not []interface{} (which is what a []string from YAML is), and a subquery
+// operator outside the four it handles — each ending in `return builder` with the filter gone
+// and nobody told.
+//
+// A caller must treat the error as "do not run this query". Nothing inside the framework calls
+// this; applications wire it up themselves, and its whole job is to be a security boundary,
+// which is what makes the break worth taking. It follows the precedent set when
+// IQueryBuilder.ToSQL started returning an error.
+func ApplyDBFiltersToQueryBuilder(builder dbCore.IQueryBuilder, dbFilters []DBFilter) (dbCore.IQueryBuilder, error) {
 	if len(dbFilters) == 0 {
-		return builder
+		return builder, nil
+	}
+
+	// Re-validated here as well as in GenerateDBFilters, because an application can build a
+	// []DBFilter by hand and hand it straight to this function.
+	for _, filter := range dbFilters {
+		if err := filter.Validate(nil); err != nil {
+			return nil, fmt.Errorf("refusing to apply an authorization filter: %w", err)
+		}
 	}
 
 	// Group filters by logic (AND/OR)
@@ -375,7 +417,11 @@ func ApplyDBFiltersToQueryBuilder(builder dbCore.IQueryBuilder, dbFilters []DBFi
 
 	// Apply AND filters first
 	for _, filter := range andFilters {
-		builder = applyDBFilterToQueryBuilder(builder, filter)
+		applied, err := applyDBFilterToQueryBuilder(builder, filter)
+		if err != nil {
+			return nil, err
+		}
+		builder = applied
 	}
 
 	// Apply OR filters as a group
@@ -384,9 +430,12 @@ func ApplyDBFiltersToQueryBuilder(builder dbCore.IQueryBuilder, dbFilters []DBFi
 		for _, filter := range orFilters {
 			// Create a temporary builder to build the condition
 			tempBuilder := sqlbuilder.NewLike(builder)
-			tempBuilder = applyDBFilterToQueryBuilder(tempBuilder, filter).(*sqlbuilder.Builder)
+			applied, err := applyDBFilterToQueryBuilder(tempBuilder, filter)
+			if err != nil {
+				return nil, err
+			}
 			// Extract the condition from the builder
-			query := tempBuilder.Build()
+			query := applied.(*sqlbuilder.Builder).Build()
 			if query.Where != nil && len(query.Where.Conditions) > 0 {
 				// Add all conditions from the temporary builder
 				orConditions = append(orConditions, query.Where.Conditions...)
@@ -400,11 +449,13 @@ func ApplyDBFiltersToQueryBuilder(builder dbCore.IQueryBuilder, dbFilters []DBFi
 		}
 	}
 
-	return builder
+	return builder, nil
 }
 
 // applyDBFilterToQueryBuilder applies a single DB filter to a query builder
-func applyDBFilterToQueryBuilder(builder dbCore.IQueryBuilder, filter DBFilter) dbCore.IQueryBuilder {
+func applyDBFilterToQueryBuilder(
+	builder dbCore.IQueryBuilder, filter DBFilter) (dbCore.IQueryBuilder, error) {
+
 	// Handle subqueries
 	if filter.Subquery != nil {
 		return applySubqueryToQueryBuilder(builder, filter)
@@ -415,41 +466,82 @@ func applyDBFilterToQueryBuilder(builder dbCore.IQueryBuilder, filter DBFilter) 
 		builder = applyJoinToQueryBuilder(builder, *filter.Join)
 	}
 
+	// A predicate the configuration author vouched for, with its parameters bound.
+	if filter.RawSQL != "" {
+		return builder.Where(&dbCore.RawCondition{SQL: filter.RawSQL, Args: filter.RawArgs}), nil
+	}
+
 	// Apply the filter condition
-	switch filter.Operator {
+	switch strings.ToLower(filter.Operator) {
 	case "=":
-		return builder.Eq(filter.Field, filter.Value)
+		return builder.Eq(filter.Field, filter.Value), nil
 	case "!=":
-		return builder.Neq(filter.Field, filter.Value)
+		return builder.Neq(filter.Field, filter.Value), nil
 	case ">":
-		return builder.Gt(filter.Field, filter.Value)
+		return builder.Gt(filter.Field, filter.Value), nil
 	case ">=":
-		return builder.Gte(filter.Field, filter.Value)
+		return builder.Gte(filter.Field, filter.Value), nil
 	case "<":
-		return builder.Lt(filter.Field, filter.Value)
+		return builder.Lt(filter.Field, filter.Value), nil
 	case "<=":
-		return builder.Lte(filter.Field, filter.Value)
+		return builder.Lte(filter.Field, filter.Value), nil
 	case "like":
-		return builder.Like(filter.Field, filter.Value)
+		return builder.Like(filter.Field, filter.Value), nil
 	case "not like":
-		return builder.NotLike(filter.Field, filter.Value)
-	case "in":
-		if values, ok := filter.Value.([]interface{}); ok {
-			return builder.In(filter.Field, values...)
+		return builder.NotLike(filter.Field, filter.Value), nil
+	case "in", "not in":
+		// Any slice, not only []interface{}. A list written in YAML or JSON arrives as
+		// []string or []any depending on how it was decoded, and the []interface{} type
+		// assertion silently dropped everything else — turning "you may see these five rows"
+		// into no restriction at all.
+		values, err := filterValueSlice(filter.Value)
+		if err != nil {
+			return nil, fmt.Errorf("filter on %q with operator %q: %w",
+				filter.Field, filter.Operator, err)
 		}
-		return builder
-	case "not in":
-		if values, ok := filter.Value.([]interface{}); ok {
-			return builder.NotIn(filter.Field, values...)
+		if strings.EqualFold(filter.Operator, "in") {
+			return builder.In(filter.Field, values...), nil
 		}
-		return builder
+		return builder.NotIn(filter.Field, values...), nil
 	default:
-		return builder
+		return nil, fmt.Errorf(
+			"filter on %q uses operator %q, which this builder cannot emit; the filter would "+
+				"otherwise be dropped and the query left unrestricted",
+			filter.Field, filter.Operator)
 	}
 }
 
+// filterValueSlice normalises an IN/NOT IN value into a bindable slice.
+func filterValueSlice(value any) ([]any, error) {
+	if value == nil {
+		return nil, fmt.Errorf("needs a list of values and has none")
+	}
+	if values, ok := value.([]any); ok {
+		if len(values) == 0 {
+			return nil, fmt.Errorf("needs a non-empty list of values")
+		}
+		return values, nil
+	}
+
+	reflected := reflect.ValueOf(value)
+	if reflected.Kind() != reflect.Slice && reflected.Kind() != reflect.Array {
+		return nil, fmt.Errorf("needs a list of values, got %T", value)
+	}
+	if reflected.Len() == 0 {
+		return nil, fmt.Errorf("needs a non-empty list of values")
+	}
+
+	values := make([]any, reflected.Len())
+	for i := range values {
+		values[i] = reflected.Index(i).Interface()
+	}
+	return values, nil
+}
+
 // applySubqueryToQueryBuilder applies a subquery filter to a query builder
-func applySubqueryToQueryBuilder(builder dbCore.IQueryBuilder, filter DBFilter) dbCore.IQueryBuilder {
+func applySubqueryToQueryBuilder(
+	builder dbCore.IQueryBuilder, filter DBFilter) (dbCore.IQueryBuilder, error) {
+
 	subquery := filter.Subquery
 
 	// Build subquery
@@ -463,71 +555,67 @@ func applySubqueryToQueryBuilder(builder dbCore.IQueryBuilder, filter DBFilter) 
 
 	// Apply where conditions to subquery
 	for _, whereFilter := range subquery.Where {
-		subqueryBuilder = applyDBFilterToQueryBuilder(subqueryBuilder, whereFilter).(*sqlbuilder.Builder)
+		applied, err := applyDBFilterToQueryBuilder(subqueryBuilder, whereFilter)
+		if err != nil {
+			return nil, fmt.Errorf("inside the subquery on %s: %w", subquery.Table, err)
+		}
+		subqueryBuilder = applied.(*sqlbuilder.Builder)
 	}
 
 	// Build the subquery to get the Query object
 	subqueryQuery := subqueryBuilder.Build()
 
 	// Apply subquery to main query
-	switch subquery.Operator {
+	switch strings.ToUpper(subquery.Operator) {
 	case "IN":
-		return builder.InSubquery(filter.Field, subqueryQuery)
+		return builder.InSubquery(filter.Field, subqueryQuery), nil
 	case "NOT IN":
-		return builder.NotInSubquery(filter.Field, subqueryQuery)
-	case "EXISTS":
+		return builder.NotInSubquery(filter.Field, subqueryQuery), nil
+	case "EXISTS", "NOT EXISTS":
 		sql, args, err := subqueryBuilder.ToSQL()
 		if err != nil {
-			log.Log().Errorf("pagination: cannot render EXISTS subquery: %v", err)
-			return builder
+			return nil, fmt.Errorf("cannot render the %s subquery on %s: %w",
+				subquery.Operator, subquery.Table, err)
 		}
 		return builder.Where(&dbCore.RawCondition{
-			SQL:  fmt.Sprintf("EXISTS (%s)", sql),
+			SQL:  fmt.Sprintf("%s (%s)", strings.ToUpper(subquery.Operator), sql),
 			Args: args,
-		})
-	case "NOT EXISTS":
-		sql, args, err := subqueryBuilder.ToSQL()
-		if err != nil {
-			log.Log().Errorf("pagination: cannot render NOT EXISTS subquery: %v", err)
-			return builder
-		}
-		return builder.Where(&dbCore.RawCondition{
-			SQL:  fmt.Sprintf("NOT EXISTS (%s)", sql),
-			Args: args,
-		})
+		}), nil
 	default:
-		return builder
+		return nil, fmt.Errorf(
+			"subquery on %s uses operator %q, which this builder cannot emit",
+			subquery.Table, subquery.Operator)
 	}
 }
 
-// applyJoinToQueryBuilder applies a join to a query builder
+// applyJoinToQueryBuilder applies a join to a query builder.
+//
+// Both keys are dbCore.Identifier, and that is a bug fix rather than tidying. The right side of
+// a BinaryCondition is a *value* position, so a bare string there is bound — which meant every
+// DBJoin-based RBAC filter emitted `INNER JOIN teams ON team_members.team_id = ?` with the
+// argument "teams.id", joining on a string constant instead of the column. The join matched
+// nothing, so the filter that depended on it restricted the query to nothing or, joined with
+// OR, to everything.
 func applyJoinToQueryBuilder(builder dbCore.IQueryBuilder, join DBJoin) dbCore.IQueryBuilder {
-	switch join.Type {
+	condition := &dbCore.BinaryCondition{
+		Left:     dbCore.Identifier(join.LeftKey),
+		Operator: "=",
+		Right:    dbCore.Identifier(join.RightKey),
+	}
+
+	switch strings.ToUpper(join.Type) {
 	case "INNER":
-		return builder.InnerJoin(join.Table, &dbCore.BinaryCondition{
-			Left:     join.LeftKey,
-			Operator: "=",
-			Right:    join.RightKey,
-		})
+		return builder.InnerJoin(join.Table, condition)
 	case "LEFT":
-		return builder.LeftJoin(join.Table, &dbCore.BinaryCondition{
-			Left:     join.LeftKey,
-			Operator: "=",
-			Right:    join.RightKey,
-		})
+		return builder.LeftJoin(join.Table, condition)
 	case "RIGHT":
-		return builder.RightJoin(join.Table, &dbCore.BinaryCondition{
-			Left:     join.LeftKey,
-			Operator: "=",
-			Right:    join.RightKey,
-		})
+		return builder.RightJoin(join.Table, condition)
 	case "FULL":
-		return builder.FullJoin(join.Table, &dbCore.BinaryCondition{
-			Left:     join.LeftKey,
-			Operator: "=",
-			Right:    join.RightKey,
-		})
+		return builder.FullJoin(join.Table, condition)
 	default:
+		// Unreachable through GenerateDBFilters, which validates the type; reachable from a
+		// hand-built filter, where refusing the join is safer than emitting the query without
+		// it and letting the predicate that depended on it match the wrong rows.
 		return builder
 	}
 }

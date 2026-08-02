@@ -1,5 +1,29 @@
 # Complex RBAC SQL Examples
 
+> **`field:` is a column reference, and nothing else.**
+>
+> It was once documented as being able to hold raw SQL, with the caller's attributes
+> substituted into it. That was second-order SQL injection: `field: "author_name =
+> '{{user_username}}'"` with a username of `x' OR 'a'='a` produced a predicate true for every
+> row, and the unparenthesised WHERE clause carried the injected `OR` across its siblings.
+>
+> A `field:` that is not a bare or dotted column name is now refused when the filters are
+> generated. User context reaches SQL through `value:`, which is bound as a query parameter —
+> which is what every example below already does. For a predicate that genuinely needs to be
+> SQL, use `raw_sql:` with `raw_args:`; placeholders are **not** expanded into `raw_sql`, so
+> anything user-derived goes in `raw_args` and is bound:
+>
+> ```yaml
+> - raw_sql: "author_name = ? AND published = true"
+>   raw_args: ["{{.Username}}"]
+>   logic: "AND"
+> ```
+>
+> Role keys under `custom_filters:` are matched case-insensitively, so `ADMIN:` and `admin:`
+> both work. They did not use to: the lookup lower-cased the caller's role and compared it to
+> the key verbatim, so the upper-case keys in these examples matched nothing and the filters
+> they describe were never applied.
+
 ## Scenario: Team Manager Access to Team Members
 
 ### Database Schema

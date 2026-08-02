@@ -475,7 +475,7 @@ func TestCloneDeepCopiesEveryClause(t *testing.T) {
 		InnerJoin("orders", &dbCore.RawCondition{SQL: "true"}).
 		OrderBy("id", "asc").
 		GroupBy("id").
-		Having(&dbCore.BinaryCondition{Left: "COUNT(*)", Operator: ">", Right: 1}).
+		Having(&dbCore.BinaryCondition{Left: dbCore.Raw("COUNT(*)"), Operator: ">", Right: 1}).
 		Limit(1).
 		Offset(2).
 		WithCTE("c", subquery(&postgres.PostgresDialect{})).
