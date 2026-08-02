@@ -305,13 +305,16 @@ func (s *HTTPRequestScope) FormFile(key string) (core.IFile, error) {
 	if err := s.parseMultipart(); err != nil {
 		return nil, err
 	}
+	if err := s.enforceUploadLimits(); err != nil {
+		return nil, err
+	}
 	f, fh, err := s.R.FormFile(key)
 	if err != nil {
 		return nil, err
 	}
-	if fh.Size > s.maxFileBytes {
+	if fh.Size > s.perFileLimit() {
 		f.Close()
-		return nil, fmt.Errorf("file too large: %d > %d", fh.Size, s.maxFileBytes)
+		return nil, fmt.Errorf("file too large: %d > %d", fh.Size, s.perFileLimit())
 	}
 	name := sanitize(fh.Filename)
 	if name == "" {
@@ -331,6 +334,9 @@ func (s *HTTPRequestScope) GetFiles(key string) ([]core.IFile, error) {
 	if err := s.parseMultipart(); err != nil {
 		return nil, err
 	}
+	if err := s.enforceUploadLimits(); err != nil {
+		return nil, err
+	}
 	var out []core.IFile
 
 	// A failure part-way through leaves the files already stored with nobody to release
@@ -343,7 +349,7 @@ func (s *HTTPRequestScope) GetFiles(key string) ([]core.IFile, error) {
 	}
 
 	for _, fh := range s.R.MultipartForm.File[key] {
-		if fh.Size > s.maxFileBytes {
+		if fh.Size > s.perFileLimit() {
 			return fail(fmt.Errorf("file too large: %d", fh.Size))
 		}
 		f, err := fh.Open()
@@ -369,6 +375,53 @@ func (s *HTTPRequestScope) GetFiles(key string) ([]core.IFile, error) {
 // has already determined in order to pick the stored extension — so this costs no second
 // read of the body, and a part that fails it is deleted again rather than left in
 // resource/temp.
+// perFileLimit is the smaller of the two configured per-file caps.
+//
+// There were two, and only one of them applied here. DTO parsing enforces http.upload.* —
+// 10 MB per file by default — while FormFile and GetFiles enforced only
+// http.security.file.maxSizeMB, which defaults to 100. So the same upload was accepted or
+// refused depending on which API the handler happened to use, and the more permissive of the
+// two was the one on the hand-rolled path. Taking the smaller makes
+// http.security.file.maxSizeMB a ceiling rather than the only limit.
+func (s *HTTPRequestScope) perFileLimit() int64 {
+	limit := s.maxFileBytes
+	if configured := resolveUploadLimits().MaxFileSize; configured > 0 && configured < limit {
+		return configured
+	}
+	return limit
+}
+
+// enforceUploadLimits applies the total-size and file-count caps that DTO parsing applies.
+//
+// FormFile and GetFiles enforced neither: an app receiving its uploads through them had no
+// bound on how many parts one request could carry, nor on their combined size beyond the raw
+// body cap. Both methods parse the same form MultipartParser does, so both get the same
+// answer.
+func (s *HTTPRequestScope) enforceUploadLimits() error {
+	if s.R.MultipartForm == nil {
+		return nil
+	}
+
+	limits := resolveUploadLimits()
+
+	if total := countUploadedParts(s.R.MultipartForm.File); total > limits.MaxFiles {
+		return fmt.Errorf("too many files: %d, maximum allowed is %d", total, limits.MaxFiles)
+	}
+
+	var totalSize int64
+	for _, headers := range s.R.MultipartForm.File {
+		for _, header := range headers {
+			totalSize += header.Size
+		}
+	}
+	if totalSize > limits.MaxMultipartSize {
+		return fmt.Errorf("upload too large: %d bytes, maximum allowed is %d",
+			totalSize, limits.MaxMultipartSize)
+	}
+
+	return nil
+}
+
 func (s *HTTPRequestScope) storeUpload(name string, part io.Reader) (core.IFile, error) {
 	mf, err := model.NewMultipartFile(name, part)
 	if err != nil {

@@ -478,8 +478,29 @@ func (thiz *MultipartFile) FullPath() string {
 	return path.Join(PublicStorage, thiz.Path, thiz.Name)
 }
 
+// PublicPath is the URL this file is served at.
+//
+// One `public` segment, and a leading slash. It used to return "public/<Path>/<Name>" while
+// the controller mapped /public/X onto resource/X — so the URL that actually worked for a
+// stored upload was /public/public/<Path>/<Name>, and the value this returns was a 404. With
+// the controller anchored at PublicStorage the two now round-trip exactly once:
+//
+//	bytes at  resource/public/avatars/x.png   (FullPath)
+//	URL       /public/avatars/x.png           (PublicPath)
+//
+// The leading slash matters as much as the segment count. This value goes straight into an
+// HTML attribute (view/cp/fields_params_builder.go) and into JSON (File.MarshalJSON); without
+// it the URL is relative and resolves against whatever path the current document is at, so it
+// was already wrong on every page not served from the root.
+//
+// Nothing stored needs migrating. File.Value persists path.Join(Path, Name) and File.Scan
+// reads it back the same way — every URL is computed at render time, so only generated URLs
+// change, and they change from broken to working.
 func (thiz *MultipartFile) PublicPath() string {
-	return path.Join("public", thiz.Path, thiz.Name)
+	if thiz.Name == "" {
+		return ""
+	}
+	return "/" + path.Join("public", thiz.Path, thiz.Name)
 }
 
 func (thiz *MultipartFile) IsExists() bool {

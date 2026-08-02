@@ -2,9 +2,14 @@ package controller
 
 import (
 	"bytes"
+	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/osbits/gorgany/v2/model"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -12,10 +17,17 @@ import (
 
 // servePublic writes content into the served tree and returns the response the controller
 // produced for it.
+//
+// The tree is model.PublicStorage — resource/public — and the URL is /public/<rel>, a single
+// `public` segment. The harness used to write under resource/<rel> and request
+// /public/<rel>, which is what let the controller be anchored at resource/ without any test
+// noticing; and because MultipartFile.PublicPath produced "public/<path>/<name>", the URL
+// that actually worked for a stored upload was /public/public/… . Both halves are fixed, and
+// TestPublicPathRoundTripsThroughTheRouteExactlyOnce is what pins them together.
 func servePublic(t *testing.T, relativePath string, content []byte) *spaRecorder {
 	t.Helper()
 
-	full := filepath.Join("resource", filepath.FromSlash(relativePath))
+	full := filepath.Join(model.PublicStorage, filepath.FromSlash(relativePath))
 	require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
 	require.NoError(t, os.WriteFile(full, content, 0o644))
 
@@ -23,6 +35,9 @@ func servePublic(t *testing.T, relativePath string, content []byte) *spaRecorder
 	NewPublicController().load(message)
 	return message.rec
 }
+
+// publicResult reads a response back regardless of whether it was streamed.
+func publicResult(rec *spaRecorder) (int, []byte, http.Header) { return rec.result() }
 
 const uploadedHTML = `<html><body><script>alert(document.cookie)</script></body></html>`
 
@@ -36,20 +51,20 @@ func TestUploadedContentIsNeverServedAsAScriptHost(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	cases := map[string][]byte{
-		"public/avatars/payload.html":  []byte(uploadedHTML),
-		"public/avatars/payload.HTML":  []byte(uploadedHTML),
-		"public/avatars/payload.htm":   []byte(uploadedHTML),
-		"public/avatars/payload.xhtml": []byte(uploadedHTML),
-		"public/avatars/payload.svg":   []byte(uploadedSVG),
-		"public/avatars/payload.xml":   []byte(uploadedSVG),
+		"avatars/payload.html":  []byte(uploadedHTML),
+		"avatars/payload.HTML":  []byte(uploadedHTML),
+		"avatars/payload.htm":   []byte(uploadedHTML),
+		"avatars/payload.xhtml": []byte(uploadedHTML),
+		"avatars/payload.svg":   []byte(uploadedSVG),
+		"avatars/payload.xml":   []byte(uploadedSVG),
 	}
 
 	for path, content := range cases {
 		t.Run(path, func(t *testing.T) {
-			rec := servePublic(t, path, content)
+			status, _, headers := publicResult(servePublic(t, path, content))
 
-			require.Equal(t, 200, rec.status)
-			contentType := rec.headers.Get("Content-Type")
+			require.Equal(t, 200, status)
+			contentType := headers.Get("Content-Type")
 			assert.NotContains(t, contentType, "text/html")
 			assert.NotContains(t, contentType, "svg")
 			assert.NotContains(t, contentType, "xml")
@@ -67,17 +82,17 @@ func TestEveryPublicResponseIsNosniffAndAttachment(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	for _, path := range []string{
-		"public/avatars/photo.png",
-		"public/avatars/payload.html",
-		"public/docs/report.pdf",
+		"avatars/photo.png",
+		"avatars/payload.html",
+		"docs/report.pdf",
 		"styles/app.css",
 	} {
 		t.Run(path, func(t *testing.T) {
-			rec := servePublic(t, path, []byte("some bytes"))
+			status, _, headers := publicResult(servePublic(t, path, []byte("some bytes")))
 
-			require.Equal(t, 200, rec.status)
-			assert.Equal(t, "nosniff", rec.headers.Get("X-Content-Type-Options"))
-			assert.Contains(t, rec.headers.Get("Content-Disposition"), "attachment")
+			require.Equal(t, 200, status)
+			assert.Equal(t, "nosniff", headers.Get("X-Content-Type-Options"))
+			assert.Contains(t, headers.Get("Content-Disposition"), "attachment")
 		})
 	}
 }
@@ -89,8 +104,8 @@ func TestRenderSafeTypesAreStillNamed(t *testing.T) {
 	t.Chdir(t.TempDir())
 
 	expected := map[string]string{
-		"public/photo.png":  "image/png",
-		"public/photo.jpg":  "image/jpeg",
+		"photo.png":         "image/png",
+		"photo.jpg":         "image/jpeg",
 		"styles/app.css":    "text/css",
 		"scripts/app.js":    "javascript",
 		"docs/report.pdf":   "application/pdf",
@@ -102,10 +117,10 @@ func TestRenderSafeTypesAreStillNamed(t *testing.T) {
 
 	for path, wantType := range expected {
 		t.Run(path, func(t *testing.T) {
-			rec := servePublic(t, path, []byte("some bytes"))
+			status, _, headers := publicResult(servePublic(t, path, []byte("some bytes")))
 
-			require.Equal(t, 200, rec.status)
-			assert.Contains(t, rec.headers.Get("Content-Type"), wantType)
+			require.Equal(t, 200, status)
+			assert.Contains(t, headers.Get("Content-Type"), wantType)
 		})
 	}
 }
@@ -119,10 +134,10 @@ func TestPublicContentIsReturnedByteIdentically(t *testing.T) {
 		content[i] = byte(i % 256)
 	}
 
-	rec := servePublic(t, "public/avatars/photo.png", content)
+	status, body, _ := publicResult(servePublic(t, "avatars/photo.png", content))
 
-	require.Equal(t, 200, rec.status)
-	assert.True(t, bytes.Equal(content, rec.body))
+	require.Equal(t, 200, status)
+	assert.True(t, bytes.Equal(content, body))
 }
 
 // TestAFilenameCannotWriteItsOwnHeader. The disposition carries the stored name, and stored
@@ -185,8 +200,162 @@ func TestNothingOutsideTheResourceTreeIsServed(t *testing.T) {
 			message := spaRequestFor(path)
 			NewPublicController().load(message)
 
-			assert.NotEqual(t, 200, message.rec.status, "status %d for %s", message.rec.status, path)
-			assert.NotContains(t, string(message.rec.body), "credentials")
+			status, body, _ := publicResult(message.rec)
+			assert.NotEqual(t, 200, status, "status %d for %s", status, path)
+			assert.NotContains(t, string(body), "credentials")
 		})
 	}
+}
+
+// --- SEC-H10: the served root -------------------------------------------------------------
+
+// TestPublicRoutingCannotReachTheTempUploadRoot.
+//
+// resource/temp holds uploads mid-request and whatever a crash left behind. It was one
+// directory along from the served root, and the served root was their parent.
+func TestPublicRoutingCannotReachTheTempUploadRoot(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	require.NoError(t, os.MkdirAll(model.TempStorage, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(model.TempStorage, "leaked.txt"), []byte("somebody's upload"), 0o644))
+
+	message := spaRequestFor("/public/temp/leaked.txt")
+	NewPublicController().load(message)
+
+	status, body, _ := publicResult(message.rec)
+	assert.NotEqual(t, 200, status)
+	assert.NotContains(t, string(body), "somebody's upload")
+}
+
+// TestPublicRoutingCannotReachTemplateViewOrI18nSources. Same shape, different siblings: the
+// view templates, the internal command templates and the translation files all live under
+// resource/ and were all reachable.
+func TestPublicRoutingCannotReachTemplateViewOrI18nSources(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	sources := map[string]string{
+		"resource/view/auth/login.gohtml":        "{{ .Secret }}",
+		"resource/template/command/db_diff.html": "internal template",
+		"resource/i18n/en.yaml":                  "greeting: hello",
+		"resource/config/database.yml":           "password: hunter2",
+	}
+
+	for full, content := range sources {
+		require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+		require.NoError(t, os.WriteFile(full, []byte(content), 0o644))
+	}
+
+	for full, content := range sources {
+		url := "/public/" + strings.TrimPrefix(full, "resource/")
+		t.Run(url, func(t *testing.T) {
+			message := spaRequestFor(url)
+			NewPublicController().load(message)
+
+			status, body, _ := publicResult(message.rec)
+			assert.NotEqual(t, 200, status)
+			assert.NotContains(t, string(body), content)
+		})
+	}
+}
+
+// TestPublicPathRoundTripsThroughTheRouteExactlyOnce is the acceptance criterion, end to end:
+// the URL a stored upload reports has to be the URL that serves it.
+//
+// It did not. PublicPath returned "public/<path>/<name>" and the controller mapped /public/X
+// onto resource/X, so the value the framework handed to a template was a 404 and the URL that
+// worked had `public` in it twice.
+func TestPublicPathRoundTripsThroughTheRouteExactlyOnce(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	content := []byte("\x89PNG\r\n\x1a\nthe avatar bytes")
+	file, err := model.NewMultipartFile("avatar.png", bytes.NewReader(content))
+	require.NoError(t, err)
+	defer file.Close()
+
+	_, err = file.Write("avatars", bytes.NewReader(content))
+	require.NoError(t, err)
+
+	url := file.PublicPath()
+	require.Equal(t, 1, strings.Count(url, "public/"), "url %q", url)
+
+	message := spaRequestFor(url)
+	NewPublicController().load(message)
+
+	status, body, _ := publicResult(message.rec)
+	require.Equal(t, 200, status, "PublicPath() must be usable as the request target: %s", url)
+	assert.True(t, bytes.Equal(content, body))
+}
+
+// TestTheDoublePublicUrlNoLongerResolves pins the break.
+func TestTheDoublePublicUrlNoLongerResolves(t *testing.T) {
+	t.Chdir(t.TempDir())
+	servePublic(t, "avatars/x.png", []byte("bytes"))
+
+	message := spaRequestFor("/public/public/avatars/x.png")
+	NewPublicController().load(message)
+
+	status, _, _ := publicResult(message.rec)
+	assert.NotEqual(t, 200, status)
+}
+
+// TestASymlinkBelowThePublicRootCannotEscapeIt. Containment was purely lexical —
+// filepath.Abs and a prefix compare — and EvalSymlinks appears nowhere in this repository, so
+// a link planted under the served root pointed wherever it liked.
+func TestASymlinkBelowThePublicRootCannotEscapeIt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlinks need elevation on Windows")
+	}
+
+	root := t.TempDir()
+	t.Chdir(root)
+
+	require.NoError(t, os.WriteFile(filepath.Join(root, "secret.txt"), []byte("credentials"), 0o644))
+	require.NoError(t, os.MkdirAll(model.PublicStorage, 0o755))
+	require.NoError(t, os.Symlink(
+		filepath.Join(root, "secret.txt"), filepath.Join(model.PublicStorage, "escape.txt")))
+
+	message := spaRequestFor("/public/escape.txt")
+	NewPublicController().load(message)
+
+	status, body, _ := publicResult(message.rec)
+	assert.NotEqual(t, 200, status)
+	assert.NotContains(t, string(body), "credentials")
+}
+
+// TestARangeRequestIsAnsweredFromTheOpenFile is the observable proof the response is streamed
+// rather than read into memory: os.ReadFile plus Bytes could not answer a range at all.
+func TestARangeRequestIsAnsweredFromTheOpenFile(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	content := []byte("0123456789abcdefghijklmnopqrstuvwxyz")
+	full := filepath.Join(model.PublicStorage, "data", "export.json")
+	require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+	require.NoError(t, os.WriteFile(full, content, 0o644))
+
+	message := spaRequestFor("/public/data/export.json")
+	message.req.raw.Header.Set("Range", "bytes=10-19")
+	NewPublicController().load(message)
+
+	status, body, headers := publicResult(message.rec)
+	require.Equal(t, 206, status)
+	assert.Equal(t, content[10:20], body)
+	assert.Contains(t, headers.Get("Content-Range"), "10-19")
+}
+
+// TestAConditionalRequestIsAnsweredWith304.
+func TestAConditionalRequestIsAnsweredWith304(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	_, _, headers := publicResult(servePublic(t, "data/export.json", []byte("{}")))
+	etag := headers.Get("ETag")
+	require.NotEmpty(t, etag)
+
+	message := spaRequestFor("/public/data/export.json")
+	message.req.raw.Header.Set("If-None-Match", etag)
+	NewPublicController().load(message)
+
+	status, body, _ := publicResult(message.rec)
+	assert.Equal(t, 304, status)
+	assert.Empty(t, body)
 }

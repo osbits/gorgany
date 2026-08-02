@@ -28,11 +28,45 @@ type spaRecorder struct {
 	text    string
 	json    any
 	headers http.Header
+
+	// raw is where a streamed response lands. See spaResponse.RawWriter.
+	raw *httptest.ResponseRecorder
+}
+
+// result normalises the two ways a response can arrive — Bytes/Text on the scope, or
+// http.ServeContent writing through RawWriter — so a test can assert on one shape.
+func (r *spaRecorder) result() (int, []byte, http.Header) {
+	if r.raw == nil {
+		return r.status, r.body, r.headers
+	}
+	status := r.raw.Code
+	if r.status != 0 && r.raw.Code == 200 {
+		// Text/Bytes set the status without going through the raw writer.
+		status = r.status
+	}
+	return status, r.raw.Body.Bytes(), r.raw.Header()
 }
 
 type spaResponse struct {
 	core.IResponseScope
 	rec *spaRecorder
+}
+
+// RawWriter is what http.ServeContent writes through, now that the public controller streams
+// rather than buffering. The recorder reads status, body and headers back out of it, so a
+// streamed response is observable to a test in the same way a buffered one was.
+func (r *spaResponse) RawWriter() http.ResponseWriter {
+	if r.rec.raw == nil {
+		r.rec.raw = httptest.NewRecorder()
+		if r.rec.headers != nil {
+			for key, values := range r.rec.headers {
+				for _, value := range values {
+					r.rec.raw.Header().Add(key, value)
+				}
+			}
+		}
+	}
+	return r.rec.raw
 }
 
 func (r *spaResponse) Bytes(b []byte, code int) { r.rec.status, r.rec.body = code, b }
@@ -43,6 +77,9 @@ func (r *spaResponse) SetHeader(key, value string) {
 		r.rec.headers = http.Header{}
 	}
 	r.rec.headers.Set(key, value)
+	if r.rec.raw != nil {
+		r.rec.raw.Header().Set(key, value)
+	}
 }
 
 type spaRequest struct {

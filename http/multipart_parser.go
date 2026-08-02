@@ -74,6 +74,19 @@ func resolveUploadLimits() uploadLimits {
 	return limits
 }
 
+// countUploadedParts is how many files a multipart form actually carries.
+//
+// Exported behaviour depends on this being parts and not field names — see the call in Parse,
+// and HTTPRequestScope.enforceUploadLimits, which applies the same limits to FormFile and
+// GetFiles.
+func countUploadedParts(files map[string][]*multipart.FileHeader) int {
+	total := 0
+	for _, headers := range files {
+		total += len(headers)
+	}
+	return total
+}
+
 // multipartTypeCache stores reflection information for types to avoid repeated lookups
 var multipartTypeCache = struct {
 	sync.RWMutex
@@ -109,8 +122,13 @@ func (p *MultipartParser) Parse(arg interface{}) error {
 		return err
 	}
 
-	// Validate number of files
-	if len(multipartForm.File) > limits.MaxFiles {
+	// Validate number of files.
+	//
+	// The count is the number of *parts*, summed across field names, not the number of field
+	// names. `len(multipartForm.File)` counts map keys, so a hundred parts all called "file"
+	// counted as one and sailed past a limit of a hundred — which is the shape an attacker
+	// would send, not the shape a form does.
+	if total := countUploadedParts(multipartForm.File); total > limits.MaxFiles {
 		return &error2.ValidationErrors{
 			error2.ValidationError{
 				Field: "files",
@@ -154,12 +172,27 @@ func (p *MultipartParser) Parse(arg interface{}) error {
 			_ = stored.Close()
 		}
 
+		// A part that named a field the DTO cannot hold knows exactly which field it was, so
+		// the client is told that rather than having one reason fanned across every part it
+		// sent — which is what the fallback below does, and all it could do.
+		var bindError *mpart.FieldBindError
+		if errors.As(err, &bindError) && bindError.Field != "" {
+			return &error2.ValidationErrors{
+				error2.ValidationError{
+					Field: sanitizeFieldName(bindError.Field),
+					Err:   bindError.Reason,
+				},
+			}
+		}
+
 		reason := "Incorrect files"
 		var typeError *model.UploadTypeError
 		if errors.As(err, &typeError) {
 			// The type is the one piece of the failure a client can act on, and it is not
 			// derived from anything the client sent — it is what the bytes sniffed as.
 			reason = fmt.Sprintf("Content of type %s is not allowed", typeError.MediaType)
+		} else if errors.As(err, &bindError) {
+			reason = bindError.Reason
 		}
 
 		validationErrors := make(error2.ValidationErrors, 0)

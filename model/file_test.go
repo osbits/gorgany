@@ -2,6 +2,7 @@ package model
 
 import (
 	"bytes"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -97,8 +98,13 @@ func TestMultipartFile(t *testing.T) {
 		t.Error("Read failed, content mismatch")
 	}
 
-	// Test PublicPath
-	expectedPublicPath := filepath.Join("public", testPath, file.Name)
+	// Test PublicPath.
+	//
+	// A rooted URL with one `public` segment. It used to be relative and to be one segment
+	// short of what the route wanted — the working URL for a stored upload was
+	// /public/public/<path>/<name> — so both halves of that changed together; see
+	// PublicPath and TestPublicPathRoundTripsThroughTheRouteExactlyOnce.
+	expectedPublicPath := "/" + path.Join("public", testPath, file.Name)
 	if publicPath := file.PublicPath(); publicPath != expectedPublicPath {
 		t.Errorf("PublicPath failed, expected '%s', got '%s'", expectedPublicPath, publicPath)
 	}

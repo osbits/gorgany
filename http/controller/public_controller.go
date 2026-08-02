@@ -1,13 +1,16 @@
 package controller
 
 import (
+	"fmt"
 	"mime"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/osbits/gorgany/v2/app/core"
 	"github.com/osbits/gorgany/v2/http/router"
+	"github.com/osbits/gorgany/v2/model"
 )
 
 // inlineSafeContentTypes are the types this controller is willing to name on a response.
@@ -40,62 +43,117 @@ func NewPublicController() *PublicController {
 	return &PublicController{}
 }
 
+// NewPublicControllerAt mounts a second tree at a pattern of the app's choosing.
+//
+// The default controller is anchored at model.PublicStorage and only there. An app that
+// deliberately serves something else — a legacy directory, a separate media root — says so
+// here, in one reviewable line in its own provider, rather than by the framework's default
+// being wide enough to cover it.
+func NewPublicControllerAt(pattern, root string) *PublicController {
+	return &PublicController{Root: root, Pattern: pattern}
+}
+
 type PublicController struct {
+	// Root is the directory served. Empty means model.PublicStorage.
+	Root string
+	// Pattern is the route. Empty means "/public/*".
+	Pattern string
+}
+
+// DefaultPublicPattern is where the built-in controller mounts.
+const DefaultPublicPattern = "/public/*"
+
+// root is the directory this controller serves.
+//
+// model.PublicStorage — `resource/public` — and not `resource`, which is what it used to
+// join against. The upload path is the only thing that writes into the served tree and it
+// writes exclusively under resource/public, so anchoring at resource made the write root a
+// strict subset of the read root and everything else in there collateral: `/public/temp/…`
+// reached in-flight and crash-orphaned uploads, `/public/view/…` the template sources,
+// `/public/i18n/…` the translation files.
+func (thiz PublicController) root() string {
+	if thiz.Root != "" {
+		return thiz.Root
+	}
+	return model.PublicStorage
+}
+
+// urlPrefix is the part of the request path that names this controller rather than the file.
+func (thiz PublicController) urlPrefix() string {
+	pattern := thiz.Pattern
+	if pattern == "" {
+		pattern = DefaultPublicPattern
+	}
+	return strings.TrimSuffix(pattern, "*")
 }
 
 func (thiz PublicController) load(message core.HttpMessage) {
 	r := message.Request().RawRequest()
-	url := r.URL
-	path := url.Path
 
-	// Clean and validate the path
-	cleanPath := filepath.Clean(path)
-	if strings.HasPrefix(cleanPath, "..") || strings.Contains(cleanPath, "..") {
+	// The lexical guards stay, all of them. os.Root below is defence in depth and not a
+	// replacement: these produce the 400s the existing tests pin, and they refuse before any
+	// syscall happens at all.
+	cleanPath := filepath.Clean(r.URL.Path)
+	if strings.Contains(cleanPath, "..") {
 		message.Response().Text("Invalid path", 400)
 		return
 	}
 
-	// Ensure path starts with /public/
-	if !strings.HasPrefix(cleanPath, "/public/") {
+	prefix := thiz.urlPrefix()
+	if !strings.HasPrefix(cleanPath, prefix) {
 		message.Response().Text("Invalid path", 400)
 		return
 	}
 
-	// Remove /public/ prefix to get the actual file path
-	filePath := strings.TrimPrefix(cleanPath, "/public/")
-
-	// Join with resource directory
-	fullPath := filepath.Join("resource", filePath)
-
-	// Verify the file exists and is within the resource directory
-	absPath, err := filepath.Abs(fullPath)
-	if err != nil {
-		message.Response().Text("Internal server error", 500)
-		return
-	}
-
-	absResource, err := filepath.Abs("resource")
-	if err != nil {
-		message.Response().Text("Internal server error", 500)
-		return
-	}
-
-	// The separator is part of the prefix: without it a sibling directory whose name merely
-	// starts with "resource" — resource-backups, resources — satisfies the containment
-	// check.
-	if absPath != absResource && !strings.HasPrefix(absPath, absResource+string(filepath.Separator)) {
+	filePath := strings.TrimPrefix(cleanPath, prefix)
+	if filePath == "" {
 		message.Response().Text("Invalid path", 400)
 		return
 	}
 
-	// Read the file
-	file, err := os.ReadFile(fullPath)
+	// Containment and opening are one operation.
+	//
+	// os.Root holds a directory file descriptor and resolves every path component relative to
+	// it, refusing any that escapes — including through a symlink, which the previous purely
+	// lexical filepath.Abs comparison could not see at all (EvalSymlinks appears nowhere in
+	// this repository). Resolving and then opening would also leave a window between the check
+	// and the open; here there is none.
+	//
+	// Opened per request rather than once at construction: it is a single openat, it keeps the
+	// CWD-relative semantics the tests and the deployment layout both depend on, and it
+	// survives the directory not existing until the first upload.
+	root, err := os.OpenRoot(thiz.root())
 	if err != nil {
 		if os.IsNotExist(err) {
 			message.Response().Text("File not found", 404)
 		} else {
 			message.Response().Text("Internal server error", 500)
 		}
+		return
+	}
+	defer root.Close()
+
+	file, err := root.Open(filepath.FromSlash(filePath))
+	if err != nil {
+		if os.IsNotExist(err) {
+			message.Response().Text("File not found", 404)
+		} else {
+			// An escape, a symlink leaving the root, an embedded NUL: all refusals rather
+			// than server errors, and none of them distinguishable to the caller.
+			message.Response().Text("Invalid path", 400)
+		}
+		return
+	}
+	defer file.Close()
+
+	// Stat on the open descriptor, so there is no second lookup to disagree with the first.
+	info, err := file.Stat()
+	if err != nil {
+		message.Response().Text("Internal server error", 500)
+		return
+	}
+	if info.IsDir() {
+		message.Response().Text("File not found", 404)
 		return
 	}
 
@@ -122,7 +180,25 @@ func (thiz PublicController) load(message core.HttpMessage) {
 	message.Response().SetHeader("X-Content-Type-Options", "nosniff")
 	message.Response().SetHeader("Content-Disposition", attachmentDisposition(filepath.Base(filePath)))
 	message.Response().SetHeader("Content-Type", inlineSafeContentType(mime.TypeByExtension(ext)))
-	message.Response().Bytes(file, 200)
+	message.Response().SetHeader("ETag", etagFor(info))
+
+	// Streamed rather than read into memory. os.ReadFile buffered the whole asset per request,
+	// so a large upload cost its own size in heap on every download and a handful of
+	// concurrent requests for it cost that many copies. ServeContent also brings range
+	// requests and conditional responses, which is what makes a video or a large PDF usable at
+	// all — and it honours the Content-Type set above rather than sniffing its own, so the
+	// allowlist that keeps uploaded content inert is untouched.
+	http.ServeContent(
+		message.Response().RawWriter(), r, filepath.Base(filePath), info.ModTime(), file)
+}
+
+// etagFor is a strong validator built from what a stat can see.
+//
+// Size and modification time, which is what net/http's own file server uses when it has
+// nothing better. Not a content hash: that would mean reading the file to decide whether to
+// send it, which is the cost this endpoint just stopped paying.
+func etagFor(info os.FileInfo) string {
+	return fmt.Sprintf(`"%x-%x"`, info.Size(), info.ModTime().UnixNano())
 }
 
 // inlineSafeContentType maps a type derived from a file extension onto one this controller
@@ -180,10 +256,22 @@ func attachmentDisposition(name string) string {
 }
 
 func (thiz PublicController) GetRoutes() []core.IRouteConfig {
+	pattern := thiz.Pattern
+	if pattern == "" {
+		pattern = DefaultPublicPattern
+	}
+
 	return []core.IRouteConfig{
 		&router.RouteConfig{
-			Path:    "/public/*",
+			Path:    pattern,
 			Method:  core.GET,
+			Handler: thiz.load,
+		},
+		// HEAD is what a client uses to ask how big something is before fetching it, and
+		// ServeContent answers it correctly for free. It used to be a 405.
+		&router.RouteConfig{
+			Path:    pattern,
+			Method:  core.HEAD,
 			Handler: thiz.load,
 		},
 	}

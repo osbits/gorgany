@@ -14,6 +14,9 @@ const (
 	POST          = "POST"
 	PUT           = "PUT"
 	DELETE        = "DELETE"
+	// HEAD is a GET whose response carries no body. A route that answers GET and not HEAD
+	// answers 405 to a client asking how large something is before fetching it.
+	HEAD = "HEAD"
 )
 
 // Gorgany ORM
