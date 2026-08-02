@@ -213,6 +213,13 @@ const CSRFTokenHeader = "X-CSRF-Token"
 // renaming one would have silently disabled the check.
 const CSRFSessionKey = "csrf_token"
 
+// CSRFFormFieldName is the form field a browser submits the CSRF token in.
+//
+// One constant rather than a literal in the middleware and another in whatever emits the
+// field. They were two independent declarations of the same wire name, which is exactly the
+// drift the note on csrfTokenKey records having already been bitten by once.
+const CSRFFormFieldName = "csrf_token"
+
 // DefaultCSRFTokenPath is where CsrfController exposes the token endpoint a SPA calls
 // on boot.
 const DefaultCSRFTokenPath = "/csrf"

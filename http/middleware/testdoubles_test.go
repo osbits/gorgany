@@ -1,8 +1,10 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 
@@ -24,6 +26,21 @@ type fakeRequest struct {
 }
 
 func (r *fakeRequest) RawRequest() *http.Request { return r.raw }
+
+// Body exists because the CSRF middleware reads the form through grghttp.PostFormValues now
+// rather than calling req.ParseForm itself — ParseForm consumed the body the handler needed,
+// which is why mounting the middleware on a form POST broke it. This double does not
+// implement the optional PostForm, so it exercises the fallback, and the fallback reads the
+// body. Without this the embedded nil core.IRequestScope is what answers.
+func (r *fakeRequest) Body() ([]byte, error) {
+	if r.raw == nil || r.raw.Body == nil {
+		return nil, nil
+	}
+	body, err := io.ReadAll(r.raw.Body)
+	r.raw.Body.Close()
+	r.raw.Body = io.NopCloser(bytes.NewReader(body))
+	return body, err
+}
 
 func (r *fakeRequest) Header() http.Header {
 	if r.raw == nil {

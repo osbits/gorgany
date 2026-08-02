@@ -142,6 +142,12 @@ type HTTPRequestScope struct {
 	maxBodyBytes int64
 	allowedMimes []string
 	bodyCapped   bool
+
+	// cachedBody, bodyErr and bodyRead memoise the body so more than one reader can have it.
+	// See Body.
+	cachedBody []byte
+	bodyErr    error
+	bodyRead   bool
 	// stored are the temp copies FormFile and GetFiles wrote, held until the request ends.
 	// See storeUpload.
 	stored []io.Closer
@@ -230,10 +236,24 @@ func (s *HTTPRequestScope) BodyReader() io.ReadCloser {
 	return s.R.Body
 }
 
+// Body returns the request body, reading it at most once.
+//
+// The memo is what makes the body survive somebody else consuming it. This used to re-arm
+// s.R.Body with what it had just read, which made it repeat-safe against *itself* — but a
+// third party calling ParseForm in between drained the re-armed copy, and the next call here
+// returned nothing. That is precisely what happened when CSRFMiddleware was put in front of a
+// handler that reads the body: the middleware's ParseForm consumed it, and the login handler
+// saw empty credentials. See PostForm.
 func (s *HTTPRequestScope) Body() (body []byte, err error) {
+	if s.bodyRead {
+		s.rearmBody()
+		return s.cachedBody, s.bodyErr
+	}
+
 	defer func() {
-		s.R.Body.Close()
-		s.R.Body = io.NopCloser(bytes.NewBuffer(body))
+		s.bodyRead = true
+		s.cachedBody, s.bodyErr = body, err
+		s.rearmBody()
 	}()
 
 	limited := io.LimitReader(s.R.Body, s.maxBodyBytes+1)
@@ -248,6 +268,47 @@ func (s *HTTPRequestScope) Body() (body []byte, err error) {
 		return nil, fmt.Errorf("body too large: %d bytes (max %d)", len(body), s.maxBodyBytes)
 	}
 	return body, nil
+}
+
+// rearmBody puts the cached bytes back so the next reader sees them.
+func (s *HTTPRequestScope) rearmBody() {
+	if s.R.Body != nil {
+		s.R.Body.Close()
+	}
+	s.R.Body = io.NopCloser(bytes.NewBuffer(s.cachedBody))
+}
+
+// PostForm returns the request's submitted form values, parsed at most once.
+//
+// It exists because net/http's ParseForm reads r.Body and does not put it back. Two parties
+// wanting the form therefore could not both have it: CSRFMiddleware called ParseForm to find
+// the token, and the login handler then read the raw body for the credentials and found it
+// empty. That is why "just mount the CSRF middleware on /login" does not work, and why the
+// fix is a shared seam rather than a change to either of them.
+//
+// Reading through Body first is the whole mechanism: that caches the bytes and re-arms
+// r.Body, ParseForm consumes the re-armed copy, and re-arming again leaves it there for the
+// next reader.
+func (s *HTTPRequestScope) PostForm() (url.Values, error) {
+	// Multipart first. ParseForm on a multipart body consumes it without populating PostForm,
+	// which is the same ordering CSRFMiddleware already gets right for its own lookup.
+	if s.R.MultipartForm != nil {
+		return url.Values(s.R.MultipartForm.Value), nil
+	}
+	if s.R.PostForm != nil {
+		return s.R.PostForm, nil
+	}
+
+	if _, err := s.Body(); err != nil {
+		return nil, err
+	}
+
+	err := s.R.ParseForm()
+	s.rearmBody()
+	if err != nil {
+		return nil, err
+	}
+	return s.R.PostForm, nil
 }
 
 func (s *HTTPRequestScope) RawRequest() *http.Request {

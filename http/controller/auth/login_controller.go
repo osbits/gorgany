@@ -5,10 +5,10 @@ import (
 	"github.com/osbits/gorgany/v2/app/core"
 	err2 "github.com/osbits/gorgany/v2/err"
 	grghttp "github.com/osbits/gorgany/v2/http"
+	"github.com/osbits/gorgany/v2/http/middleware"
 	"github.com/osbits/gorgany/v2/http/router"
 	"github.com/osbits/gorgany/v2/util"
 	"net/http"
-	"net/url"
 )
 
 func NewLoginController() *LoginController {
@@ -66,8 +66,23 @@ func (thiz LoginController) ShowLogin(message core.HttpMessage) {
 func (thiz LoginController) Login(message core.HttpMessage) {
 	homeUrl := thiz.webContext.GetHomeUrl()
 
-	body, _ := message.Request().Body()
-	values, _ := url.ParseQuery(string(body))
+	// Through the shared form seam, not a raw body read.
+	//
+	// Two things. The read error was discarded — `body, _ :=` — so an unreadable or
+	// over-limit body produced empty credentials and a "we could not find that user" message,
+	// which is a confusing answer to a request that was never even parsed; the API twin gets
+	// this right. And parsing the raw body meant this handler and any middleware that also
+	// wanted the form were competing for it: net/http's ParseForm consumes the body, so
+	// putting the CSRF middleware in front of this made every login fail. PostFormValues
+	// parses once and leaves the bytes where the next reader can find them.
+	values, err := grghttp.PostFormValues(message)
+	if err != nil {
+		err2.HandleError(err)
+		message.RedirectWithFlash(thiz.router.UrlByNameSequence("cp.login.show"), 301,
+			map[string]any{"error": "Your sign-in request could not be read. Please try again."})
+		return
+	}
+
 	username := values.Get("username")
 	password := values.Get("password")
 	user, err := thiz.userService.GetByUsername(username)
@@ -128,17 +143,28 @@ func (thiz LoginController) GetRoutes() []core.IRouteConfig {
 			Handler: thiz.ShowLogin,
 			Name:    "cp.login.show",
 		},
+		// Both state-changing routes carry the origin check.
+		//
+		// Route-scoped rather than a global filter, deliberately. These two endpoints are the
+		// framework's own and only exist in an app that mounts this controller, so the
+		// protection has exactly the blast radius of the vulnerability. A global filter would
+		// also refuse legitimate cross-origin browser fetches to an app's own mutating routes
+		// — the shape the opt-in CORS middleware exists to authorise — and coupling the two
+		// correctly is design work, not a release-gate change. RouteProvider exposes an
+		// opt-in for apps that want it everywhere.
 		&router.RouteConfig{
-			Path:    "/login",
-			Method:  core.POST,
-			Handler: thiz.Login,
-			Name:    "cp.login",
+			Path:        "/login",
+			Method:      core.POST,
+			Handler:     thiz.Login,
+			Name:        "cp.login",
+			Middlewares: []core.IMiddleware{middleware.NewSameOriginMiddleware()},
 		},
 		&router.RouteConfig{
-			Path:    "/logout",
-			Method:  core.POST,
-			Handler: thiz.Logout,
-			Name:    "cp.logout",
+			Path:        "/logout",
+			Method:      core.POST,
+			Handler:     thiz.Logout,
+			Name:        "cp.logout",
+			Middlewares: []core.IMiddleware{middleware.NewSameOriginMiddleware()},
 		},
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/osbits/gorgany/v2/app/core"
+	grghttp "github.com/osbits/gorgany/v2/http"
 	"github.com/osbits/gorgany/v2/service/dto"
 )
 
@@ -51,7 +52,7 @@ func NewCSRFMiddleware() *CSRFMiddleware {
 		// handled explicitly in Handle instead.
 		ExemptMethods:   []string{http.MethodGet, http.MethodHead, http.MethodTrace},
 		TokenHeaderName: core.CSRFTokenHeader,
-		TokenFormName:   "csrf_token",
+		TokenFormName:   core.CSRFFormFieldName,
 	}
 }
 
@@ -138,7 +139,7 @@ func (thiz *CSRFMiddleware) getTokenFromRequest(message core.HttpMessage) string
 		return token
 	}
 
-	// Check the multipart form before ParseForm: for a multipart request ParseForm
+	// Check the multipart form before anything else: for a multipart request ParseForm
 	// consumes the body without populating PostForm.
 	if req.MultipartForm != nil {
 		if values, ok := req.MultipartForm.Value[thiz.TokenFormName]; ok && len(values) > 0 {
@@ -146,11 +147,15 @@ func (thiz *CSRFMiddleware) getTokenFromRequest(message core.HttpMessage) string
 		}
 	}
 
-	// Check for token in form
-	err := req.ParseForm()
+	// Through the shared seam, not req.ParseForm.
+	//
+	// ParseForm reads the body and does not put it back, so looking for the token here used to
+	// consume the credentials the login handler reads afterwards — which is why mounting this
+	// middleware on /login made every login fail with "unable to find a user". See
+	// grghttp.PostFormValues.
+	values, err := grghttp.PostFormValues(message)
 	if err == nil {
-		token = req.PostForm.Get(thiz.TokenFormName)
-		if token != "" {
+		if token = values.Get(thiz.TokenFormName); token != "" {
 			return token
 		}
 	}

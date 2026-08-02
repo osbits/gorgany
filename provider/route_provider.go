@@ -21,6 +21,10 @@ type RouteProvider struct {
 	skipCsrf            bool
 	skipSecurityHeaders bool
 	securityHeaderOpts  middleware.SecurityHeadersOptions
+
+	// sameOriginOpts is non-nil when the app asked for the origin check everywhere. See
+	// EnableSameOriginProtection.
+	sameOriginOpts *middleware.SameOriginOptions
 }
 
 func NewRouteProvider() *RouteProvider {
@@ -122,11 +126,32 @@ func (p *RouteProvider) standardMiddlewares() []core.IMiddlewareConfig {
 			Build())
 	}
 
+	if p.sameOriginOpts != nil {
+		defaults = append(defaults, http.NewMiddlewareConfigBuilder().
+			WithPattern("/**").
+			AsFilter().
+			WithMiddleware(middleware.NewSameOriginMiddlewareWith(*p.sameOriginOpts)).
+			Build())
+	}
+
 	if len(defaults) == 0 {
 		return p.middlewares
 	}
 
 	return append(defaults, p.middlewares...)
+}
+
+// EnableSameOriginProtection applies the same-origin check to every state-changing request.
+//
+// Off by default, and the built-in login and logout routes carry it themselves regardless —
+// those are the endpoints the vulnerability was in, and route-scoped protection has exactly
+// that blast radius. Read the note in SameOriginMiddleware before turning this on globally:
+// it will also refuse a legitimate cross-origin browser fetch to one of the app's own
+// mutating routes, which is the shape a SPA served from a different origin has, and which
+// the CORS middleware — not this one — is there to authorise.
+func (p *RouteProvider) EnableSameOriginProtection(options middleware.SameOriginOptions) *RouteProvider {
+	p.sameOriginOpts = &options
+	return p
 }
 
 // standardControllers returns the app's controllers with the framework defaults
