@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/v5"
 	"github.com/osbits/gorgany/v2/app/core"
 	"github.com/spf13/viper"
 )

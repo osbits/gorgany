@@ -1,0 +1,43 @@
+# The schedule is the point of this file. A push-triggered scan only ever tells you about
+# advisories that existed when you last pushed; the audit found seventeen reachable
+# vulnerabilities in a tree nobody had touched, because nothing was watching.
+name: govulncheck
+
+on:
+  push:
+    branches: [main, 'release/**', 'security-review*']
+    tags: ['v*']
+  pull_request:
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      # No exception file exists, deliberately: the tree currently reports zero reachable
+      # vulnerabilities, so there is nothing to except. Add one only for a verified false
+      # positive, with an owner, the unreachable call path, and an expiry — and wire the
+      # filter in here when you do. An exception with no expiry is a permanent waiver nobody
+      # revisits.
+      - name: scan
+        run: govulncheck ./... 2>&1 | tee govulncheck.log
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: govulncheck-log
+          path: govulncheck.log

@@ -2,7 +2,7 @@ package view
 
 import (
 	"context"
-	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/v5"
 	"github.com/osbits/gorgany/v2/app/core"
 	"github.com/osbits/gorgany/v2/i18n"
 	"github.com/osbits/gorgany/v2/log"

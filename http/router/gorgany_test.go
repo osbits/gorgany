@@ -7,7 +7,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/v5"
 	"github.com/osbits/gorgany/v2/app/core"
 	grghttp "github.com/osbits/gorgany/v2/http"
 	"github.com/stretchr/testify/assert"

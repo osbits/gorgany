@@ -13,7 +13,7 @@ import (
 	"github.com/osbits/gorgany/v2/err"
 	"github.com/osbits/gorgany/v2/util"
 
-	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/v5"
 	"github.com/osbits/gorgany/v2/app/core"
 	grghttp "github.com/osbits/gorgany/v2/http"
 )

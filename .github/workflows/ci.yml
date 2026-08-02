@@ -1,0 +1,104 @@
+# The framework had no CI at all before this. There was no .github/workflows directory, so
+# nothing ran `go vet`, nothing ran the race detector, nothing started a database, and nothing
+# would ever have noticed a new advisory against a dependency — every one of the release exit
+# criteria was a thing somebody had to remember to type.
+name: CI
+
+on:
+  push:
+    branches: [main, 'release/**', 'security-review*']
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: build, vet, test, race
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          # Read from go.mod so the toolchain directive is the single source of truth, and so
+          # TestTheE2eImageAndGoModPinTheSameToolchain keeps the e2e image in step with it.
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      - run: go build ./...
+      - run: go vet ./...
+      - run: go test ./...
+      # Separate step, not -race on the run above: a race failure and a logic failure are
+      # different problems and the log should say which one happened.
+      - run: go test -race ./...
+
+  live-db:
+    name: live PostgreSQL and MySQL
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: gorgany
+          POSTGRES_PASSWORD: gorgany
+          POSTGRES_DB: gorgany_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U gorgany"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: gorgany
+          MYSQL_DATABASE: gorgany_test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -pgorgany"
+          --health-interval 5s --health-timeout 5s --health-retries 30
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+          cache: true
+
+      # E2E_REQUIRE_LIVE turns the per-engine skips fatal. Without it `go test` reports an
+      # all-skipped run as `ok`, which is how twelve live cases came to be skipped while the
+      # criterion they were supposed to satisfy read as passed.
+      - name: run the live suites
+        env:
+          E2E_REQUIRE_LIVE: '1'
+          GORGANY_TEST_PG_DSN: 'postgres://gorgany:gorgany@127.0.0.1:5432/gorgany_test?sslmode=disable'
+          GORGANY_TEST_MYSQL_DSN: 'gorgany:gorgany@tcp(127.0.0.1:3306)/gorgany_test?parseTime=true'
+        run: go test -tags=livedb ./e2e/tests -count=1 -v 2>&1 | tee live-db.log
+
+      # Independent proof the suites ran, rather than a green tick over an all-skip run.
+      - name: assert both engines actually executed
+        run: |
+          set -euo pipefail
+          grep -q -- '--- PASS' live-db.log
+          for engine in postgres mysql; do
+            if ! grep -qi "$engine" live-db.log; then
+              echo "::error::the live log never mentions $engine; that suite did not run"
+              exit 1
+            fi
+          done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: live-db-log
+          path: live-db.log
+
+  e2e-image:
+    name: e2e image builds on the pinned toolchain
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f e2e/Dockerfile .

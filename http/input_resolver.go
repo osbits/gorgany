@@ -3,7 +3,7 @@ package http
 import (
 	"errors"
 	"fmt"
-	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/v5"
 	"github.com/osbits/gorgany/v2/app/core"
 	error2 "github.com/osbits/gorgany/v2/err"
 	"github.com/osbits/gorgany/v2/i18n"

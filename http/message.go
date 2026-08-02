@@ -21,7 +21,7 @@ import (
 	err2 "github.com/osbits/gorgany/v2/err"
 	"github.com/osbits/gorgany/v2/util"
 
-	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/v5"
 	"github.com/spf13/viper"
 
 	"github.com/osbits/gorgany/v2/app"
