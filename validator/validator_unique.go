@@ -1,9 +1,9 @@
 package validator
 
 import (
+	"context"
 	"fmt"
 	goValidator "github.com/go-playground/validator/v10"
-	"github.com/osbits/gorgany/v2/app/core"
 	"github.com/osbits/gorgany/v2/db"
 	err2 "github.com/osbits/gorgany/v2/err"
 	"github.com/osbits/gorgany/v2/service/cache"
@@ -34,25 +34,53 @@ func validateUnique(fieldLevel goValidator.FieldLevel) bool {
 			return false
 		}
 
-		builder := db.Builder().From(tabler.TableName()).WhereEqual(columnName, value.Interface())
+		dataSource := db.Connection()
+		if dataSource == nil {
+			// Fail closed. A uniqueness rule that cannot reach the database must not report
+			// "available" — that is how a duplicate gets written.
+			err2.HandleError(fmt.Errorf("validator: no default database connection, cannot check uniqueness of %s.%s", tabler.TableName(), columnName))
+			return false
+		}
 
-		var primaryCondition func(b core.IQueryBuilder) core.IQueryBuilder
+		session, sessionErr := dataSource.NewSession()
+		if sessionErr != nil {
+			err2.HandleError(sessionErr)
+			return false
+		}
+		defer session.Close()
+
+		// The builder is copy-on-write: every clause method returns a new builder and leaves
+		// the receiver untouched, so each clause has to be assigned back.
+		builder := session.Query().From(tabler.TableName()).Eq(columnName, value.Interface())
+
+		// Exclude the row being updated, or it collides with itself. Skipped for an entity
+		// with no key yet, which is every insert.
+		//
+		// This was an OR against the primary key, which made the predicate
+		// `column = value OR id != current` — true for essentially every row in the table, so
+		// the count was never zero and nothing could ever validate as unique. It has to be an
+		// AND: the value is taken only if a *different* row already holds it.
 		for _, primary := range parsedDomain.PrimaryFields {
 			val := util.IndirectValue(reflectParent).FieldByName(primary.Name)
 			if !val.IsValid() {
 				err2.HandleError(fmt.Errorf("Field %s(%s) is invalid", primary.Name, reflectParent.Type().Name()))
 				return false
 			}
-			primaryCondition = func(b core.IQueryBuilder) core.IQueryBuilder {
-				b.Where(primary.DBName, "!=", val.Interface())
-				return b
+			if val.IsZero() {
+				continue
 			}
+			builder = builder.Neq(primary.DBName, val.Interface())
 		}
 
-		count := int64(0)
-		err := builder.WhereOr(primaryCondition).Count(&count)
-		if err != nil {
-			err2.HandleError(err)
+		sql, args, sqlErr := builder.Select("COUNT(*)").ToSQL()
+		if sqlErr != nil {
+			err2.HandleError(sqlErr)
+			return false
+		}
+
+		count, countErr := session.Executor().CountRaw(context.Background(), sql, args...)
+		if countErr != nil {
+			err2.HandleError(countErr)
 			return false
 		}
 

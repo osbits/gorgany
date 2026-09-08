@@ -536,12 +536,30 @@ func (thiz *ChiRouterAdapter) replaceRouteSegments(routePattern string, params m
 	return result
 }
 
+// replaceRouteSegmentsSequence fills a route pattern's placeholders from positional
+// arguments.
+//
+// A segment carrying a default — `{namespace:cp}` — is filled from that default and does
+// NOT consume an argument. This matters because Pattern() prefixes every namespaced route
+// with exactly such a segment, so the patterns reaching here routinely open with a
+// placeholder the caller neither knows nor supplies. Counting it would shift every
+// argument by one: UrlByName("cp.Domain.edit", id) on
+// `/{namespace:cp}/domain/{id}/edit` would put the id in the namespace slot and then run
+// off the end looking for {id}. Only placeholders with no default are positional, which
+// also makes this agree with the map-based replaceRouteSegments, where an absent key
+// falls back to the default.
+//
+// Two defects were live here. The bounds check read `len(params) < paramIndex`, which is
+// false for the very first placeholder when no arguments were passed (0 < 0), so it fell
+// through to params[0] and panicked with an index-out-of-range instead of the intended
+// message — that alone broke every UrlByName call on a namespaced route with no
+// arguments, which is every CP form action. And paramIndex advanced on defaulted
+// segments, giving the shift described above.
 func (thiz *ChiRouterAdapter) replaceRouteSegmentsSequence(routePattern string, params ...any) string {
 	r := regexp.MustCompile(`{([^}]+)(:[^}]+)?}`)
 
-	paramIndex := -1
+	paramIndex := 0
 	result := r.ReplaceAllStringFunc(routePattern, func(match string) string {
-		paramIndex++
 		index := strings.IndexByte(match, ':')
 		defaultValue := ""
 		if index == -1 {
@@ -550,14 +568,17 @@ func (thiz *ChiRouterAdapter) replaceRouteSegmentsSequence(routePattern string, 
 			defaultValue = match[index+1 : len(match)-1]
 		}
 		paramName := match[1:index]
-		if len(params) < paramIndex {
-			panic(fmt.Errorf("Expected parameter '%s' for pattern '%s' was not found", paramName, routePattern))
+
+		if defaultValue != "" {
+			return defaultValue
 		}
 
+		if paramIndex >= len(params) {
+			panic(fmt.Errorf("Expected parameter '%s' for pattern '%s' was not found", paramName, routePattern))
+		}
 		p := params[paramIndex]
-		if p == nil && defaultValue != "" {
-			return defaultValue
-		} else if p == nil {
+		paramIndex++
+		if p == nil {
 			panic(fmt.Errorf("Expected parameter '%s' for pattern '%s' was not found", paramName, routePattern))
 		}
 		return fmt.Sprintf("%v", p)

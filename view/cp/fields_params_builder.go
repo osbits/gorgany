@@ -1,11 +1,15 @@
 package cp
 
 import (
+	"context"
+	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"github.com/osbits/gorgany/v2/app/core"
 	"github.com/osbits/gorgany/v2/db"
 	"github.com/osbits/gorgany/v2/service/cache"
 	"github.com/osbits/gorgany/v2/util"
+	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 	"reflect"
 	"sort"
@@ -80,6 +84,18 @@ func buildFieldParams(domain any, isIndexAction bool, overriddenFields map[strin
 		schemeField := domainScheme.FieldsByName[structField.Name]
 		relation := domainScheme.Relationships.Relations[structField.Name]
 
+		// Skip anything that is neither a column nor a relation.
+		//
+		// A field the mapper was told to ignore — `gorm:"-"` — has no data type and no
+		// relation. orm.EntityMeta is the one every generated domain carries, and it was
+		// being rendered as a text input on every create and edit form: an unlabelled box
+		// named "Meta" that posts ORM bookkeeping back as if it were user data. The name
+		// check above catches it only when embedded anonymously, and the generator emits it
+		// as a named field.
+		if schemeField == nil || (schemeField.DataType == "" && relation == nil) {
+			continue
+		}
+
 		scaffoldingParam, err := processDomainField(structField, field, structField.Name, schemeField.DataType, relation, isIndexAction)
 		if err != nil {
 			return nil, err
@@ -89,11 +105,26 @@ func buildFieldParams(domain any, isIndexAction bool, overriddenFields map[strin
 		fieldParams = append(fieldParams, scaffoldingParam)
 	}
 
+	// Descend into every embedded struct that survived the loop above, which has already
+	// dropped the framework's own Domain and DomainMeta bases.
+	//
+	// This used to descend only into an embedded type satisfying core.IDomain[any] — Query,
+	// Clone and GetDomainMeta. v2 deprecated Query on generated domains and the generator
+	// stopped emitting any of the three, so no generated domain satisfies it any more, and
+	// the standard shape the generator produces is an extension struct embedding exactly
+	// such a domain:
+	//
+	//	type ProductCategory struct {
+	//		generated.ProductCategory `grgorm:"generated"`
+	//		...
+	//	}
+	//
+	// Every real column lives on that embedded struct, so the gate silently reduced both the
+	// list table and the edit form to whatever the extension declared itself — typically
+	// nothing but relations. An embedded struct reached here carries columns by definition;
+	// whether it also carries three ORM methods says nothing about that.
 	for _, fieldName := range embeddedFields {
 		field := rvDomain.FieldByName(fieldName)
-		if field.CanAddr() && !util.IsGenericImplemented(field.Addr().Interface(), (*core.IDomain[any])(nil)) { // todo: Check .CanAddr
-			continue
-		}
 
 		nestedParams, err := buildFieldParams(field.Interface(), isIndexAction, overriddenFields)
 		if err != nil {
@@ -231,11 +262,25 @@ func processDomainField(structField reflect.StructField, reflectedValue reflect.
 	return fieldParams, nil
 }
 
+// processFieldWithRelation loads the rows a relation field can be set to, so an edit form
+// can render them as options.
+//
+// The read runs on its own short-lived session obtained from the db package's global
+// context rather than through the container: this is reached by reflection from a view
+// builder that is handed a schema and a value and nothing else, and threading a
+// dependency down to it would mean changing BuildParams and BuildPaginatedParams, which
+// every generated application calls.
+//
+// context.Background() is used for the same reason — no request context reaches here. That
+// is tolerable because the query is a fixed, argument-free read of one lookup table, so
+// there is no user input in the predicate and nothing to attribute to a caller. It does
+// mean the read is not cancelled when the client goes away.
+//
+// Note this loads the whole table to populate one <select>. That is the pre-existing
+// contract and callers depend on seeing every option, so it is left alone — but it makes
+// an edit form on a domain related to a large table expensive, and a picker that pages or
+// searches is the real answer.
 func processFieldWithRelation(relation *schema.Relationship, fieldParams *FieldParams) ([]ValueWrapper, error) {
-	builder := db.Builder()
-
-	var list any
-
 	var joinTableModel *schema.Schema
 
 	if relation.JoinTable != nil {
@@ -246,16 +291,27 @@ func processFieldWithRelation(relation *schema.Relationship, fieldParams *FieldP
 
 	primaryKeyField := joinTableModel.PrioritizedPrimaryField.StructField.Name
 
-	sliceType := reflect.SliceOf(reflect.New(joinTableModel.ModelType).Type())
-	rList := reflect.MakeSlice(sliceType, 0, 0)
-	list = rList.Interface()
-
-	builder.From(joinTableModel.Table)
-
-	err := builder.List(&list)
-	if err != nil {
-		return nil, err
+	dataSource := db.Connection()
+	if dataSource == nil {
+		return nil, fmt.Errorf("cp: no default database connection is registered, so the options for relation %q cannot be loaded", relation.Name)
 	}
+
+	session, err := dataSource.NewSession()
+	if err != nil {
+		return nil, fmt.Errorf("cp: opening a session to load options for relation %q: %w", relation.Name, err)
+	}
+	defer session.Close()
+
+	// Scan wants a pointer to a concrete slice. The element type is *Model, matching what
+	// GetSliceFromAny and the Stringer check below expect to iterate.
+	slicePtr := reflect.New(reflect.SliceOf(reflect.PointerTo(joinTableModel.ModelType)))
+
+	builder := session.Query().From(joinTableModel.Table)
+	if result := session.Executor().Find(context.Background(), builder, slicePtr.Interface()); result.Error != nil {
+		return nil, fmt.Errorf("cp: loading options for relation %q: %w", relation.Name, result.Error)
+	}
+
+	list := slicePtr.Elem().Interface()
 
 	availableValues := make([]ValueWrapper, 0)
 	anySlice := util.GetSliceFromAny(list)
@@ -319,20 +375,71 @@ func resolveDateType(tag string) FieldType {
 	return defaultTimeType
 }
 
+// asTime coerces a timestamp-shaped value to a time.Time.
+//
+// A date field is not always a time.Time. gorm.DeletedAt is the one every soft-deleting
+// domain has — softDelete generates a `Deleted gorm.DeletedAt` field whose gorm DataType
+// is Time, so it arrives here looking like any other timestamp — and sql.NullTime,
+// *time.Time and any driver.Valuer reach the same place. A bare value.(time.Time)
+// assertion panicked on all of them, which took out every CP page of every domain that
+// soft-deletes.
+//
+// ok is false when there is nothing to show, which covers a null wrapper and the zero
+// instant alike. Both must render empty rather than as 0001-01-01: a nullable timestamp
+// column scans into a non-pointer time.Time, so "never set" and "set to the zero instant"
+// are indistinguishable, and printing a year-one date invites reading an unset field as
+// data.
+func asTime(value any) (time.Time, bool) {
+	switch v := value.(type) {
+	case time.Time:
+		return v, !v.IsZero()
+	case *time.Time:
+		if v == nil {
+			return time.Time{}, false
+		}
+		return *v, !v.IsZero()
+	case gorm.DeletedAt:
+		return v.Time, v.Valid && !v.Time.IsZero()
+	case sql.NullTime:
+		return v.Time, v.Valid && !v.Time.IsZero()
+	}
+
+	// Anything else able to hand over its underlying value — this is where the nullable
+	// wrappers a host application defines for its own columns land.
+	if valuer, ok := value.(driver.Valuer); ok {
+		driverValue, err := valuer.Value()
+		if err != nil || driverValue == nil {
+			return time.Time{}, false
+		}
+		if t, ok := driverValue.(time.Time); ok {
+			return t, !t.IsZero()
+		}
+	}
+	return time.Time{}, false
+}
+
 func processFieldValue(value any, fieldType FieldType) (ValueWrapper, error) {
 	if value == nil {
 		return ValueWrapper{}, nil
 	}
 	switch fieldType {
 	case Date:
+		t, ok := asTime(value)
+		if !ok {
+			return ValueWrapper{}, nil
+		}
 		return ValueWrapper{
 			Value:          nil,
-			FormattedValue: value.(time.Time).Format("2006-01-02"),
+			FormattedValue: t.Format("2006-01-02"),
 		}, nil
 	case DateTime:
+		t, ok := asTime(value)
+		if !ok {
+			return ValueWrapper{}, nil
+		}
 		return ValueWrapper{
 			Value:          nil,
-			FormattedValue: value.(time.Time).Format("2006-01-02T15:04"),
+			FormattedValue: t.Format("2006-01-02T15:04"),
 		}, nil
 	case Select:
 		rvValue := util.IndirectValue(reflect.ValueOf(value))

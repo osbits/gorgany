@@ -209,6 +209,17 @@ func sortedNames(connections map[string]dbCore.IDataSource) []string {
 }
 
 func (p *DbProvider) Boot(c core.IContainer) {
+	// Publish the resolved context to the db package's process-global. That global is
+	// how code holding no container reaches a datasource — db.GetDBContext() and
+	// db.Connection(name) — which is the situation reflective helpers and validators
+	// are in.
+	//
+	// Nothing called this before, so the global stayed nil in every application built
+	// on the standard bootstrap and db.Connection() dereferenced a nil interface.
+	c.Invoke(func(dbContext core.IDBContext) {
+		db.SetDBContext(dbContext)
+	})
+
 	// Register sessions migrations. Order matters on a fresh install: the version column is
 	// added to a table create_sessions_table has to have made first.
 	c.Invoke(func(dataContext core.IDataContext) {

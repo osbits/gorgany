@@ -74,9 +74,20 @@ func BuildPaginatedParams[T any](paginatedCollection *model.PaginatedCollection[
 		params.Collection = append(params.Collection, domainParams)
 	}
 
+	// An empty page still has to describe its columns, so one zero value is built to
+	// supply the header row.
+	//
+	// It must be built in index mode, like the loop above. Without the flag it was
+	// built in *edit* mode, which is wrong twice over: the header honours
+	// `grg-view:"edit=..."` instead of `list=...`, and building an edit field for a
+	// relation loads that relation's rows to populate a select — so listing an empty
+	// table fired one query per relation to fill a dropdown that is never rendered.
+	// While db.Builder() returned nil that query was a nil dereference, which is why
+	// the index page of an empty table answered 500 — the first page a freshly
+	// migrated application shows.
 	if len(paginatedCollection.Collection) == 0 {
 		var emptyDomain T
-		domainParams, err := BuildParams(emptyDomain)
+		domainParams, err := BuildParams(emptyDomain, true)
 		if err != nil {
 			return nil, err
 		}
