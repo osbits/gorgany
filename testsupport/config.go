@@ -121,17 +121,22 @@ func (c DatabaseConfig) datasourceConfig() map[string]any {
 }
 
 // Config is the harness's settings.
+//
+// A field left zero is taken from the environment (see FromEnv), and from the default when
+// its variable is unset too. A field set here keeps its value whatever the environment
+// says. So a zero Config is exactly FromEnv, and a suite that sets only Isolation still
+// honours GORGANY_TEST_ENGINE_WAIT.
 type Config struct {
 	// Databases are the engines to test against. Empty means one entry built from the
-	// environment (see FromEnv).
+	// environment.
 	Databases []DatabaseConfig
 
 	// Isolation is how rows are kept out of the next test's way. Empty means
-	// IsolateByTruncation.
+	// GORGANY_TEST_ISOLATION, else IsolateByTruncation.
 	Isolation Isolation
 
 	// EngineWait is how long to keep retrying the connection before giving up. Zero
-	// means DefaultEngineWait.
+	// means GORGANY_TEST_ENGINE_WAIT, else DefaultEngineWait.
 	//
 	// It exists because a container started in the same CI step is usually not accepting
 	// connections yet, and a suite that fails on the first refused dial is a suite that
@@ -140,10 +145,15 @@ type Config struct {
 
 	// KeepData leaves rows in place after each test. For debugging a failure by hand;
 	// tests will interfere with each other.
+	//
+	// GORGANY_TEST_KEEP_DATA turns it on even when this is false: a bool cannot say
+	// "unset", and the variable is how you debug a suite without editing it.
 	KeepData bool
 
 	// MigrateDown runs every migration's Down before Up, so a schema left behind by an
 	// interrupted run does not poison the next one.
+	//
+	// GORGANY_TEST_MIGRATE_DOWN turns it on even when this is false, as with KeepData.
 	MigrateDown bool
 }
 
@@ -199,13 +209,28 @@ func defaultUserFor(driver string) string {
 	return "postgres"
 }
 
-// resolved fills in the defaults and validates.
+// resolved fills every zero field from the environment, then from the defaults, and
+// validates.
+//
+// Every field, not only Databases: the default harness is New(Config{}), so a field
+// resolved here without consulting FromEnv is a variable Main and RequireDatabase ignore.
 func (c Config) resolved() (Config, error) {
 	out := c
+	env := FromEnv()
 
 	if len(out.Databases) == 0 {
-		out.Databases = FromEnv().Databases
+		out.Databases = env.Databases
 	}
+	if out.Isolation == "" {
+		out.Isolation = env.Isolation
+	}
+	if out.EngineWait == 0 {
+		out.EngineWait = env.EngineWait
+	}
+	out.KeepData = out.KeepData || env.KeepData
+	out.MigrateDown = out.MigrateDown || env.MigrateDown
+
+	// An empty or unparseable variable leaves these zero too.
 	if out.Isolation == "" {
 		out.Isolation = IsolateByTruncation
 	}

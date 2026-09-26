@@ -27,7 +27,8 @@ type Harness struct {
 // New creates a harness with explicit settings.
 //
 // A zero Config is the same as FromEnv, so New(Config{}) is a valid way to get the default
-// behaviour with room to add migrations.
+// behaviour with room to add migrations. Any field left zero comes from the environment;
+// see Config.
 func New(config Config) *Harness {
 	return &Harness{config: config}
 }

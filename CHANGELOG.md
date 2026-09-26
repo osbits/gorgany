@@ -7,6 +7,22 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [2.4.3] - 2026-09-26
+
+### Fixed
+
+- `testsupport`'s default harness (`Main`, `RequireDatabase`, `MustDatabase`, and any
+  `New(Config{})`) read only the connection variables. `GORGANY_TEST_ISOLATION`,
+  `GORGANY_TEST_ENGINE_WAIT`, `GORGANY_TEST_KEEP_DATA` and `GORGANY_TEST_MIGRATE_DOWN` were
+  ignored, so `GORGANY_TEST_ENGINE_WAIT=2s` still waited 30s for an absent engine. Now every
+  field left zero in a `Config` takes its variable, then its default, and fields set in code
+  keep their values. Two behaviours change as a result:
+  - an unknown `GORGANY_TEST_ISOLATION` now fails the test instead of being ignored;
+  - `GORGANY_TEST_KEEP_DATA` and `GORGANY_TEST_MIGRATE_DOWN` also switch on a harness
+    configured in code that left those fields false.
+
+---
+
 ## [2.4.2] - 2026-09-26
 
 ### Fixed

@@ -135,8 +135,17 @@ without a code change:
 | `GORGANY_TEST_KEEP_DATA` | unset |
 | `GORGANY_TEST_MIGRATE_DOWN` | unset |
 
+This holds for `Main`, `RequireDatabase` and `MustDatabase`, and for any harness from
+`Configure` or `New`. A field set in code keeps its value, and a field left zero takes its
+variable, then the default above. So `Configure(Config{Isolation: IsolateByRollback})`
+still honours `GORGANY_TEST_ENGINE_WAIT`, while a `Databases` list set in code ignores the
+connection variables. `KeepData` and `MigrateDown` are booleans and cannot be "unset", so
+their variables can switch them on for any harness but cannot switch them off.
+
 An explicitly empty `GORGANY_TEST_PASSWORD=` is a real value, not an absence — substituting
-the default for it would silently connect as something else.
+the default for it would silently connect as something else. An empty
+`GORGANY_TEST_ISOLATION=` or `GORGANY_TEST_ENGINE_WAIT=` means the default. An unknown
+isolation fails the test, like any other bad config.
 
 `GORGANY_TEST_ENGINE_WAIT` exists because a container started in the same CI step is
 usually not accepting connections yet, and a suite that gives up on the first refused dial
