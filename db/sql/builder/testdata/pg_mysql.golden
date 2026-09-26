@@ -1,0 +1,1352 @@
+# Golden file for TestPostgresAndMySQLOutputMatchesGolden (db/sql/builder/dialect_golden_test.go).
+# Each builder case rendered through PostgresDialect and MySQLDialect, and the ON CONFLICT
+# cases through MySQLDialect{AllowUnfaithfulUpsert: true} as well.
+#
+# Regenerate from the module root, then review the diff like any other change:
+#   go test ./db/sql/builder -run Golden -update
+#
+# sql is Go-quoted. args lists each bound value with its dynamic type; "nil" is a nil
+# slice and "[]" an empty one. err is a refusal: "unsupported" for a core.UnsupportedError,
+# "error" for any other, then the message.
+
+=== cte/every-clause [mysql]
+err:  unsupported "mysql does not support DISTINCT ON; rewrite as a ROW_NUMBER() window function in a subquery filtered to rn = 1"
+
+=== cte/every-clause [postgres]
+sql:  "WITH s AS (SELECT DISTINCT ON (o.user_id) o.user_id, COUNT(*) AS n FROM orders o INNER JOIN users u ON u.id = o.user_id WHERE o.status = ? GROUP BY o.user_id HAVING COUNT(*) > ? ORDER BY \"o\".\"user_id\" DESC LIMIT 5 OFFSET 10) SELECT * FROM s"
+args: [string("paid"), int(2)]
+
+=== cte/several [mysql]
+sql:  "WITH paid AS (SELECT user_id FROM orders WHERE status = ?), big AS (SELECT user_id FROM orders WHERE total > ?) SELECT paid.user_id FROM paid INNER JOIN big ON big.user_id = paid.user_id"
+args: [string("paid"), int(1000)]
+
+=== cte/several [postgres]
+sql:  "WITH paid AS (SELECT user_id FROM orders WHERE status = ?), big AS (SELECT user_id FROM orders WHERE total > ?) SELECT paid.user_id FROM paid INNER JOIN big ON big.user_id = paid.user_id"
+args: [string("paid"), int(1000)]
+
+=== cte/single [mysql]
+sql:  "WITH paid AS (SELECT user_id FROM orders WHERE status = ?) SELECT user_id FROM paid WHERE user_id > ?"
+args: [string("paid"), int(100)]
+
+=== cte/single [postgres]
+sql:  "WITH paid AS (SELECT user_id FROM orders WHERE status = ?) SELECT user_id FROM paid WHERE user_id > ?"
+args: [string("paid"), int(100)]
+
+=== delete/limit-and-order-ignored [mysql]
+sql:  "DELETE FROM sessions WHERE expires_at < ?"
+args: [string("2024-01-01")]
+
+=== delete/limit-and-order-ignored [postgres]
+sql:  "DELETE FROM sessions WHERE expires_at < ?"
+args: [string("2024-01-01")]
+
+=== delete/returning [mysql]
+err:  unsupported "mysql does not support RETURNING; read the generated key with LAST_INSERT_ID(), or SELECT the rows inside the same transaction"
+
+=== delete/returning [postgres]
+sql:  "DELETE FROM users WHERE id = ? RETURNING id"
+args: [int(1)]
+
+=== delete/where-ilike-rewritten [mysql]
+sql:  "DELETE FROM users WHERE email LIKE ?"
+args: [string("%@example.com")]
+
+=== delete/where-ilike-rewritten [postgres]
+sql:  "DELETE FROM users WHERE email ILIKE ?"
+args: [string("%@example.com")]
+
+=== delete/where-in-subquery [mysql]
+sql:  "DELETE FROM users WHERE id IN (SELECT user_id FROM orders WHERE status = ?) AND created_at < ?"
+args: [string("paid"), string("2020-01-01")]
+
+=== delete/where-in-subquery [postgres]
+sql:  "DELETE FROM users WHERE id IN (SELECT user_id FROM orders WHERE status = ?) AND created_at < ?"
+args: [string("paid"), string("2020-01-01")]
+
+=== delete/where-not-validated [mysql]
+sql:  "DELETE FROM users WHERE ? = ?"
+args: [string("a = 1 OR 1=1"), bool(true)]
+
+=== delete/where-not-validated [postgres]
+sql:  "DELETE FROM users WHERE ? = ?"
+args: [string("a = 1 OR 1=1"), bool(true)]
+
+=== delete/with-where [mysql]
+sql:  "DELETE FROM users WHERE id = ?"
+args: [int(1)]
+
+=== delete/with-where [postgres]
+sql:  "DELETE FROM users WHERE id = ?"
+args: [int(1)]
+
+=== delete/without-where [mysql]
+sql:  "DELETE FROM sessions"
+args: nil
+
+=== delete/without-where [postgres]
+sql:  "DELETE FROM sessions"
+args: nil
+
+=== from-subquery/alias [mysql]
+sql:  "SELECT p.user_id FROM (SELECT user_id FROM orders WHERE status = ?) AS p WHERE p.user_id > ?"
+args: [string("paid"), int(10)]
+
+=== from-subquery/alias [postgres]
+sql:  "SELECT p.user_id FROM (SELECT user_id FROM orders WHERE status = ?) AS p WHERE p.user_id > ?"
+args: [string("paid"), int(10)]
+
+=== from-subquery/every-clause [mysql]
+err:  unsupported "mysql does not support DISTINCT ON; rewrite as a ROW_NUMBER() window function in a subquery filtered to rn = 1"
+
+=== from-subquery/every-clause [postgres]
+sql:  "SELECT s.user_id FROM (SELECT DISTINCT ON (o.user_id) o.user_id, COUNT(*) AS n FROM orders o INNER JOIN users u ON u.id = o.user_id WHERE o.status = ? GROUP BY o.user_id HAVING COUNT(*) > ? ORDER BY \"o\".\"user_id\" DESC LIMIT 5 OFFSET 10) AS s"
+args: [string("paid"), int(2)]
+
+=== from-subquery/nested [mysql]
+sql:  "SELECT q.user_id FROM (SELECT p.user_id FROM (SELECT user_id FROM orders WHERE status = ?) AS p LIMIT 10) AS q ORDER BY `q`.`user_id` ASC"
+args: [string("paid")]
+
+=== from-subquery/nested [postgres]
+sql:  "SELECT q.user_id FROM (SELECT p.user_id FROM (SELECT user_id FROM orders WHERE status = ?) AS p LIMIT 10) AS q ORDER BY \"q\".\"user_id\" ASC"
+args: [string("paid")]
+
+=== from-subquery/without-alias [mysql]
+err:  error "mysql: a derived table in FROM requires an alias"
+
+=== from-subquery/without-alias [postgres]
+sql:  "SELECT user_id FROM (SELECT user_id FROM orders WHERE status = ?)"
+args: [string("paid")]
+
+=== groupby/cube [mysql]
+err:  unsupported "mysql does not support CUBE; enumerate the grouping combinations as a UNION ALL of GROUP BY queries"
+
+=== groupby/cube [postgres]
+sql:  "SELECT a, b FROM t GROUP BY CUBE (a, b)"
+args: nil
+
+=== groupby/every-modifier [mysql]
+err:  unsupported "mysql does not support CUBE; enumerate the grouping combinations as a UNION ALL of GROUP BY queries"
+
+=== groupby/every-modifier [postgres]
+sql:  "SELECT a FROM t GROUP BY a, ROLLUP (b), CUBE (c), GROUPING SETS ((d))"
+args: nil
+
+=== groupby/fields [mysql]
+sql:  "SELECT user_id, COUNT(*) FROM orders GROUP BY user_id, status"
+args: nil
+
+=== groupby/fields [postgres]
+sql:  "SELECT user_id, COUNT(*) FROM orders GROUP BY user_id, status"
+args: nil
+
+=== groupby/fields-and-rollup [mysql]
+sql:  "SELECT a, b, c FROM t GROUP BY a, b, c WITH ROLLUP"
+args: nil
+
+=== groupby/fields-and-rollup [postgres]
+sql:  "SELECT a, b, c FROM t GROUP BY a, ROLLUP (b, c)"
+args: nil
+
+=== groupby/grouping-sets [mysql]
+err:  unsupported "mysql does not support GROUPING SETS; enumerate the grouping combinations as a UNION ALL of GROUP BY queries"
+
+=== groupby/grouping-sets [postgres]
+sql:  "SELECT a, b FROM t GROUP BY GROUPING SETS ((a), (a, b), ())"
+args: nil
+
+=== groupby/rollup [mysql]
+sql:  "SELECT a, b FROM t GROUP BY a, b WITH ROLLUP"
+args: nil
+
+=== groupby/rollup [postgres]
+sql:  "SELECT a, b FROM t GROUP BY ROLLUP (a, b)"
+args: nil
+
+=== having/composite-with-where-args [mysql]
+sql:  "SELECT user_id FROM orders WHERE status = ? GROUP BY user_id HAVING (COUNT(*) > ? AND MAX(total) < ?)"
+args: [string("paid"), int(1), int(1000)]
+
+=== having/composite-with-where-args [postgres]
+sql:  "SELECT user_id FROM orders WHERE status = ? GROUP BY user_id HAVING (COUNT(*) > ? AND MAX(total) < ?)"
+args: [string("paid"), int(1), int(1000)]
+
+=== having/ilike-rewritten [mysql]
+sql:  "SELECT name FROM users GROUP BY name HAVING name LIKE ?"
+args: [string("a%")]
+
+=== having/ilike-rewritten [postgres]
+sql:  "SELECT name FROM users GROUP BY name HAVING name ILIKE ?"
+args: [string("a%")]
+
+=== having/raw-aggregate [mysql]
+sql:  "SELECT user_id FROM orders GROUP BY user_id HAVING COUNT(*) > ?"
+args: [int(5)]
+
+=== having/raw-aggregate [postgres]
+sql:  "SELECT user_id FROM orders GROUP BY user_id HAVING COUNT(*) > ?"
+args: [int(5)]
+
+=== having/refuses-demoted-field [mysql]
+err:  error "cannot render HAVING: the left side of a comparison is \"COUNT(*)\", which is not a column reference. A column goes in as-is; an expression such as COUNT(*) or lower(email) must be wrapped in core.Raw so it is clear the caller vouches for it as SQL"
+
+=== having/refuses-demoted-field [postgres]
+err:  error "cannot render HAVING: the left side of a comparison is \"COUNT(*)\", which is not a column reference. A column goes in as-is; an expression such as COUNT(*) or lower(email) must be wrapped in core.Raw so it is clear the caller vouches for it as SQL"
+
+=== having/replaced [mysql]
+sql:  "SELECT user_id FROM orders GROUP BY user_id HAVING SUM(total) > ?"
+args: [int(100)]
+
+=== having/replaced [postgres]
+sql:  "SELECT user_id FROM orders GROUP BY user_id HAVING SUM(total) > ?"
+args: [int(100)]
+
+=== insert/from-select [mysql]
+sql:  "INSERT INTO archive (user_id) SELECT user_id FROM orders WHERE status = ?"
+args: [string("paid")]
+
+=== insert/from-select [postgres]
+sql:  "INSERT INTO archive (user_id) SELECT user_id FROM orders WHERE status = ?"
+args: [string("paid")]
+
+=== insert/from-select-every-clause [mysql]
+err:  unsupported "mysql does not support DISTINCT ON; rewrite as a ROW_NUMBER() window function in a subquery filtered to rn = 1"
+
+=== insert/from-select-every-clause [postgres]
+sql:  "INSERT INTO archive (user_id, n) SELECT DISTINCT ON (o.user_id) o.user_id, COUNT(*) AS n FROM orders o INNER JOIN users u ON u.id = o.user_id WHERE o.status = ? GROUP BY o.user_id HAVING COUNT(*) > ? ORDER BY \"o\".\"user_id\" DESC LIMIT 5 OFFSET 10"
+args: [string("paid"), int(2)]
+
+=== insert/from-select-on-conflict-do-nothing [mysql+unfaithful-upsert]
+sql:  "INSERT INTO archive (user_id) SELECT user_id FROM orders WHERE status = ? ON DUPLICATE KEY UPDATE `user_id` = `user_id`"
+args: [string("paid")]
+
+=== insert/from-select-on-conflict-do-nothing [mysql]
+sql:  "INSERT INTO archive (user_id) SELECT user_id FROM orders WHERE status = ? ON DUPLICATE KEY UPDATE `user_id` = `user_id`"
+args: [string("paid")]
+
+=== insert/from-select-on-conflict-do-nothing [postgres]
+sql:  "INSERT INTO archive (user_id) SELECT user_id FROM orders WHERE status = ? ON CONFLICT (user_id) DO NOTHING"
+args: [string("paid")]
+
+=== insert/from-select-wins-over-values [mysql]
+sql:  "INSERT INTO archive (user_id) SELECT user_id FROM orders WHERE status = ?"
+args: [string("paid")]
+
+=== insert/from-select-wins-over-values [postgres]
+sql:  "INSERT INTO archive (user_id) SELECT user_id FROM orders WHERE status = ?"
+args: [string("paid")]
+
+=== insert/from-select-with-cte [mysql]
+sql:  "INSERT INTO archive (user_id) WITH paid AS (SELECT user_id FROM orders WHERE status = ?) SELECT user_id FROM paid"
+args: [string("paid")]
+
+=== insert/from-select-with-cte [postgres]
+sql:  "INSERT INTO archive (user_id) WITH paid AS (SELECT user_id FROM orders WHERE status = ?) SELECT user_id FROM paid"
+args: [string("paid")]
+
+=== insert/multi-row [mysql]
+sql:  "INSERT INTO users (name, email) VALUES (?, ?), (?, ?), (?, ?)"
+args: [string("Ann"), string("ann@example.com"), string("Bob"), string("bob@example.com"), string("Cy"), string("cy@example.com")]
+
+=== insert/multi-row [postgres]
+sql:  "INSERT INTO users (name, email) VALUES (?, ?), (?, ?), (?, ?)"
+args: [string("Ann"), string("ann@example.com"), string("Bob"), string("bob@example.com"), string("Cy"), string("cy@example.com")]
+
+=== insert/on-conflict-do-nothing [mysql+unfaithful-upsert]
+sql:  "INSERT INTO users (email, name) VALUES (?, ?) ON DUPLICATE KEY UPDATE `email` = `email`"
+args: [string("user@example.com"), string("Ann")]
+
+=== insert/on-conflict-do-nothing [mysql]
+sql:  "INSERT INTO users (email, name) VALUES (?, ?) ON DUPLICATE KEY UPDATE `email` = `email`"
+args: [string("user@example.com"), string("Ann")]
+
+=== insert/on-conflict-do-nothing [postgres]
+sql:  "INSERT INTO users (email, name) VALUES (?, ?) ON CONFLICT (email) DO NOTHING"
+args: [string("user@example.com"), string("Ann")]
+
+=== insert/on-conflict-do-nothing-multi-row [mysql+unfaithful-upsert]
+sql:  "INSERT INTO tags (name) VALUES (?), (?) ON DUPLICATE KEY UPDATE `name` = `name`"
+args: [string("a"), string("b")]
+
+=== insert/on-conflict-do-nothing-multi-row [mysql]
+sql:  "INSERT INTO tags (name) VALUES (?), (?) ON DUPLICATE KEY UPDATE `name` = `name`"
+args: [string("a"), string("b")]
+
+=== insert/on-conflict-do-nothing-multi-row [postgres]
+sql:  "INSERT INTO tags (name) VALUES (?), (?) ON CONFLICT (name) DO NOTHING"
+args: [string("a"), string("b")]
+
+=== insert/on-conflict-do-nothing-nothing-to-assign [mysql+unfaithful-upsert]
+err:  error "mysql: DO NOTHING needs at least one insert column or conflict target to build the no-op assignment"
+
+=== insert/on-conflict-do-nothing-nothing-to-assign [mysql]
+err:  error "mysql: DO NOTHING needs at least one insert column or conflict target to build the no-op assignment"
+
+=== insert/on-conflict-do-nothing-nothing-to-assign [postgres]
+sql:  "INSERT INTO users VALUES (?) ON CONFLICT DO NOTHING"
+args: [string("user@example.com")]
+
+=== insert/on-conflict-do-nothing-without-columns [mysql+unfaithful-upsert]
+sql:  "INSERT INTO users VALUES (?) ON DUPLICATE KEY UPDATE `email` = `email`"
+args: [string("user@example.com")]
+
+=== insert/on-conflict-do-nothing-without-columns [mysql]
+sql:  "INSERT INTO users VALUES (?) ON DUPLICATE KEY UPDATE `email` = `email`"
+args: [string("user@example.com")]
+
+=== insert/on-conflict-do-nothing-without-columns [postgres]
+sql:  "INSERT INTO users VALUES (?) ON CONFLICT (email) DO NOTHING"
+args: [string("user@example.com")]
+
+=== insert/on-conflict-do-nothing-without-target [mysql+unfaithful-upsert]
+sql:  "INSERT INTO users (email) VALUES (?) ON DUPLICATE KEY UPDATE `email` = `email`"
+args: [string("user@example.com")]
+
+=== insert/on-conflict-do-nothing-without-target [mysql]
+sql:  "INSERT INTO users (email) VALUES (?) ON DUPLICATE KEY UPDATE `email` = `email`"
+args: [string("user@example.com")]
+
+=== insert/on-conflict-do-nothing-without-target [postgres]
+sql:  "INSERT INTO users (email) VALUES (?) ON CONFLICT DO NOTHING"
+args: [string("user@example.com")]
+
+=== insert/on-conflict-do-update [mysql+unfaithful-upsert]
+sql:  "INSERT INTO users (email, name) VALUES (?, ?) ON DUPLICATE KEY UPDATE name = ?, updated_at = ?, visits = ?"
+args: [string("user@example.com"), string("Ann"), string("Ann"), core.Raw("NOW()"), int(2)]
+
+=== insert/on-conflict-do-update [mysql]
+err:  unsupported "mysql does not support ON CONFLICT ... DO UPDATE; MySQL's ON DUPLICATE KEY UPDATE fires on any unique index rather than the conflict target you named, so the translation is not faithful; set databases.<name>.allow_unfaithful_upsert: true (or MySQLDialect.AllowUnfaithfulUpsert, when you build the dialect yourself) if the table has exactly one unique constraint, or do the read-then-write explicitly in a transaction"
+
+=== insert/on-conflict-do-update [postgres]
+sql:  "INSERT INTO users (email, name) VALUES (?, ?) ON CONFLICT (email) DO UPDATE SET name = ?, updated_at = ?, visits = ?"
+args: [string("user@example.com"), string("Ann"), string("Ann"), core.Raw("NOW()"), int(2)]
+
+=== insert/on-conflict-do-update-empty-set [mysql+unfaithful-upsert]
+err:  error "mysql: ON DUPLICATE KEY UPDATE requires at least one assignment"
+
+=== insert/on-conflict-do-update-empty-set [mysql]
+err:  unsupported "mysql does not support ON CONFLICT ... DO UPDATE; MySQL's ON DUPLICATE KEY UPDATE fires on any unique index rather than the conflict target you named, so the translation is not faithful; set databases.<name>.allow_unfaithful_upsert: true (or MySQLDialect.AllowUnfaithfulUpsert, when you build the dialect yourself) if the table has exactly one unique constraint, or do the read-then-write explicitly in a transaction"
+
+=== insert/on-conflict-do-update-empty-set [postgres]
+sql:  "INSERT INTO users (email) VALUES (?) ON CONFLICT (email) DO UPDATE SET "
+args: [string("user@example.com")]
+
+=== insert/on-conflict-do-update-returning [mysql+unfaithful-upsert]
+err:  unsupported "mysql does not support RETURNING; read the generated key with LAST_INSERT_ID(), or SELECT the rows inside the same transaction"
+
+=== insert/on-conflict-do-update-returning [mysql]
+err:  unsupported "mysql does not support RETURNING; read the generated key with LAST_INSERT_ID(), or SELECT the rows inside the same transaction"
+
+=== insert/on-conflict-do-update-returning [postgres]
+sql:  "INSERT INTO users (email, name) VALUES (?, ?) ON CONFLICT (email) DO UPDATE SET name = ? RETURNING id"
+args: [string("user@example.com"), string("Ann"), string("Ann")]
+
+=== insert/on-conflict-do-update-several-targets [mysql+unfaithful-upsert]
+sql:  "INSERT INTO memberships (user_id, group_id, role) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE role = ?"
+args: [int(1), int(2), string("member"), string("member")]
+
+=== insert/on-conflict-do-update-several-targets [mysql]
+err:  unsupported "mysql does not support ON CONFLICT ... DO UPDATE; MySQL's ON DUPLICATE KEY UPDATE fires on any unique index rather than the conflict target you named, so the translation is not faithful; set databases.<name>.allow_unfaithful_upsert: true (or MySQLDialect.AllowUnfaithfulUpsert, when you build the dialect yourself) if the table has exactly one unique constraint, or do the read-then-write explicitly in a transaction"
+
+=== insert/on-conflict-do-update-several-targets [postgres]
+sql:  "INSERT INTO memberships (user_id, group_id, role) VALUES (?, ?, ?) ON CONFLICT (user_id, group_id) DO UPDATE SET role = ?"
+args: [int(1), int(2), string("member"), string("member")]
+
+=== insert/on-conflict-without-action [mysql+unfaithful-upsert]
+err:  error "mysql: OnConflict requires DoNothing() or DoUpdate(...)"
+
+=== insert/on-conflict-without-action [mysql]
+err:  error "mysql: OnConflict requires DoNothing() or DoUpdate(...)"
+
+=== insert/on-conflict-without-action [postgres]
+sql:  "INSERT INTO users (email) VALUES (?) ON CONFLICT (email)"
+args: [string("user@example.com")]
+
+=== insert/returning [mysql]
+err:  unsupported "mysql does not support RETURNING; read the generated key with LAST_INSERT_ID(), or SELECT the rows inside the same transaction"
+
+=== insert/returning [postgres]
+sql:  "INSERT INTO users (name) VALUES (?) RETURNING id, created_at"
+args: [string("Ann")]
+
+=== insert/single-row [mysql]
+sql:  "INSERT INTO users (name, email) VALUES (?, ?)"
+args: [string("Ann"), string("user@example.com")]
+
+=== insert/single-row [postgres]
+sql:  "INSERT INTO users (name, email) VALUES (?, ?)"
+args: [string("Ann"), string("user@example.com")]
+
+=== insert/table-verbatim [mysql]
+sql:  "INSERT INTO [dbo].[2024Orders] ([Id]) VALUES (?)"
+args: [int(1)]
+
+=== insert/table-verbatim [postgres]
+sql:  "INSERT INTO [dbo].[2024Orders] ([Id]) VALUES (?)"
+args: [int(1)]
+
+=== insert/value-types [mysql]
+sql:  "INSERT INTO t (a, b, c, d, e) VALUES (?, ?, ?, ?, ?)"
+args: [nil, bool(true), int64(7), float64(1.5), []uint8([]byte{0x78})]
+
+=== insert/value-types [postgres]
+sql:  "INSERT INTO t (a, b, c, d, e) VALUES (?, ?, ?, ?, ?)"
+args: [nil, bool(true), int64(7), float64(1.5), []uint8([]byte{0x78})]
+
+=== insert/without-columns [mysql]
+sql:  "INSERT INTO users VALUES (?, ?)"
+args: [int(1), string("Ann")]
+
+=== insert/without-columns [postgres]
+sql:  "INSERT INTO users VALUES (?, ?)"
+args: [int(1), string("Ann")]
+
+=== insert/without-values [mysql]
+sql:  "INSERT INTO users (name)"
+args: nil
+
+=== insert/without-values [postgres]
+sql:  "INSERT INTO users (name)"
+args: nil
+
+=== join/condition-ilike-not-rewritten [mysql]
+sql:  "SELECT users.id FROM users INNER JOIN orders ON orders.note ILIKE ?"
+args: [string("%gift%")]
+
+=== join/condition-ilike-not-rewritten [postgres]
+sql:  "SELECT users.id FROM users INNER JOIN orders ON orders.note ILIKE ?"
+args: [string("%gift%")]
+
+=== join/condition-not-validated [mysql]
+sql:  "SELECT users.id FROM users INNER JOIN orders ON ? = ?"
+args: [string("a = 1 OR 1=1"), bool(true)]
+
+=== join/condition-not-validated [postgres]
+sql:  "SELECT users.id FROM users INNER JOIN orders ON ? = ?"
+args: [string("a = 1 OR 1=1"), bool(true)]
+
+=== join/cross [mysql]
+sql:  "SELECT users.id FROM users CROSS JOIN regions"
+args: nil
+
+=== join/cross [postgres]
+sql:  "SELECT users.id FROM users CROSS JOIN regions"
+args: nil
+
+=== join/dot-placeholders [mysql]
+sql:  "SELECT users.id FROM users INNER JOIN post_tags ON users.id = post_tags.user_id"
+args: nil
+
+=== join/dot-placeholders [postgres]
+sql:  "SELECT users.id FROM users INNER JOIN post_tags ON users.id = post_tags.user_id"
+args: nil
+
+=== join/full [mysql]
+err:  unsupported "mysql does not support FULL OUTER JOIN; emulate with a LEFT JOIN unioned with a RIGHT JOIN"
+
+=== join/full [postgres]
+sql:  "SELECT users.id FROM users FULL JOIN orders ON users.id = orders.user_id"
+args: nil
+
+=== join/full-outer [mysql]
+err:  unsupported "mysql does not support FULL OUTER JOIN; emulate with a LEFT JOIN unioned with a RIGHT JOIN"
+
+=== join/full-outer [postgres]
+sql:  "SELECT users.id FROM users FULL OUTER JOIN orders ON users.id = orders.user_id"
+args: nil
+
+=== join/inner [mysql]
+sql:  "SELECT users.id FROM users INNER JOIN orders ON users.id = orders.user_id"
+args: nil
+
+=== join/inner [postgres]
+sql:  "SELECT users.id FROM users INNER JOIN orders ON users.id = orders.user_id"
+args: nil
+
+=== join/lateral-real-on [mysql]
+sql:  "SELECT u.id FROM users u LATERAL JOIN (SELECT user_id FROM orders WHERE status = ?) AS p ON p.user_id = u.id"
+args: [string("paid")]
+
+=== join/lateral-real-on [postgres]
+sql:  "SELECT u.id FROM users u LATERAL JOIN (SELECT user_id FROM orders WHERE status = ?) AS p ON p.user_id = u.id"
+args: [string("paid")]
+
+=== join/lateral-trivial-on [mysql]
+sql:  "SELECT u.id, latest.total FROM users u LATERAL JOIN (SELECT o.total FROM orders o WHERE o.user_id = u.id ORDER BY `o`.`total` DESC LIMIT 1) AS latest ON true"
+args: nil
+
+=== join/lateral-trivial-on [postgres]
+sql:  "SELECT u.id, latest.total FROM users u LATERAL JOIN (SELECT o.total FROM orders o WHERE o.user_id = u.id ORDER BY \"o\".\"total\" DESC LIMIT 1) AS latest ON true"
+args: nil
+
+=== join/left [mysql]
+sql:  "SELECT users.id FROM users LEFT JOIN orders ON users.id = orders.user_id"
+args: nil
+
+=== join/left [postgres]
+sql:  "SELECT users.id FROM users LEFT JOIN orders ON users.id = orders.user_id"
+args: nil
+
+=== join/left-outer [mysql]
+sql:  "SELECT users.id FROM users LEFT OUTER JOIN orders ON users.id = orders.user_id"
+args: nil
+
+=== join/left-outer [postgres]
+sql:  "SELECT users.id FROM users LEFT OUTER JOIN orders ON users.id = orders.user_id"
+args: nil
+
+=== join/natural [mysql]
+sql:  "SELECT users.id FROM users NATURAL JOIN profiles"
+args: nil
+
+=== join/natural [postgres]
+sql:  "SELECT users.id FROM users NATURAL JOIN profiles"
+args: nil
+
+=== join/raw-condition [mysql]
+sql:  "SELECT users.id FROM users INNER JOIN orders ON orders.user_id = users.id AND orders.total > ?"
+args: [int(0)]
+
+=== join/raw-condition [postgres]
+sql:  "SELECT users.id FROM users INNER JOIN orders ON orders.user_id = users.id AND orders.total > ?"
+args: [int(0)]
+
+=== join/right [mysql]
+sql:  "SELECT users.id FROM users RIGHT JOIN orders ON users.id = orders.user_id"
+args: nil
+
+=== join/right [postgres]
+sql:  "SELECT users.id FROM users RIGHT JOIN orders ON users.id = orders.user_id"
+args: nil
+
+=== join/several [mysql]
+sql:  "SELECT users.id FROM users INNER JOIN orders ON users.id = orders.user_id LEFT JOIN refunds ON refunds.order_id = orders.id AND refunds.amount > ? CROSS JOIN regions WHERE users.active = ?"
+args: [int(10), bool(true)]
+
+=== join/several [postgres]
+sql:  "SELECT users.id FROM users INNER JOIN orders ON users.id = orders.user_id LEFT JOIN refunds ON refunds.order_id = orders.id AND refunds.amount > ? CROSS JOIN regions WHERE users.active = ?"
+args: [int(10), bool(true)]
+
+=== join/subquery [mysql]
+sql:  "SELECT users.id FROM users INNER JOIN (SELECT user_id FROM orders WHERE status = ?) AS p ON p.user_id = users.id"
+args: [string("paid")]
+
+=== join/subquery [postgres]
+sql:  "SELECT users.id FROM users INNER JOIN (SELECT user_id FROM orders WHERE status = ?) AS p ON p.user_id = users.id"
+args: [string("paid")]
+
+=== join/subquery-every-clause [mysql]
+err:  unsupported "mysql does not support DISTINCT ON; rewrite as a ROW_NUMBER() window function in a subquery filtered to rn = 1"
+
+=== join/subquery-every-clause [postgres]
+sql:  "SELECT users.id FROM users LEFT JOIN (SELECT DISTINCT ON (o.user_id) o.user_id, COUNT(*) AS n FROM orders o INNER JOIN users u ON u.id = o.user_id WHERE o.status = ? GROUP BY o.user_id HAVING COUNT(*) > ? ORDER BY \"o\".\"user_id\" DESC LIMIT 5 OFFSET 10) AS s ON s.user_id = users.id"
+args: [string("paid"), int(2)]
+
+=== join/table-alias [mysql]
+sql:  "SELECT users.id FROM users INNER JOIN orders AS o ON o.user_id = users.id"
+args: nil
+
+=== join/table-alias [postgres]
+sql:  "SELECT users.id FROM users INNER JOIN orders AS o ON o.user_id = users.id"
+args: nil
+
+=== limit/and-offset [mysql]
+sql:  "SELECT id FROM users ORDER BY `id` ASC LIMIT 10 OFFSET 20"
+args: nil
+
+=== limit/and-offset [postgres]
+sql:  "SELECT id FROM users ORDER BY \"id\" ASC LIMIT 10 OFFSET 20"
+args: nil
+
+=== limit/offset-without-limit [mysql]
+sql:  "SELECT id FROM users LIMIT 18446744073709551615 OFFSET 20"
+args: nil
+
+=== limit/offset-without-limit [postgres]
+sql:  "SELECT id FROM users OFFSET 20"
+args: nil
+
+=== limit/offset-zero [mysql]
+sql:  "SELECT id FROM users LIMIT 10 OFFSET 0"
+args: nil
+
+=== limit/offset-zero [postgres]
+sql:  "SELECT id FROM users LIMIT 10 OFFSET 0"
+args: nil
+
+=== limit/only [mysql]
+sql:  "SELECT id FROM users LIMIT 10"
+args: nil
+
+=== limit/only [postgres]
+sql:  "SELECT id FROM users LIMIT 10"
+args: nil
+
+=== limit/replaced [mysql]
+sql:  "SELECT id FROM users LIMIT 5 OFFSET 2"
+args: nil
+
+=== limit/replaced [postgres]
+sql:  "SELECT id FROM users LIMIT 5 OFFSET 2"
+args: nil
+
+=== limit/zero [mysql]
+sql:  "SELECT id FROM users LIMIT 0"
+args: nil
+
+=== limit/zero [postgres]
+sql:  "SELECT id FROM users LIMIT 0"
+args: nil
+
+=== orderby/args-after-where-and-having [mysql]
+sql:  "SELECT user_id FROM orders WHERE status = ? GROUP BY user_id HAVING COUNT(*) > ? ORDER BY ? ASC LIMIT 3"
+args: [string("paid"), int(1), string("lower(user_id)")]
+
+=== orderby/args-after-where-and-having [postgres]
+sql:  "SELECT user_id FROM orders WHERE status = ? GROUP BY user_id HAVING COUNT(*) > ? ORDER BY ? ASC LIMIT 3"
+args: [string("paid"), int(1), string("lower(user_id)")]
+
+=== orderby/digit-leading-bound [mysql]
+sql:  "SELECT Id FROM users ORDER BY ? ASC"
+args: [string("2024Orders.Id")]
+
+=== orderby/digit-leading-bound [postgres]
+sql:  "SELECT Id FROM users ORDER BY ? ASC"
+args: [string("2024Orders.Id")]
+
+=== orderby/direction-empty-is-asc [mysql]
+sql:  "SELECT id FROM users ORDER BY `id` ASC"
+args: nil
+
+=== orderby/direction-empty-is-asc [postgres]
+sql:  "SELECT id FROM users ORDER BY \"id\" ASC"
+args: nil
+
+=== orderby/direction-whitelisted [mysql]
+sql:  "SELECT id FROM users ORDER BY `id` ASC"
+args: nil
+
+=== orderby/direction-whitelisted [postgres]
+sql:  "SELECT id FROM users ORDER BY \"id\" ASC"
+args: nil
+
+=== orderby/dotted [mysql]
+sql:  "SELECT id FROM users ORDER BY `users`.`created_at` ASC"
+args: nil
+
+=== orderby/dotted [postgres]
+sql:  "SELECT id FROM users ORDER BY \"users\".\"created_at\" ASC"
+args: nil
+
+=== orderby/identifier [mysql]
+sql:  "SELECT id FROM users ORDER BY `created_at` DESC"
+args: nil
+
+=== orderby/identifier [postgres]
+sql:  "SELECT id FROM users ORDER BY \"created_at\" DESC"
+args: nil
+
+=== orderby/non-identifier-bound [mysql]
+sql:  "SELECT id FROM users ORDER BY ? DESC"
+args: [string("CASE WHEN 1=1 THEN id END")]
+
+=== orderby/non-identifier-bound [postgres]
+sql:  "SELECT id FROM users ORDER BY ? DESC"
+args: [string("CASE WHEN 1=1 THEN id END")]
+
+=== orderby/raw-after-limit-and-offset [mysql]
+sql:  "SELECT id FROM users ORDER BY RANDOM() ASC LIMIT 5 OFFSET 10"
+args: nil
+
+=== orderby/raw-after-limit-and-offset [postgres]
+sql:  "SELECT id FROM users ORDER BY RANDOM() ASC LIMIT 5 OFFSET 10"
+args: nil
+
+=== orderby/raw-direction-whitelisted [mysql]
+sql:  "SELECT id FROM users ORDER BY LENGTH(name) ASC"
+args: nil
+
+=== orderby/raw-direction-whitelisted [postgres]
+sql:  "SELECT id FROM users ORDER BY LENGTH(name) ASC"
+args: nil
+
+=== orderby/raw-last [mysql]
+sql:  "SELECT id FROM users ORDER BY `last_name` ASC, first_name || ' ' || last_name DESC"
+args: nil
+
+=== orderby/raw-last [postgres]
+sql:  "SELECT id FROM users ORDER BY \"last_name\" ASC, first_name || ' ' || last_name DESC"
+args: nil
+
+=== orderby/several [mysql]
+sql:  "SELECT id FROM users ORDER BY `last_name` ASC, ? DESC, `id` DESC"
+args: [string("lower(first_name)")]
+
+=== orderby/several [postgres]
+sql:  "SELECT id FROM users ORDER BY \"last_name\" ASC, ? DESC, \"id\" DESC"
+args: [string("lower(first_name)")]
+
+=== select/distinct [mysql]
+sql:  "SELECT DISTINCT status FROM orders"
+args: nil
+
+=== select/distinct [postgres]
+sql:  "SELECT DISTINCT status FROM orders"
+args: nil
+
+=== select/distinct-on [mysql]
+err:  unsupported "mysql does not support DISTINCT ON; rewrite as a ROW_NUMBER() window function in a subquery filtered to rn = 1"
+
+=== select/distinct-on [postgres]
+sql:  "SELECT DISTINCT ON (user_id) id, user_id FROM orders"
+args: nil
+
+=== select/distinct-on-without-distinct-flag [mysql]
+err:  unsupported "mysql does not support DISTINCT ON; rewrite as a ROW_NUMBER() window function in a subquery filtered to rn = 1"
+
+=== select/distinct-on-without-distinct-flag [postgres]
+sql:  "SELECT id, user_id FROM orders"
+args: nil
+
+=== select/every-clause [mysql]
+sql:  "WITH paid AS (SELECT user_id FROM orders WHERE status = ?) SELECT DISTINCT u.id, u.name, COUNT(p.user_id) AS orders FROM users u LEFT JOIN paid p ON p.user_id = u.id WHERE u.created_at >= ? AND u.region IN (?, ?) GROUP BY u.id, u.name HAVING COUNT(p.user_id) > ? ORDER BY `u`.`name` ASC LIMIT 20 OFFSET 40 UNION ALL SELECT id, name, 0 FROM archived_users WHERE active = ?"
+args: [string("paid"), string("2024-01-01"), string("eu"), string("us"), int(1), bool(false)]
+
+=== select/every-clause [postgres]
+sql:  "WITH paid AS (SELECT user_id FROM orders WHERE status = ?) SELECT DISTINCT u.id, u.name, COUNT(p.user_id) AS orders FROM users u LEFT JOIN paid p ON p.user_id = u.id WHERE u.created_at >= ? AND u.region IN (?, ?) GROUP BY u.id, u.name HAVING COUNT(p.user_id) > ? ORDER BY \"u\".\"name\" ASC LIMIT 20 OFFSET 40 UNION ALL SELECT id, name, 0 FROM archived_users WHERE active = ?"
+args: [string("paid"), string("2024-01-01"), string("eu"), string("us"), int(1), bool(false)]
+
+=== select/expressions-verbatim [mysql]
+sql:  "SELECT COUNT(*) AS n, lower(email), [dbo].[2024Orders].[Id] FROM users"
+args: nil
+
+=== select/expressions-verbatim [postgres]
+sql:  "SELECT COUNT(*) AS n, lower(email), [dbo].[2024Orders].[Id] FROM users"
+args: nil
+
+=== select/fields [mysql]
+sql:  "SELECT id, name FROM users"
+args: nil
+
+=== select/fields [postgres]
+sql:  "SELECT id, name FROM users"
+args: nil
+
+=== select/fields-appended [mysql]
+sql:  "SELECT id, name, email FROM users"
+args: nil
+
+=== select/fields-appended [postgres]
+sql:  "SELECT id, name, email FROM users"
+args: nil
+
+=== select/from-alias [mysql]
+sql:  "SELECT u.id FROM users AS u"
+args: nil
+
+=== select/from-alias [postgres]
+sql:  "SELECT u.id FROM users AS u"
+args: nil
+
+=== select/from-replaced [mysql]
+sql:  "SELECT id FROM accounts"
+args: nil
+
+=== select/from-replaced [postgres]
+sql:  "SELECT id FROM accounts"
+args: nil
+
+=== select/from-table-verbatim [mysql]
+sql:  "SELECT Id FROM [dbo].[2024Orders]"
+args: nil
+
+=== select/from-table-verbatim [postgres]
+sql:  "SELECT Id FROM [dbo].[2024Orders]"
+args: nil
+
+=== select/returning [mysql]
+err:  unsupported "mysql does not support RETURNING; read the generated key with LAST_INSERT_ID(), or SELECT the rows inside the same transaction"
+
+=== select/returning [postgres]
+sql:  "SELECT id FROM users RETURNING id"
+args: nil
+
+=== select/star [mysql]
+sql:  "SELECT * FROM users"
+args: nil
+
+=== select/star [postgres]
+sql:  "SELECT * FROM users"
+args: nil
+
+=== select/window-clause-not-rendered [mysql]
+sql:  "SELECT id FROM orders"
+args: nil
+
+=== select/window-clause-not-rendered [postgres]
+sql:  "SELECT id FROM orders"
+args: nil
+
+=== select/window-over-inlined [mysql]
+sql:  "SELECT id, ROW_NUMBER() w OVER (PARTITION BY user_id ORDER BY created_at DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM orders"
+args: nil
+
+=== select/window-over-inlined [postgres]
+sql:  "SELECT id, ROW_NUMBER() w OVER (PARTITION BY user_id ORDER BY created_at DESC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM orders"
+args: nil
+
+=== select/without-from [mysql]
+sql:  "SELECT 1"
+args: nil
+
+=== select/without-from [postgres]
+sql:  "SELECT 1"
+args: nil
+
+=== statement/insert-wins-over-update-and-delete [mysql]
+sql:  "INSERT INTO users (a) VALUES (?)"
+args: [int(2)]
+
+=== statement/insert-wins-over-update-and-delete [postgres]
+sql:  "INSERT INTO users (a) VALUES (?)"
+args: [int(2)]
+
+=== statement/update-wins-over-delete [mysql]
+sql:  "UPDATE users SET a = ? WHERE id = ?"
+args: [int(1), int(3)]
+
+=== statement/update-wins-over-delete [postgres]
+sql:  "UPDATE users SET a = ? WHERE id = ?"
+args: [int(1), int(3)]
+
+=== union/all [mysql]
+sql:  "SELECT id FROM users UNION ALL SELECT id FROM archived_users"
+args: nil
+
+=== union/all [postgres]
+sql:  "SELECT id FROM users UNION ALL SELECT id FROM archived_users"
+args: nil
+
+=== union/arm-every-clause [mysql]
+err:  unsupported "mysql does not support DISTINCT ON; rewrite as a ROW_NUMBER() window function in a subquery filtered to rn = 1"
+
+=== union/arm-every-clause [postgres]
+sql:  "SELECT user_id, 0 FROM users UNION SELECT DISTINCT ON (o.user_id) o.user_id, COUNT(*) AS n FROM orders o INNER JOIN users u ON u.id = o.user_id WHERE o.status = ? GROUP BY o.user_id HAVING COUNT(*) > ? ORDER BY \"o\".\"user_id\" DESC LIMIT 5 OFFSET 10"
+args: [string("paid"), int(2)]
+
+=== union/distinct [mysql]
+sql:  "SELECT id FROM users UNION SELECT id FROM archived_users"
+args: nil
+
+=== union/distinct [postgres]
+sql:  "SELECT id FROM users UNION SELECT id FROM archived_users"
+args: nil
+
+=== union/order-and-limit-precede-union [mysql]
+sql:  "SELECT id FROM users ORDER BY `id` DESC LIMIT 5 UNION SELECT id FROM archived_users ORDER BY `id` ASC LIMIT 3"
+args: nil
+
+=== union/order-and-limit-precede-union [postgres]
+sql:  "SELECT id FROM users ORDER BY \"id\" DESC LIMIT 5 UNION SELECT id FROM archived_users ORDER BY \"id\" ASC LIMIT 3"
+args: nil
+
+=== union/several-with-args [mysql]
+sql:  "SELECT id FROM users WHERE region = ? UNION SELECT id FROM archived_users WHERE region = ? UNION ALL SELECT id FROM pending_users WHERE region = ?"
+args: [string("eu"), string("us"), string("apac")]
+
+=== union/several-with-args [postgres]
+sql:  "SELECT id FROM users WHERE region = ? UNION SELECT id FROM archived_users WHERE region = ? UNION ALL SELECT id FROM pending_users WHERE region = ?"
+args: [string("eu"), string("us"), string("apac")]
+
+=== update/join-ignored [mysql]
+sql:  "UPDATE users SET active = ?"
+args: [bool(false)]
+
+=== update/join-ignored [postgres]
+sql:  "UPDATE users SET active = ?"
+args: [bool(false)]
+
+=== update/limit-and-order-ignored [mysql]
+sql:  "UPDATE users SET active = ? WHERE region = ?"
+args: [bool(false), string("eu")]
+
+=== update/limit-and-order-ignored [postgres]
+sql:  "UPDATE users SET active = ? WHERE region = ?"
+args: [bool(false), string("eu")]
+
+=== update/returning [mysql]
+err:  unsupported "mysql does not support RETURNING; read the generated key with LAST_INSERT_ID(), or SELECT the rows inside the same transaction"
+
+=== update/returning [postgres]
+sql:  "UPDATE users SET name = ? WHERE id = ? RETURNING id, name"
+args: [string("Ann"), int(1)]
+
+=== update/set-map-sorted [mysql]
+sql:  "UPDATE users SET active = ?, email = ?, name = ? WHERE id = ?"
+args: [bool(true), string("user@example.com"), string("Ann"), int(1)]
+
+=== update/set-map-sorted [postgres]
+sql:  "UPDATE users SET active = ?, email = ?, name = ? WHERE id = ?"
+args: [bool(true), string("user@example.com"), string("Ann"), int(1)]
+
+=== update/set-overwritten [mysql]
+sql:  "UPDATE users SET name = ?"
+args: [string("Bob")]
+
+=== update/set-overwritten [postgres]
+sql:  "UPDATE users SET name = ?"
+args: [string("Bob")]
+
+=== update/set-raw-and-nil [mysql]
+sql:  "UPDATE users SET deleted_at = ?, updated_at = ?"
+args: [nil, core.Raw("NOW()")]
+
+=== update/set-raw-and-nil [postgres]
+sql:  "UPDATE users SET deleted_at = ?, updated_at = ?"
+args: [nil, core.Raw("NOW()")]
+
+=== update/set-with-where [mysql]
+sql:  "UPDATE users SET name = ? WHERE id = ?"
+args: [string("Ann"), int(1)]
+
+=== update/set-with-where [postgres]
+sql:  "UPDATE users SET name = ? WHERE id = ?"
+args: [string("Ann"), int(1)]
+
+=== update/table-verbatim [mysql]
+sql:  "UPDATE [dbo].[2024Orders] SET [Status] = ? WHERE [Id] = ?"
+args: [string("done"), int(1)]
+
+=== update/table-verbatim [postgres]
+sql:  "UPDATE [dbo].[2024Orders] SET [Status] = ? WHERE [Id] = ?"
+args: [string("done"), int(1)]
+
+=== update/where-composite-empty [mysql]
+sql:  "UPDATE users SET active = ?"
+args: [bool(false)]
+
+=== update/where-composite-empty [postgres]
+sql:  "UPDATE users SET active = ?"
+args: [bool(false)]
+
+=== update/where-composite-or [mysql]
+sql:  "UPDATE users SET active = ? WHERE (email IS NULL OR banned = ?)"
+args: [bool(false), bool(true)]
+
+=== update/where-composite-or [postgres]
+sql:  "UPDATE users SET active = ? WHERE (email IS NULL OR banned = ?)"
+args: [bool(false), bool(true)]
+
+=== update/where-dot-placeholders [mysql]
+sql:  "UPDATE users SET active = ? WHERE users.id = ?"
+args: [bool(false), int(7)]
+
+=== update/where-dot-placeholders [postgres]
+sql:  "UPDATE users SET active = ? WHERE users.id = ?"
+args: [bool(false), int(7)]
+
+=== update/where-every-helper [mysql]
+sql:  "UPDATE users SET flag = ? WHERE a = ? AND b IN (?, ?) AND c IN (SELECT user_id FROM orders WHERE status = ?) AND d BETWEEN ? AND ? AND e LIKE ? ESCAPE '!' AND g IS NOT NULL AND EXISTS (SELECT user_id FROM orders WHERE status = ?)"
+args: [int(1), int(1), int(2), int(3), string("paid"), int(4), int(5), string("f!%"), string("paid")]
+
+=== update/where-every-helper [postgres]
+sql:  "UPDATE users SET flag = ? WHERE a = ? AND b IN (?, ?) AND c IN (SELECT user_id FROM orders WHERE status = ?) AND d BETWEEN ? AND ? AND e LIKE ? ESCAPE '!' AND g IS NOT NULL AND EXISTS (SELECT user_id FROM orders WHERE status = ?)"
+args: [int(1), int(1), int(2), int(3), string("paid"), int(4), int(5), string("f!%"), string("paid")]
+
+=== update/where-ilike-rewritten [mysql]
+sql:  "UPDATE users SET active = ? WHERE email LIKE ?"
+args: [bool(false), string("%@example.com")]
+
+=== update/where-ilike-rewritten [postgres]
+sql:  "UPDATE users SET active = ? WHERE email ILIKE ?"
+args: [bool(false), string("%@example.com")]
+
+=== update/where-not-validated [mysql]
+sql:  "UPDATE users SET active = ? WHERE ? = ?"
+args: [bool(false), string("a = 1 OR 1=1"), bool(true)]
+
+=== update/where-not-validated [postgres]
+sql:  "UPDATE users SET active = ? WHERE ? = ?"
+args: [bool(false), string("a = 1 OR 1=1"), bool(true)]
+
+=== update/without-set [mysql]
+err:  error "mysql: UPDATE requires at least one SET assignment"
+
+=== update/without-set [postgres]
+sql:  "UPDATE users SET  WHERE id = ?"
+args: [int(1)]
+
+=== update/without-where [mysql]
+sql:  "UPDATE users SET active = ?"
+args: [bool(false)]
+
+=== update/without-where [postgres]
+sql:  "UPDATE users SET active = ?"
+args: [bool(false)]
+
+=== where/between [mysql]
+sql:  "SELECT id FROM users WHERE age BETWEEN ? AND ?"
+args: [int(18), int(65)]
+
+=== where/between [postgres]
+sql:  "SELECT id FROM users WHERE age BETWEEN ? AND ?"
+args: [int(18), int(65)]
+
+=== where/between-subquery-bounds [mysql]
+sql:  "SELECT id FROM users WHERE created_at BETWEEN (SELECT MIN(created_at) FROM events WHERE kind = ?) AND (SELECT MAX(created_at) FROM events WHERE kind = ?)"
+args: [string("start"), string("end")]
+
+=== where/between-subquery-bounds [postgres]
+sql:  "SELECT id FROM users WHERE created_at BETWEEN (SELECT MIN(created_at) FROM events WHERE kind = ?) AND (SELECT MAX(created_at) FROM events WHERE kind = ?)"
+args: [string("start"), string("end")]
+
+=== where/composite-empty [mysql]
+sql:  "SELECT id FROM users"
+args: nil
+
+=== where/composite-empty [postgres]
+sql:  "SELECT id FROM users WHERE "
+args: nil
+
+=== where/composite-empty-beside-condition [mysql]
+sql:  "SELECT id FROM users WHERE id = ?"
+args: [int(1)]
+
+=== where/composite-empty-beside-condition [postgres]
+sql:  "SELECT id FROM users WHERE id = ?"
+args: [int(1)]
+
+=== where/composite-or [mysql]
+sql:  "SELECT id FROM users WHERE active = ? AND (role = ? OR (role = ? AND suspended_at IS NULL))"
+args: [bool(true), string("admin"), string("editor")]
+
+=== where/composite-or [postgres]
+sql:  "SELECT id FROM users WHERE active = ? AND (role = ? OR (role = ? AND suspended_at IS NULL))"
+args: [bool(true), string("admin"), string("editor")]
+
+=== where/eq [mysql]
+sql:  "SELECT id FROM users WHERE id = ?"
+args: [int(1)]
+
+=== where/eq [postgres]
+sql:  "SELECT id FROM users WHERE id = ?"
+args: [int(1)]
+
+=== where/eq-bool [mysql]
+sql:  "SELECT id FROM users WHERE active = ?"
+args: [bool(true)]
+
+=== where/eq-bool [postgres]
+sql:  "SELECT id FROM users WHERE active = ?"
+args: [bool(true)]
+
+=== where/eq-identifier-right [mysql]
+sql:  "SELECT id FROM users WHERE updated_at = created_at"
+args: nil
+
+=== where/eq-identifier-right [postgres]
+sql:  "SELECT id FROM users WHERE updated_at = created_at"
+args: nil
+
+=== where/eq-nil [mysql]
+sql:  "SELECT id FROM users WHERE deleted_at = ?"
+args: [nil]
+
+=== where/eq-nil [postgres]
+sql:  "SELECT id FROM users WHERE deleted_at = ?"
+args: [nil]
+
+=== where/eq-raw-left [mysql]
+sql:  "SELECT id FROM users WHERE lower(email) = ?"
+args: [string("user@example.com")]
+
+=== where/eq-raw-left [postgres]
+sql:  "SELECT id FROM users WHERE lower(email) = ?"
+args: [string("user@example.com")]
+
+=== where/eq-subquery-right [mysql]
+sql:  "SELECT id FROM users WHERE id = (SELECT user_id FROM orders ORDER BY total desc LIMIT 1)"
+args: nil
+
+=== where/eq-subquery-right [postgres]
+sql:  "SELECT id FROM users WHERE id = (SELECT user_id FROM orders ORDER BY total desc LIMIT 1)"
+args: nil
+
+=== where/every-helper-chained [mysql]
+sql:  "SELECT id FROM users WHERE a = ? AND b != ? AND c > ? AND d >= ? AND e < ? AND f <= ? AND g IN (?, ?) AND h NOT IN (?) AND i IN (SELECT user_id FROM orders WHERE status = ?) AND j BETWEEN ? AND ? AND k NOT BETWEEN ? AND ? AND NOT EXISTS (SELECT user_id FROM orders WHERE status = ?) AND l LIKE ? AND n NOT LIKE ? ESCAPE '!' AND p IS NULL AND q IS NOT NULL"
+args: [int(1), int(2), int(3), int(4), int(5), int(6), int(7), int(8), int(9), string("paid"), int(10), int(11), int(12), int(13), string("paid"), string("m%"), string("o!%")]
+
+=== where/every-helper-chained [postgres]
+sql:  "SELECT id FROM users WHERE a = ? AND b != ? AND c > ? AND d >= ? AND e < ? AND f <= ? AND g IN (?, ?) AND h NOT IN (?) AND i IN (SELECT user_id FROM orders WHERE status = ?) AND j BETWEEN ? AND ? AND k NOT BETWEEN ? AND ? AND NOT EXISTS (SELECT user_id FROM orders WHERE status = ?) AND l LIKE ? AND n NOT LIKE ? ESCAPE '!' AND p IS NULL AND q IS NOT NULL"
+args: [int(1), int(2), int(3), int(4), int(5), int(6), int(7), int(8), int(9), string("paid"), int(10), int(11), int(12), int(13), string("paid"), string("m%"), string("o!%")]
+
+=== where/exists [mysql]
+sql:  "SELECT id FROM users WHERE EXISTS (SELECT user_id FROM orders WHERE status = ?)"
+args: [string("paid")]
+
+=== where/exists [postgres]
+sql:  "SELECT id FROM users WHERE EXISTS (SELECT user_id FROM orders WHERE status = ?)"
+args: [string("paid")]
+
+=== where/exists-every-clause [mysql]
+sql:  "SELECT id FROM users WHERE EXISTS (SELECT DISTINCT ON (o.user_id) o.user_id, COUNT(*) AS n FROM orders o INNER JOIN users u ON u.id = o.user_id WHERE o.status = ? GROUP BY o.user_id HAVING COUNT(*) > ? ORDER BY o.user_id desc LIMIT 5 OFFSET 10)"
+args: [string("paid"), int(2)]
+
+=== where/exists-every-clause [postgres]
+sql:  "SELECT id FROM users WHERE EXISTS (SELECT DISTINCT ON (o.user_id) o.user_id, COUNT(*) AS n FROM orders o INNER JOIN users u ON u.id = o.user_id WHERE o.status = ? GROUP BY o.user_id HAVING COUNT(*) > ? ORDER BY o.user_id desc LIMIT 5 OFFSET 10)"
+args: [string("paid"), int(2)]
+
+=== where/gt [mysql]
+sql:  "SELECT id FROM users WHERE age > ?"
+args: [int(18)]
+
+=== where/gt [postgres]
+sql:  "SELECT id FROM users WHERE age > ?"
+args: [int(18)]
+
+=== where/gte [mysql]
+sql:  "SELECT id FROM users WHERE age >= ?"
+args: [int(18)]
+
+=== where/gte [postgres]
+sql:  "SELECT id FROM users WHERE age >= ?"
+args: [int(18)]
+
+=== where/ilike-inside-literal-rewritten [mysql]
+sql:  "SELECT id FROM users WHERE note = 'LIKE' OR note LIKE ?"
+args: [string("x")]
+
+=== where/ilike-inside-literal-rewritten [postgres]
+sql:  "SELECT id FROM users WHERE note = 'ILIKE' OR note ILIKE ?"
+args: [string("x")]
+
+=== where/ilike-operator-rewritten [mysql]
+sql:  "SELECT id FROM users WHERE name LIKE ?"
+args: [string("a%")]
+
+=== where/ilike-operator-rewritten [postgres]
+sql:  "SELECT id FROM users WHERE name ILIKE ?"
+args: [string("a%")]
+
+=== where/ilike-raw-rewritten [mysql]
+sql:  "SELECT id FROM users WHERE email LIKE ?"
+args: [string("%@example.com")]
+
+=== where/ilike-raw-rewritten [postgres]
+sql:  "SELECT id FROM users WHERE email ilike ?"
+args: [string("%@example.com")]
+
+=== where/in [mysql]
+sql:  "SELECT id FROM users WHERE status IN (?, ?)"
+args: [string("a"), string("b")]
+
+=== where/in [postgres]
+sql:  "SELECT id FROM users WHERE status IN (?, ?)"
+args: [string("a"), string("b")]
+
+=== where/in-empty [mysql]
+sql:  "SELECT id FROM users WHERE id IN ()"
+args: nil
+
+=== where/in-empty [postgres]
+sql:  "SELECT id FROM users WHERE id IN ()"
+args: nil
+
+=== where/in-empty-slice-spread [mysql]
+sql:  "SELECT id FROM users WHERE id IN ()"
+args: nil
+
+=== where/in-empty-slice-spread [postgres]
+sql:  "SELECT id FROM users WHERE id IN ()"
+args: nil
+
+=== where/in-slice-is-one-value [mysql]
+sql:  "SELECT id FROM users WHERE id IN (?)"
+args: [[]int{1, 2}]
+
+=== where/in-slice-is-one-value [postgres]
+sql:  "SELECT id FROM users WHERE id IN (?)"
+args: [[]int{1, 2}]
+
+=== where/in-subquery [mysql]
+sql:  "SELECT id FROM users WHERE id IN (SELECT user_id FROM orders WHERE status = ?)"
+args: [string("paid")]
+
+=== where/in-subquery [postgres]
+sql:  "SELECT id FROM users WHERE id IN (SELECT user_id FROM orders WHERE status = ?)"
+args: [string("paid")]
+
+=== where/in-subquery-every-clause [mysql]
+sql:  "SELECT id FROM users WHERE id IN (SELECT DISTINCT ON (o.user_id) o.user_id, COUNT(*) AS n FROM orders o INNER JOIN users u ON u.id = o.user_id WHERE o.status = ? GROUP BY o.user_id HAVING COUNT(*) > ? ORDER BY o.user_id desc LIMIT 5 OFFSET 10)"
+args: [string("paid"), int(2)]
+
+=== where/in-subquery-every-clause [postgres]
+sql:  "SELECT id FROM users WHERE id IN (SELECT DISTINCT ON (o.user_id) o.user_id, COUNT(*) AS n FROM orders o INNER JOIN users u ON u.id = o.user_id WHERE o.status = ? GROUP BY o.user_id HAVING COUNT(*) > ? ORDER BY o.user_id desc LIMIT 5 OFFSET 10)"
+args: [string("paid"), int(2)]
+
+=== where/in-subquery-without-select [mysql]
+sql:  "SELECT id FROM users WHERE id IN ( FROM orders)"
+args: nil
+
+=== where/in-subquery-without-select [postgres]
+sql:  "SELECT id FROM users WHERE id IN ( FROM orders)"
+args: nil
+
+=== where/is-not-null [mysql]
+sql:  "SELECT id FROM users WHERE deleted_at IS NOT NULL"
+args: nil
+
+=== where/is-not-null [postgres]
+sql:  "SELECT id FROM users WHERE deleted_at IS NOT NULL"
+args: nil
+
+=== where/is-null [mysql]
+sql:  "SELECT id FROM users WHERE deleted_at IS NULL"
+args: nil
+
+=== where/is-null [postgres]
+sql:  "SELECT id FROM users WHERE deleted_at IS NULL"
+args: nil
+
+=== where/like [mysql]
+sql:  "SELECT id FROM users WHERE name LIKE ?"
+args: [string("%a%")]
+
+=== where/like [postgres]
+sql:  "SELECT id FROM users WHERE name LIKE ?"
+args: [string("%a%")]
+
+=== where/like-escape [mysql]
+sql:  "SELECT id FROM users WHERE name LIKE ? ESCAPE '!'"
+args: [string("100!%")]
+
+=== where/like-escape [postgres]
+sql:  "SELECT id FROM users WHERE name LIKE ? ESCAPE '!'"
+args: [string("100!%")]
+
+=== where/like-escape-multi-char [mysql]
+sql:  "SELECT id FROM users WHERE name LIKE ? ESCAPE '!!'"
+args: [string("100!!%")]
+
+=== where/like-escape-multi-char [postgres]
+sql:  "SELECT id FROM users WHERE name LIKE ? ESCAPE '!!'"
+args: [string("100!!%")]
+
+=== where/lt [mysql]
+sql:  "SELECT id FROM users WHERE age < ?"
+args: [int(65)]
+
+=== where/lt [postgres]
+sql:  "SELECT id FROM users WHERE age < ?"
+args: [int(65)]
+
+=== where/lte [mysql]
+sql:  "SELECT id FROM users WHERE age <= ?"
+args: [int(65)]
+
+=== where/lte [postgres]
+sql:  "SELECT id FROM users WHERE age <= ?"
+args: [int(65)]
+
+=== where/neq [mysql]
+sql:  "SELECT id FROM users WHERE id != ?"
+args: [int(1)]
+
+=== where/neq [postgres]
+sql:  "SELECT id FROM users WHERE id != ?"
+args: [int(1)]
+
+=== where/not-between [mysql]
+sql:  "SELECT id FROM users WHERE age NOT BETWEEN ? AND ?"
+args: [int(18), int(65)]
+
+=== where/not-between [postgres]
+sql:  "SELECT id FROM users WHERE age NOT BETWEEN ? AND ?"
+args: [int(18), int(65)]
+
+=== where/not-exists [mysql]
+sql:  "SELECT id FROM users WHERE NOT EXISTS (SELECT user_id FROM orders WHERE status = ?)"
+args: [string("paid")]
+
+=== where/not-exists [postgres]
+sql:  "SELECT id FROM users WHERE NOT EXISTS (SELECT user_id FROM orders WHERE status = ?)"
+args: [string("paid")]
+
+=== where/not-in [mysql]
+sql:  "SELECT id FROM users WHERE status NOT IN (?)"
+args: [string("a")]
+
+=== where/not-in [postgres]
+sql:  "SELECT id FROM users WHERE status NOT IN (?)"
+args: [string("a")]
+
+=== where/not-in-empty [mysql]
+sql:  "SELECT id FROM users WHERE id NOT IN ()"
+args: nil
+
+=== where/not-in-empty [postgres]
+sql:  "SELECT id FROM users WHERE id NOT IN ()"
+args: nil
+
+=== where/not-in-subquery [mysql]
+sql:  "SELECT id FROM users WHERE id NOT IN (SELECT user_id FROM orders WHERE status = ?)"
+args: [string("paid")]
+
+=== where/not-in-subquery [postgres]
+sql:  "SELECT id FROM users WHERE id NOT IN (SELECT user_id FROM orders WHERE status = ?)"
+args: [string("paid")]
+
+=== where/not-like [mysql]
+sql:  "SELECT id FROM users WHERE name NOT LIKE ?"
+args: [string("%a%")]
+
+=== where/not-like [postgres]
+sql:  "SELECT id FROM users WHERE name NOT LIKE ?"
+args: [string("%a%")]
+
+=== where/not-like-escape [mysql]
+sql:  "SELECT id FROM users WHERE name NOT LIKE ? ESCAPE '!'"
+args: [string("100!%")]
+
+=== where/not-like-escape [postgres]
+sql:  "SELECT id FROM users WHERE name NOT LIKE ? ESCAPE '!'"
+args: [string("100!%")]
+
+=== where/raw-dot-placeholders [mysql]
+sql:  "SELECT id FROM users WHERE users.id = ?"
+args: [int(5)]
+
+=== where/raw-dot-placeholders [postgres]
+sql:  "SELECT id FROM users WHERE users.id = ?"
+args: [int(5)]
+
+=== where/raw-fast-path [mysql]
+sql:  "SELECT id FROM users WHERE age > ? AND age < ?"
+args: [int(18), int(65)]
+
+=== where/raw-fast-path [postgres]
+sql:  "SELECT id FROM users WHERE age > ? AND age < ?"
+args: [int(18), int(65)]
+
+=== where/refuses-demoted-field [mysql]
+err:  error "cannot render WHERE: the left side of a comparison is \"a = 1 OR 1=1\", which is not a column reference. A column goes in as-is; an expression such as COUNT(*) or lower(email) must be wrapped in core.Raw so it is clear the caller vouches for it as SQL"
+
+=== where/refuses-demoted-field [postgres]
+err:  error "cannot render WHERE: the left side of a comparison is \"a = 1 OR 1=1\", which is not a column reference. A column goes in as-is; an expression such as COUNT(*) or lower(email) must be wrapped in core.Raw so it is clear the caller vouches for it as SQL"
+
+=== where/refuses-demoted-field-in-composite [mysql]
+err:  error "cannot render WHERE: the field of an IN is \"b OR 1=1\", which is not a column reference. A column goes in as-is; an expression such as COUNT(*) or lower(email) must be wrapped in core.Raw so it is clear the caller vouches for it as SQL"
+
+=== where/refuses-demoted-field-in-composite [postgres]
+err:  error "cannot render WHERE: the field of an IN is \"b OR 1=1\", which is not a column reference. A column goes in as-is; an expression such as COUNT(*) or lower(email) must be wrapped in core.Raw so it is clear the caller vouches for it as SQL"
+
+=== where/refuses-demoted-identifier [mysql]
+err:  error "cannot render WHERE: the field of an IS NULL is \"[dbo].[2024Orders]\", which is not a column reference. A column goes in as-is; an expression such as COUNT(*) or lower(email) must be wrapped in core.Raw so it is clear the caller vouches for it as SQL"
+
+=== where/refuses-demoted-identifier [postgres]
+err:  error "cannot render WHERE: the field of an IS NULL is \"[dbo].[2024Orders]\", which is not a column reference. A column goes in as-is; an expression such as COUNT(*) or lower(email) must be wrapped in core.Raw so it is clear the caller vouches for it as SQL"
+
+=== where/refuses-digit-leading-field [mysql]
+err:  error "cannot render WHERE: the left side of a comparison is \"2024Orders.Id\", which is not a column reference. A column goes in as-is; an expression such as COUNT(*) or lower(email) must be wrapped in core.Raw so it is clear the caller vouches for it as SQL"
+
+=== where/refuses-digit-leading-field [postgres]
+err:  error "cannot render WHERE: the left side of a comparison is \"2024Orders.Id\", which is not a column reference. A column goes in as-is; an expression such as COUNT(*) or lower(email) must be wrapped in core.Raw so it is clear the caller vouches for it as SQL"

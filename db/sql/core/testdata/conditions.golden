@@ -1,0 +1,914 @@
+# Golden file for TestConditionToSQLMatchesGolden (db/sql/core/render_golden_test.go).
+# What every condition type, window definition and aggregate renders with no dialect,
+# which is what Postgres and MySQL emit for a WHERE, HAVING, JOIN ON or IN-subquery.
+#
+# Regenerate from the module root, then review the diff like any other change:
+#   go test ./db/sql/core -run Golden -update
+#
+# sql and text are Go-quoted. args lists each bound value with its dynamic type;
+# "nil" is a nil slice and "[]" an empty one, which callers can tell apart.
+
+=== aggregate/count-star
+text: "COUNT (*)"
+
+=== aggregate/distinct
+text: "COUNT DISTINCT (user_id)"
+
+=== aggregate/everything
+text: "ARRAY_AGG DISTINCT (name) FILTER (WHERE name LIKE ?) WITHIN GROUP (ORDER BY name, id DESC)"
+
+=== aggregate/filter-binary-args-discarded
+text: "SUM (amount) FILTER (WHERE status = ?)"
+
+=== aggregate/filter-composite
+text: "AVG (amount) FILTER (WHERE (deleted_at IS NULL AND region IN (?, ?)))"
+
+=== aggregate/filter-raw
+text: "COUNT (*) FILTER (WHERE amount > 0)"
+
+=== aggregate/no-arguments
+text: "NOW ()"
+
+=== aggregate/several-arguments
+text: "STRING_AGG (name, ', ')"
+
+=== aggregate/within-group
+text: "PERCENTILE_CONT (0.5) WITHIN GROUP (ORDER BY amount DESC)"
+
+=== between/field-demoted
+sql:  "? BETWEEN ? AND ?"
+args: [string("a = 1 OR 1=1"), int(1), int(2)]
+
+=== between/field-identifier
+sql:  "t.age BETWEEN ? AND ?"
+args: [int(1), int(2)]
+
+=== between/field-raw
+sql:  "EXTRACT(YEAR FROM created_at) BETWEEN ? AND ?"
+args: [int(2020), int(2024)]
+
+=== between/field-subquery
+sql:  "(SELECT id FROM orders WHERE status = ? LIMIT 1) BETWEEN ? AND ?"
+args: [string("paid"), int(1), int(2)]
+
+=== between/hostile-string-is-bound
+sql:  "created_at BETWEEN ? AND ?"
+args: [string("1 OR 1=1 --"), string("2")]
+
+=== between/ints
+sql:  "age BETWEEN ? AND ?"
+args: [int(18), int(65)]
+
+=== between/nil-bounds
+sql:  "age BETWEEN ? AND ?"
+args: [nil, nil]
+
+=== between/not
+sql:  "age NOT BETWEEN ? AND ?"
+args: [int(18), int(65)]
+
+=== between/strings-are-bound
+sql:  "created_at BETWEEN ? AND ?"
+args: [string("2024-01-01"), string("2024-12-31")]
+
+=== between/subquery-both-bounds
+sql:  "created_at BETWEEN (SELECT id FROM events WHERE status = ? LIMIT 1) AND (SELECT id FROM events WHERE status = ? LIMIT 1)"
+args: [string("first"), string("last")]
+
+=== between/subquery-lower
+sql:  "created_at BETWEEN (SELECT id FROM events WHERE status = ? LIMIT 1) AND ?"
+args: [string("first"), int(5)]
+
+=== binary/left/bool
+sql:  "? = ?"
+args: [bool(true), int(1)]
+
+=== binary/left/demoted-bracketed
+sql:  "? = ?"
+args: [string("[dbo].[2024Orders]"), int(1)]
+
+=== binary/left/demoted-digit-leading
+sql:  "? = ?"
+args: [string("2024Orders.Id"), int(1)]
+
+=== binary/left/demoted-double-quoted
+sql:  "? = ?"
+args: [string("\"Order\""), int(1)]
+
+=== binary/left/demoted-empty
+sql:  "? = ?"
+args: [string(""), int(1)]
+
+=== binary/left/demoted-predicate
+sql:  "? = ?"
+args: [string("a = 1 OR 1=1"), int(1)]
+
+=== binary/left/demoted-space
+sql:  "? = ?"
+args: [string("Order Details"), int(1)]
+
+=== binary/left/dollar-sign
+sql:  "t.col$1 = ?"
+args: [int(1)]
+
+=== binary/left/dotted
+sql:  "users.age = ?"
+args: [int(1)]
+
+=== binary/left/identifier
+sql:  "users.id = ?"
+args: [int(1)]
+
+=== binary/left/identifier-demoted
+sql:  "? = ?"
+args: [string("a = 1 OR 1=1"), int(1)]
+
+=== binary/left/int
+sql:  "? = ?"
+args: [int(7), int(1)]
+
+=== binary/left/nil
+sql:  "? = ?"
+args: [nil, int(1)]
+
+=== binary/left/plain
+sql:  "age = ?"
+args: [int(1)]
+
+=== binary/left/raw
+sql:  "lower(email) = ?"
+args: [int(1)]
+
+=== binary/left/subquery
+sql:  "(SELECT id FROM orders WHERE status = ? LIMIT 1) = ?"
+args: [string("paid"), int(1)]
+
+=== binary/operator/ilike
+sql:  "a ILIKE ?"
+args: [int(1)]
+
+=== binary/operator/is-distinct-from
+sql:  "a IS DISTINCT FROM ?"
+args: [int(1)]
+
+=== binary/operator/jsonb-contains
+sql:  "a @> ?"
+args: [int(1)]
+
+=== binary/operator/less-or-equal
+sql:  "a <= ?"
+args: [int(1)]
+
+=== binary/operator/not-equal-ansi
+sql:  "a <> ?"
+args: [int(1)]
+
+=== binary/operator/not-equal-bang
+sql:  "a != ?"
+args: [int(1)]
+
+=== binary/right/bool-false
+sql:  "a = ?"
+args: [bool(false)]
+
+=== binary/right/bool-true
+sql:  "a = ?"
+args: [bool(true)]
+
+=== binary/right/bytes
+sql:  "a = ?"
+args: [[]uint8([]byte{0x78})]
+
+=== binary/right/float
+sql:  "a = ?"
+args: [float64(1.5)]
+
+=== binary/right/identifier
+sql:  "a = orders.user_id"
+args: nil
+
+=== binary/right/identifier-demoted
+sql:  "a = ?"
+args: [string("2024Orders.Id")]
+
+=== binary/right/int
+sql:  "a = ?"
+args: [int(42)]
+
+=== binary/right/int64
+sql:  "a = ?"
+args: [int64(42)]
+
+=== binary/right/nil
+sql:  "a = ?"
+args: [nil]
+
+=== binary/right/raw
+sql:  "a = NOW()"
+args: nil
+
+=== binary/right/slice-is-one-arg
+sql:  "a = ?"
+args: [[]int{1, 2}]
+
+=== binary/right/string
+sql:  "a = ?"
+args: [string("alice")]
+
+=== binary/right/string-that-looks-like-a-column
+sql:  "a = ?"
+args: [string("b")]
+
+=== binary/right/subquery
+sql:  "a = (SELECT id FROM orders WHERE status = ? LIMIT 1)"
+args: [string("paid")]
+
+=== binary/subqueries-on-both-sides
+sql:  "(SELECT id FROM orders WHERE status = ? LIMIT 1) < (SELECT id FROM refunds WHERE status = ? LIMIT 1)"
+args: [string("left"), string("right")]
+
+=== composite/and
+sql:  "(a = ? AND b = ?)"
+args: [int(1), int(2)]
+
+=== composite/demoted-child-renders
+sql:  "(? = ? OR b = ?)"
+args: [string("a = 1 OR 1=1"), bool(true), int(2)]
+
+=== composite/empty
+sql:  ""
+args: nil
+
+=== composite/empty-child-not-skipped
+sql:  "(a = ? AND )"
+args: [int(1)]
+
+=== composite/empty-conditions-slice
+sql:  ""
+args: nil
+
+=== composite/every-condition-type
+sql:  "(a = ? AND NOT archived AND b IN (?, ?) AND c BETWEEN ? AND ? AND EXISTS (SELECT id FROM orders WHERE status = ? LIMIT 1) AND d LIKE ? ESCAPE '!' AND e IS NOT NULL AND t.f = ?)"
+args: [int(1), int(2), int(3), int(4), int(5), string("paid"), string("x%"), int(6)]
+
+=== composite/nested
+sql:  "(a = ? AND (b = ? OR (c = ? AND d = ?)))"
+args: [int(1), int(2), int(3), int(4)]
+
+=== composite/nil-receiver
+sql:  ""
+args: nil
+
+=== composite/operator-verbatim
+sql:  "(a = ? or b = ?)"
+args: [int(1), int(2)]
+
+=== composite/or
+sql:  "(a = ? OR b = ?)"
+args: [int(1), int(2)]
+
+=== composite/single-child-composite
+sql:  "(a = ? OR b = ?)"
+args: [int(1), int(2)]
+
+=== composite/single-child-is-bare
+sql:  "a = ?"
+args: [int(1)]
+
+=== exists/bound
+sql:  "EXISTS (SELECT id FROM orders WHERE status = ? LIMIT 1)"
+args: [string("paid")]
+
+=== exists/every-clause
+sql:  "EXISTS (SELECT DISTINCT ON (o.user_id) o.user_id, COUNT(*) FROM (SELECT id FROM orders WHERE status = ? LIMIT 1) AS o INNER JOIN users ON users.id = o.user_id LEFT JOIN (SELECT id FROM refunds WHERE status = ? LIMIT 1) AS r ON r.id = o.id AND r.amount > ? CROSS JOIN regions WHERE users.active = ? AND o.deleted_at IS NULL GROUP BY o.user_id HAVING COUNT(*) > ? ORDER BY o.user_id desc, COUNT(*) LIMIT 10 OFFSET 20)"
+args: [string("paid"), string("open"), int(0), bool(true), int(2)]
+
+=== exists/not
+sql:  "NOT EXISTS (SELECT user_id FROM orders)"
+args: nil
+
+=== exists/plain
+sql:  "EXISTS (SELECT user_id FROM orders)"
+args: nil
+
+=== frame/string/frame-end-only
+text: "GROUPS CURRENT ROW"
+
+=== frame/string/frame-start-only
+text: "ROWS BETWEEN UNBOUNDED PRECEDING"
+
+=== frame/string/frame-type-only
+text: "ROWS EXCLUDE TIES"
+
+=== frame/string/frame-unbounded-to-current
+text: "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
+
+=== frame/string/frame-with-offsets
+text: "RANGE BETWEEN PRECEDING 3 AND FOLLOWING 1 day EXCLUDE CURRENT ROW"
+
+=== frame/tosql/frame-end-only
+sql:  "GROUPS AND CURRENT ROW"
+args: nil
+
+=== frame/tosql/frame-start-only
+sql:  "ROWS UNBOUNDED PRECEDING"
+args: nil
+
+=== frame/tosql/frame-type-only
+sql:  "ROWS EXCLUDE TIES"
+args: nil
+
+=== frame/tosql/frame-unbounded-to-current
+sql:  "ROWS UNBOUNDED PRECEDING AND CURRENT ROW"
+args: nil
+
+=== frame/tosql/frame-with-offsets
+sql:  "RANGE PRECEDING 3 AND FOLLOWING 1 day EXCLUDE CURRENT ROW"
+args: [int(3), string("1 day")]
+
+=== framebound/string/int-value
+text: "PRECEDING 2"
+
+=== framebound/string/string-value
+text: "FOLLOWING INTERVAL '1 day'"
+
+=== framebound/string/type-only
+text: "CURRENT ROW"
+
+=== framebound/string/zero-value
+text: "PRECEDING 0"
+
+=== framebound/tosql/int-value
+sql:  "PRECEDING 2"
+args: [int(2)]
+
+=== framebound/tosql/string-value
+sql:  "FOLLOWING INTERVAL '1 day'"
+args: [string("INTERVAL '1 day'")]
+
+=== framebound/tosql/type-only
+sql:  "CURRENT ROW"
+args: nil
+
+=== framebound/tosql/zero-value
+sql:  "PRECEDING 0"
+args: [int(0)]
+
+=== having/composite
+sql:  "(SUM(amount) >= ? AND COUNT(*) < ?)"
+args: [int(100), int(10)]
+
+=== having/demoted-left-renders
+sql:  "? > ?"
+args: [string("COUNT(*)"), int(1)]
+
+=== having/raw-aggregate
+sql:  "COUNT(*) > ?"
+args: [int(1)]
+
+=== having/without-condition
+sql:  ""
+args: nil
+
+=== in/empty-values
+sql:  "id IN ()"
+args: nil
+
+=== in/field-demoted
+sql:  "? IN (?)"
+args: [string("2024Orders.Id"), int(1)]
+
+=== in/field-dotted
+sql:  "users.id IN (?)"
+args: [int(1)]
+
+=== in/field-identifier
+sql:  "users.id IN (?)"
+args: [int(1)]
+
+=== in/field-int
+sql:  "? IN (?)"
+args: [int(7), int(1)]
+
+=== in/field-raw
+sql:  "lower(email) IN (?)"
+args: [string("user@example.com")]
+
+=== in/field-subquery
+sql:  "(SELECT id FROM orders WHERE status = ? LIMIT 1) IN (?, ?)"
+args: [string("paid"), int(1), int(2)]
+
+=== in/ints
+sql:  "id IN (?, ?, ?)"
+args: [int(1), int(2), int(3)]
+
+=== in/mixed-types
+sql:  "id IN (?, ?, ?, ?)"
+args: [int(1), string("two"), int64(3), bool(true)]
+
+=== in/nil-value
+sql:  "id IN (?)"
+args: [nil]
+
+=== in/nil-values
+sql:  "id IN ()"
+args: nil
+
+=== in/not
+sql:  "id NOT IN (?, ?)"
+args: [int(1), int(2)]
+
+=== in/not-empty-values
+sql:  "id NOT IN ()"
+args: nil
+
+=== in/single
+sql:  "id IN (?)"
+args: [int(1)]
+
+=== in/strings
+sql:  "status IN (?, ?)"
+args: [string("a"), string("b")]
+
+=== in/subquery
+sql:  "id IN (SELECT user_id FROM orders)"
+args: nil
+
+=== in/subquery-every-clause
+sql:  "users.id IN (SELECT DISTINCT ON (o.user_id) o.user_id, COUNT(*) FROM (SELECT id FROM orders WHERE status = ? LIMIT 1) AS o INNER JOIN users ON users.id = o.user_id LEFT JOIN (SELECT id FROM refunds WHERE status = ? LIMIT 1) AS r ON r.id = o.id AND r.amount > ? CROSS JOIN regions WHERE users.active = ? AND o.deleted_at IS NULL GROUP BY o.user_id HAVING COUNT(*) > ? ORDER BY o.user_id desc, COUNT(*) LIMIT 10 OFFSET 20)"
+args: [string("paid"), string("open"), int(0), bool(true), int(2)]
+
+=== in/subquery-field-and-subquery-args
+sql:  "(SELECT id FROM orders WHERE status = ? LIMIT 1) IN (SELECT id FROM refunds WHERE status = ? LIMIT 1)"
+args: [string("field"), string("set")]
+
+=== in/subquery-ignores-values
+sql:  "id IN (SELECT user_id FROM orders)"
+args: nil
+
+=== in/subquery-not
+sql:  "id NOT IN (SELECT user_id FROM orders)"
+args: nil
+
+=== isnull/demoted
+sql:  "? IS NULL"
+args: [string("2024Orders.DeletedAt")]
+
+=== isnull/dotted
+sql:  "users.deleted_at IS NULL"
+args: nil
+
+=== isnull/identifier
+sql:  "users.deleted_at IS NULL"
+args: nil
+
+=== isnull/nil
+sql:  "? IS NULL"
+args: [nil]
+
+=== isnull/not
+sql:  "deleted_at IS NOT NULL"
+args: nil
+
+=== isnull/plain
+sql:  "deleted_at IS NULL"
+args: nil
+
+=== isnull/raw
+sql:  "NULLIF(name, '') IS NULL"
+args: nil
+
+=== isnull/subquery
+sql:  "(SELECT id FROM orders WHERE status = ? LIMIT 1) IS NULL"
+args: [string("paid")]
+
+=== like/escape
+sql:  "name LIKE ? ESCAPE '!'"
+args: [string("100!%")]
+
+=== like/escape-backslash
+sql:  "name LIKE ? ESCAPE '\\'"
+args: [string("100!%")]
+
+=== like/escape-multi-char-verbatim
+sql:  "name LIKE ? ESCAPE '!!'"
+args: [string("100!%")]
+
+=== like/escape-not
+sql:  "name NOT LIKE ? ESCAPE '!'"
+args: [string("100!%")]
+
+=== like/escape-quote-verbatim
+sql:  "name LIKE ? ESCAPE '''"
+args: [string("100!%")]
+
+=== like/escape-with-subquery-pattern
+sql:  "name LIKE (SELECT id FROM patterns WHERE status = ? LIMIT 1) ESCAPE '!'"
+args: [string("active")]
+
+=== like/field-demoted
+sql:  "? LIKE ?"
+args: [string("name OR 1=1"), string("a%")]
+
+=== like/field-dotted
+sql:  "users.name LIKE ?"
+args: [string("a%")]
+
+=== like/field-identifier
+sql:  "users.name LIKE ?"
+args: [string("a%")]
+
+=== like/field-raw
+sql:  "lower(name) LIKE ?"
+args: [string("a%")]
+
+=== like/not
+sql:  "name NOT LIKE ?"
+args: [string("a%")]
+
+=== like/pattern-identifier-is-bound
+sql:  "name LIKE ?"
+args: [core.Identifier("other.name")]
+
+=== like/pattern-int-is-bound
+sql:  "code LIKE ?"
+args: [int(5)]
+
+=== like/pattern-nil-is-bound
+sql:  "name LIKE ?"
+args: [nil]
+
+=== like/pattern-raw-is-bound
+sql:  "name LIKE ?"
+args: [core.Raw("'%' || suffix")]
+
+=== like/pattern-string
+sql:  "name LIKE ?"
+args: [string("a%")]
+
+=== like/pattern-subquery
+sql:  "name LIKE (SELECT id FROM patterns WHERE status = ? LIMIT 1)"
+args: [string("active")]
+
+=== orderby/string/empty
+text: ""
+
+=== orderby/string/fields
+text: "a DESC, b, lower(c) sideways"
+
+=== raw/dot-column
+sql:  "users.id = ?"
+args: [int(5)]
+
+=== raw/dot-column-digit-leading-table
+sql:  "2024Orders.Id = ?"
+args: [int(1)]
+
+=== raw/dot-column-equals-dot-dot
+sql:  "tags.id = post_tags.tag_id"
+args: []
+
+=== raw/dot-column-extra-args-appended
+sql:  "t.id = ?"
+args: [int(1), int(2)]
+
+=== raw/dot-column-fewer-values-than-placeholders
+sql:  "t.id = ? AND b = ?"
+args: [int(1)]
+
+=== raw/dot-column-int-table-arg
+sql:  "7.id = 1"
+args: []
+
+=== raw/dot-column-no-value-placeholders
+sql:  "users.id IS NOT NULL"
+args: []
+
+=== raw/dot-column-with-digits-and-underscore
+sql:  "t.user_id2 > ?"
+args: [int(1)]
+
+=== raw/dot-dot
+sql:  "users.id = ?"
+args: [int(5)]
+
+=== raw/dot-dot-identifier-typed-args
+sql:  "users.id = 1"
+args: []
+
+=== raw/dot-quoted-column
+sql:  "t.\"Id\" = ?"
+args: [int(1)]
+
+=== raw/fast-path/args
+sql:  "a = ? AND b = ?"
+args: [int(1), string("two")]
+
+=== raw/fast-path/digit-leading-verbatim
+sql:  "[dbo].[2024Orders].[Id] = ?"
+args: [int(1)]
+
+=== raw/fast-path/empty-args
+sql:  "a = 1"
+args: []
+
+=== raw/fast-path/empty-sql
+sql:  ""
+args: nil
+
+=== raw/fast-path/fewer-args-than-placeholders
+sql:  "a = ? AND b = ?"
+args: [int(1)]
+
+=== raw/fast-path/ilike-verbatim
+sql:  "email ILIKE ?"
+args: [string("%@example.com")]
+
+=== raw/fast-path/more-args-than-placeholders
+sql:  "a = ?"
+args: [int(1), int(2)]
+
+=== raw/fast-path/no-args
+sql:  "a = 1"
+args: nil
+
+=== raw/nil-receiver
+sql:  ""
+args: nil
+
+=== raw/several-dot-placeholders
+sql:  "x.a = y.b AND z.c = ?"
+args: [int(1)]
+
+=== raw/value-before-dot-column
+sql:  "? < events.created_at"
+args: [int(5)]
+
+=== subquery/ctes-unions-windows-returning-dropped
+sql:  "EXISTS (SELECT a FROM t)"
+args: nil
+
+=== subquery/distinct-on-needs-distinct-flag
+sql:  "EXISTS (SELECT a, b FROM t)"
+args: nil
+
+=== subquery/every-clause
+sql:  "EXISTS (SELECT DISTINCT ON (o.user_id) o.user_id, COUNT(*) FROM (SELECT id FROM orders WHERE status = ? LIMIT 1) AS o INNER JOIN users ON users.id = o.user_id LEFT JOIN (SELECT id FROM refunds WHERE status = ? LIMIT 1) AS r ON r.id = o.id AND r.amount > ? CROSS JOIN regions WHERE users.active = ? AND o.deleted_at IS NULL GROUP BY o.user_id HAVING COUNT(*) > ? ORDER BY o.user_id desc, COUNT(*) LIMIT 10 OFFSET 20)"
+args: [string("paid"), string("open"), int(0), bool(true), int(2)]
+
+=== subquery/from-alias-dropped
+sql:  "EXISTS (SELECT a FROM t)"
+args: nil
+
+=== subquery/from-digit-leading-table-verbatim
+sql:  "EXISTS (SELECT Id FROM [dbo].[2024Orders])"
+args: nil
+
+=== subquery/from-subquery
+sql:  "EXISTS (SELECT x.id FROM (SELECT id FROM orders WHERE status = ? LIMIT 1) AS x)"
+args: [string("paid")]
+
+=== subquery/group-by
+sql:  "EXISTS (SELECT a, COUNT(*) FROM t GROUP BY a, b)"
+args: nil
+
+=== subquery/group-by-modifiers-dropped
+sql:  "EXISTS (SELECT a FROM t GROUP BY a)"
+args: nil
+
+=== subquery/group-by-only-modifiers
+sql:  "EXISTS (SELECT a FROM t GROUP BY )"
+args: nil
+
+=== subquery/having
+sql:  "EXISTS (SELECT a FROM t HAVING COUNT(*) > ?)"
+args: [int(1)]
+
+=== subquery/having-without-condition
+sql:  "EXISTS (SELECT a FROM t)"
+args: nil
+
+=== subquery/join-dot-placeholders
+sql:  "EXISTS (SELECT a FROM t INNER JOIN post_tags ON t.id = post_tags.tag_id)"
+args: nil
+
+=== subquery/join-lateral
+sql:  "EXISTS (SELECT a FROM t LATERAL JOIN (SELECT user_id FROM orders) AS l ON true)"
+args: nil
+
+=== subquery/join-subquery
+sql:  "EXISTS (SELECT a FROM t LEFT JOIN (SELECT id FROM orders WHERE status = ? LIMIT 1) AS s ON s.id = t.id)"
+args: [string("paid")]
+
+=== subquery/join-table
+sql:  "EXISTS (SELECT a FROM t INNER JOIN u ON u.id = t.u_id)"
+args: nil
+
+=== subquery/join-table-alias-dropped
+sql:  "EXISTS (SELECT a FROM t INNER JOIN users ON u.id = t.u_id)"
+args: nil
+
+=== subquery/join-without-condition
+sql:  "EXISTS (SELECT a FROM t CROSS JOIN u NATURAL JOIN v)"
+args: nil
+
+=== subquery/limit
+sql:  "EXISTS (SELECT a FROM t LIMIT 5)"
+args: nil
+
+=== subquery/limit-and-offset
+sql:  "EXISTS (SELECT a FROM t LIMIT 5 OFFSET 10)"
+args: nil
+
+=== subquery/limit-zero
+sql:  "EXISTS (SELECT a FROM t LIMIT 0)"
+args: nil
+
+=== subquery/nested-three-deep
+sql:  "EXISTS (SELECT a FROM t WHERE a IN (SELECT b FROM t WHERE EXISTS (SELECT id FROM deepest WHERE status = ? LIMIT 1) LIMIT 3))"
+args: [string("x")]
+
+=== subquery/no-from-clause
+sql:  "EXISTS (SELECT 1)"
+args: nil
+
+=== subquery/no-select-clause
+sql:  "EXISTS ( FROM t)"
+args: nil
+
+=== subquery/offset-without-limit
+sql:  "EXISTS (SELECT a FROM t OFFSET 5)"
+args: nil
+
+=== subquery/order-by-empty
+sql:  "EXISTS (SELECT a FROM t ORDER BY )"
+args: nil
+
+=== subquery/order-by-limit-offset
+sql:  "EXISTS (SELECT a FROM t ORDER BY a DESC LIMIT 1 OFFSET 0)"
+args: nil
+
+=== subquery/order-by-verbatim
+sql:  "EXISTS (SELECT a FROM t ORDER BY a desc, lower(name) sideways, b, c || d ASC)"
+args: nil
+
+=== subquery/select-distinct
+sql:  "EXISTS (SELECT DISTINCT a FROM t)"
+args: nil
+
+=== subquery/select-distinct-on
+sql:  "EXISTS (SELECT DISTINCT ON (a) a, b FROM t)"
+args: nil
+
+=== subquery/where-or
+sql:  "EXISTS (SELECT a FROM t WHERE a = ? OR b = ?)"
+args: [int(1), int(2)]
+
+=== subquery/where-without-conditions
+sql:  "EXISTS (SELECT a FROM t)"
+args: nil
+
+=== unary/exists-subquery
+sql:  "EXISTS (SELECT id FROM orders WHERE status = ? LIMIT 1)"
+args: [string("paid")]
+
+=== unary/minus-int
+sql:  "- ?"
+args: [int(5)]
+
+=== unary/not-demoted
+sql:  "NOT ?"
+args: [string("a OR 1=1")]
+
+=== unary/not-dotted
+sql:  "NOT users.active"
+args: nil
+
+=== unary/not-identifier
+sql:  "NOT users.active"
+args: nil
+
+=== unary/not-plain
+sql:  "NOT active"
+args: nil
+
+=== unary/not-raw
+sql:  "NOT (a OR b)"
+args: nil
+
+=== where/and
+sql:  "a = ? AND b = ?"
+args: [int(1), int(2)]
+
+=== where/composite-part
+sql:  "a = ? AND (b = ? OR c = ?)"
+args: [int(1), int(2), int(3)]
+
+=== where/demoted-part-renders
+sql:  "? = ?"
+args: [string("a = 1 OR 1=1"), bool(true)]
+
+=== where/dot-placeholders
+sql:  "users.id = ? AND b = ?"
+args: [int(1), int(2)]
+
+=== where/empty
+sql:  ""
+args: nil
+
+=== where/empty-operator
+sql:  "a = ?  b = ?"
+args: [int(1), int(2)]
+
+=== where/empty-part-not-skipped
+sql:  "a = ? AND "
+args: [int(1)]
+
+=== where/or
+sql:  "a = ? OR b = ?"
+args: [int(1), int(2)]
+
+=== where/single
+sql:  "a = ?"
+args: [int(1)]
+
+=== where/subquery-part
+sql:  "id IN (SELECT id FROM orders WHERE status = ? LIMIT 1)"
+args: [string("paid")]
+
+=== window/string/empty
+text: ""
+
+=== window/string/frame-end-only
+text: "GROUPS CURRENT ROW"
+
+=== window/string/frame-start-only
+text: "ROWS BETWEEN UNBOUNDED PRECEDING"
+
+=== window/string/frame-type-only
+text: "ROWS EXCLUDE TIES"
+
+=== window/string/frame-unbounded-to-current
+text: "PARTITION BY user_id ORDER BY created_at ASC ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW"
+
+=== window/string/frame-with-offsets
+text: "ORDER BY id ASC RANGE BETWEEN PRECEDING 3 AND FOLLOWING 1 day EXCLUDE CURRENT ROW"
+
+=== window/string/order
+text: "ORDER BY created_at DESC, id asc"
+
+=== window/string/order-raw-flag-ignored
+text: "ORDER BY a || b DESC"
+
+=== window/string/order-without-direction
+text: "ORDER BY id "
+
+=== window/string/partition
+text: "PARTITION BY user_id, region"
+
+=== window/string/partition-non-identifier-verbatim
+text: "PARTITION BY lower(name), 2024Orders.Id"
+
+=== window/tosql/empty
+sql:  ""
+args: nil
+
+=== window/tosql/frame-end-only
+sql:  "GROUPS AND CURRENT ROW"
+args: nil
+
+=== window/tosql/frame-start-only
+sql:  "ROWS UNBOUNDED PRECEDING"
+args: nil
+
+=== window/tosql/frame-type-only
+sql:  "ROWS EXCLUDE TIES"
+args: nil
+
+=== window/tosql/frame-unbounded-to-current
+sql:  "PARTITION BY user_id ORDER BY created_at ASC ROWS UNBOUNDED PRECEDING AND CURRENT ROW"
+args: nil
+
+=== window/tosql/frame-with-offsets
+sql:  "ORDER BY id ASC RANGE PRECEDING 3 AND FOLLOWING 1 day EXCLUDE CURRENT ROW"
+args: [int(3), string("1 day")]
+
+=== window/tosql/order
+sql:  "ORDER BY created_at DESC, id asc"
+args: nil
+
+=== window/tosql/order-raw-flag-ignored
+sql:  "ORDER BY a || b DESC"
+args: nil
+
+=== window/tosql/order-without-direction
+sql:  "ORDER BY id "
+args: nil
+
+=== window/tosql/partition
+sql:  "PARTITION BY user_id, region"
+args: nil
+
+=== window/tosql/partition-non-identifier-verbatim
+sql:  "PARTITION BY lower(name), 2024Orders.Id"
+args: nil
