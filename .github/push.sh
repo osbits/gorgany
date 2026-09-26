@@ -76,4 +76,23 @@ fi
 echo "Running container to perform GitHub push via Docker..."
 docker run "${RUN_ARGS[@]}" "$IMAGE_NAME" "${CMD[@]}"
 
-echo "Done."
+# The push publishes rewritten history to github/develop. Archive the local
+# develop that was pushed from, then check out that published branch.
+ARCHIVE_BRANCH="develop-$(date +%y%m%d%H%M)"
+if ! git -C "$REPO_DIR" show-ref --verify --quiet refs/heads/develop; then
+  echo "Local branch develop not found; cannot archive it." >&2
+  exit 1
+fi
+if git -C "$REPO_DIR" show-ref --verify --quiet "refs/heads/${ARCHIVE_BRANCH}"; then
+  echo "Local branch ${ARCHIVE_BRANCH} already exists; refusing to rename develop." >&2
+  exit 1
+fi
+
+echo "Renaming local branch develop to ${ARCHIVE_BRANCH}"
+git -C "$REPO_DIR" branch -m develop "${ARCHIVE_BRANCH}"
+
+echo "Fetching fresh develop from github"
+git -C "$REPO_DIR" fetch github
+git -C "$REPO_DIR" checkout -b develop --track github/develop
+
+echo "Done. Local develop now tracks github/develop; previous develop is ${ARCHIVE_BRANCH}."
