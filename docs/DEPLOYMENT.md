@@ -310,6 +310,7 @@ services:
     <<: *app
     ports: ["127.0.0.1:8080:8080"]
     volumes: [uploads:/app/resource/public/storage]
+    stop_grace_period: 40s             # longer than app.server.timeout.shutdown
 
   migrate:
     <<: *app
@@ -425,15 +426,29 @@ row each time.
   `message.Context().Value(core.MessageContextKey).(core.IMessageContext).GetRequestId()`, but
   the framework neither sends it back nor logs it. An application that wants correlation adds a
   filter that sets `X-Request-Id` on the response and puts the ID in every log line.
-- **Shutdown drops in-flight requests.**
-  - On `SIGTERM`, the server calls `http.Server.Shutdown(context.Background())`.
-  - The goroutine running `ListenAndServe` treats the resulting `http.ErrServerClosed` as fatal
-    and panics. With requests in flight, the process exits with status 2 and those requests
-    are cut off.
-  - The scheduler and the event bus are not drained either.
+- **Shutdown drains, within `app.server.timeout.shutdown` (default `30s`).** On `SIGTERM` or
+  `SIGINT` the server does four things in order:
+  1. It stops accepting connections and waits for in-flight requests.
+  2. It stops `JobProvider`'s scheduler, which cancels the context each running job was given,
+     and waits for the jobs to return.
+  3. It waits for the async subscribers of the bound `core.IEventBus`. Requests and jobs both
+     start them.
+  4. It closes `DbProvider`'s datasources.
 
-  Until the framework ignores `http.ErrServerClosed`, take an instance out of rotation first:
-  drain it at the load balancer, or fail `/readyz`. Then send the signal.
+  When all four finish in time, the process exits `0`. At the deadline it closes the
+  connections still open and leaves the datasources open, logs what it stopped waiting for,
+  and exits `1`. A second signal ends the process at once. Goroutines the application started
+  itself are not waited for.
+  - **The orchestrator's grace period must be longer than the timeout**, or it sends `SIGKILL`
+    first. Compose and `docker stop` wait 10 seconds by default, so give the `app` service
+    `stop_grace_period: 40s`. Kubernetes waits 30 seconds: raise
+    `terminationGracePeriodSeconds`, or lower the timeout.
+  - **The listener closes as soon as the signal arrives**, and new connections are refused. A
+    load balancer that has not noticed yet still sends them. With several replicas, take the
+    instance out of rotation first, then send the signal: drain it at the load balancer, or
+    give Kubernetes a `preStop` delay.
+  - **Hijacked connections are not waited for.** A handler that calls `Hijack`, a WebSocket for
+    example, owns its connection, and the process exit ends it.
 
 ## `scripts/`
 

@@ -535,10 +535,11 @@ soon as any service publishes. A console command that calls that service needs a
   in `pkg/event`, with typed accessors: `event.WithNoteCreated(ctx, p)` and
   `event.NoteCreatedFrom(ctx)`.
 - **Publishing an event with no subscriber is an error.** Check what `Publish` returns.
-- **Async subscribers run on the publisher's context, and nothing waits for them.** Publish
-  from a request with `context.WithoutCancel(ctx)`, or the subscriber's queries fail once the
-  response is written. A console command that publishes calls `bus.WaitAsync()` before it
-  returns.
+- **Async subscribers run on the publisher's context, and only the server's shutdown waits
+  for them.** Publish from a request with `context.WithoutCancel(ctx)`, or the subscriber's
+  queries fail once the response is written. The server waits for them after the requests and
+  jobs have drained, within `app.server.timeout.shutdown`. The console does not, so a command
+  that publishes calls `bus.WaitAsync()` before it returns.
 
 ## Migrations and seeders
 

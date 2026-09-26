@@ -42,8 +42,8 @@ func (p *JobProvider) AddJob(ctor func() core.IJob) {
 	p.ctors = append(p.ctors, ctor)
 }
 
-// Scheduler returns the scheduler this provider manages, so an app can Stop() it at
-// shutdown.
+// Scheduler returns the scheduler this provider manages. ServerApp stops it on shutdown;
+// an app that serves some other way calls Stop() itself.
 func (p *JobProvider) Scheduler() *job.Scheduler {
 	return p.scheduler
 }

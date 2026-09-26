@@ -7,6 +7,51 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [2.3.2] — 2026-09-26
+
+### Added
+
+- `app.server.timeout.shutdown` (`app.ConfigShutdownTimeout`, default `30s`) bounds a
+  graceful shutdown. `app.ShutdownTimeout()` returns the value in effect.
+- `db.DBContext.Close()` closes every registered datasource and reports each failure.
+
+### Changed
+
+- On `SIGTERM` or `SIGINT`, `ServerApp` now drains in order: in-flight requests,
+  `JobProvider`'s scheduler, then the async subscribers of the bound `core.IEventBus`. After
+  that it closes `DbProvider`'s datasources, all within the shutdown timeout.
+  - Stopping the scheduler cancels the context each running job was given, which
+    `core.IJob.Run` documented and nothing did.
+  - At the deadline the server closes the connections still open and leaves the datasources
+    open. It logs what it stopped waiting for and exits `1`. A clean shutdown exits `0`.
+  - A second signal ends the process at once.
+  - Before, `Shutdown` had no deadline and nothing stopped the scheduler or waited for the
+    bus.
+
+  **Deployment note:** give the orchestrator a grace period longer than the timeout.
+  Compose and `docker stop` default to 10 seconds, so set `stop_grace_period` on the app
+  service. The template's `deploy/compose.prod.yml` now sets `40s`.
+- `ServerApp.Shutdown` can be called more than once, and concurrently. Later callers wait
+  for the first drain and return its result. When application code calls it, `Run` waits
+  for that drain before returning.
+- `ConsoleApp` with no command now exits `2`, and says so on stderr, before booting. It
+  printed a message and exited `0`, so a deploy step that lost its arguments passed.
+
+### Fixed
+
+- Every shutdown logged `Error while the http server is running: http: Server closed`
+  through `Panicf`. `ListenAndServe` returns `http.ErrServerClosed` as soon as `Shutdown`
+  begins, and the serving goroutine treated it as fatal. With a request in flight the panic
+  won the race: the process exited with status 2 and the request got no response.
+  `ErrServerClosed` is now the normal end of serving. `app/shutdown_signal_test.go` sends a
+  real `SIGTERM` mid-request to a child process to pin this down.
+- `ServerApp.Run` assigned `httpServer` on the serving goroutine and `Shutdown` read it on
+  the main one. That was a data race, and a signal that arrived before the goroutine ran
+  would have found nil. The server is now built before serving starts. A port that cannot be bound is reported from `Run`, not from a
+  goroutine.
+
+---
+
 ## [2.3.1] — 2026-09-26
 
 ### Security
