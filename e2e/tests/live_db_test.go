@@ -204,6 +204,13 @@ const engineWait = 10 * time.Second
 
 // waitForDatasource retries until the engine accepts connections, then skips — or fails,
 // when the caller demanded a real run.
+//
+// Close what it returns with t.Cleanup, registered before any cleanup that uses the
+// connection — never with defer. Deferred calls run when the test function returns, which
+// is before any cleanup, so a deferred Close shut the handle the drop-table cleanups then
+// ran through: every drop failed, nothing checked, and the tables outlived the run. The
+// suite still passed, because each test also drops at its start. Cleanups run last-in,
+// first-out, so a Close registered first runs last.
 func waitForDatasource(t *testing.T, build func() (dbCore.IDataSource, error)) dbCore.IDataSource {
 	t.Helper()
 
@@ -368,12 +375,12 @@ func TestT14_SearchPathConnectsIntoThatSchema(t *testing.T) {
 	admin := waitForDatasource(t, func() (dbCore.IDataSource, error) {
 		return pgv2.NewDataSource(pgConfig())
 	})
-	defer admin.Close()
+	t.Cleanup(func() { admin.Close() })
 
 	adminGorm := gormOf(t, admin)
 	require.NoError(t, adminGorm.Exec(`DROP SCHEMA IF EXISTS tenant_a CASCADE`).Error)
 	require.NoError(t, adminGorm.Exec(`CREATE SCHEMA tenant_a`).Error)
-	t.Cleanup(func() { adminGorm.Exec(`DROP SCHEMA IF EXISTS tenant_a CASCADE`) })
+	t.Cleanup(func() { assert.NoError(t, adminGorm.Exec(`DROP SCHEMA IF EXISTS tenant_a CASCADE`).Error) })
 
 	// A datasource pointed at that schema.
 	cfg, err := dsconfig.Parse(pgConfig())
@@ -420,11 +427,11 @@ func TestT15_SessionsMigrationOnMySQL(t *testing.T) {
 	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
 		return mysqlv2.NewDataSource(mysqlConfig())
 	})
-	defer ds.Close()
+	t.Cleanup(func() { ds.Close() })
 
 	gormDb := gormOf(t, ds)
 	require.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS sessions`).Error)
-	t.Cleanup(func() { gormDb.Exec(`DROP TABLE IF EXISTS sessions`) })
+	t.Cleanup(func() { assert.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS sessions`).Error) })
 
 	m := migration.NewSessionsMigration()
 
@@ -464,11 +471,11 @@ func TestT15_SessionsMigrationOnPostgres(t *testing.T) {
 	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
 		return pgv2.NewDataSource(pgConfig())
 	})
-	defer ds.Close()
+	t.Cleanup(func() { ds.Close() })
 
 	gormDb := gormOf(t, ds)
 	require.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS sessions CASCADE`).Error)
-	t.Cleanup(func() { gormDb.Exec(`DROP TABLE IF EXISTS sessions CASCADE`) })
+	t.Cleanup(func() { assert.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS sessions CASCADE`).Error) })
 
 	m := migration.NewSessionsMigration()
 
@@ -493,11 +500,11 @@ func TestT15_SessionsMigrationOnPostgres(t *testing.T) {
 // one is visible as a table in the wrong database.
 func TestT16_MigrateTargetsOnlyTheSelectedDatasource(t *testing.T) {
 	pg := waitForDatasource(t, func() (dbCore.IDataSource, error) { return pgv2.NewDataSource(pgConfig()) })
-	defer pg.Close()
+	t.Cleanup(func() { pg.Close() })
 
 	secondary, _ := secondaryConfig(t)
 	my := secondaryDataSource(t, secondary)
-	defer my.Close()
+	t.Cleanup(func() { my.Close() })
 
 	pgGorm := gormOf(t, pg)
 	myGorm := gormOf(t, my)
@@ -509,9 +516,9 @@ func TestT16_MigrateTargetsOnlyTheSelectedDatasource(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		for _, g := range []*gorm.DB{pgGorm, myGorm} {
-			g.Exec(`DROP TABLE IF EXISTS creatio_only`)
-			g.Exec(`DROP TABLE IF EXISTS default_only`)
-			g.Migrator().DropTable(&db.Migration{})
+			assert.NoError(t, g.Exec(`DROP TABLE IF EXISTS creatio_only`).Error)
+			assert.NoError(t, g.Exec(`DROP TABLE IF EXISTS default_only`).Error)
+			assert.NoError(t, g.Migrator().DropTable(&db.Migration{}))
 		}
 	})
 
@@ -559,13 +566,13 @@ func TestMySQLQueriesRoundTripThroughTheDialect(t *testing.T) {
 	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
 		return mysqlv2.NewDataSource(mysqlConfig())
 	})
-	defer ds.Close()
+	t.Cleanup(func() { ds.Close() })
 
 	gormDb := gormOf(t, ds)
 	require.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS dialect_probe`).Error)
 	require.NoError(t, gormDb.Exec(
 		"CREATE TABLE dialect_probe (id INT PRIMARY KEY, region VARCHAR(50), name VARCHAR(50), amount INT)").Error)
-	t.Cleanup(func() { gormDb.Exec(`DROP TABLE IF EXISTS dialect_probe`) })
+	t.Cleanup(func() { assert.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS dialect_probe`).Error) })
 
 	session, err := ds.NewSession()
 	require.NoError(t, err)
@@ -663,12 +670,12 @@ func TestUtf8mb4RoundTrip(t *testing.T) {
 	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
 		return mysqlv2.NewDataSource(mysqlConfig())
 	})
-	defer ds.Close()
+	t.Cleanup(func() { ds.Close() })
 
 	gormDb := gormOf(t, ds)
 	require.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS charset_probe`).Error)
 	require.NoError(t, gormDb.Exec(`CREATE TABLE charset_probe (id INT PRIMARY KEY, note VARCHAR(50))`).Error)
-	t.Cleanup(func() { gormDb.Exec(`DROP TABLE IF EXISTS charset_probe`) })
+	t.Cleanup(func() { assert.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS charset_probe`).Error) })
 
 	const fourByte = "hello 🌍"
 	require.NoError(t, gormDb.Exec(`INSERT INTO charset_probe VALUES (1, ?)`, fourByte).Error)
@@ -786,13 +793,13 @@ func TestT17_MigrateDownActuallyRollsBack(t *testing.T) {
 	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
 		return pgv2.NewDataSource(pgConfig())
 	})
-	defer ds.Close()
+	t.Cleanup(func() { ds.Close() })
 
 	gormDb := gormOf(t, ds)
 	reset := func() {
-		gormDb.Exec(`DROP TABLE IF EXISTS step_one`)
-		gormDb.Exec(`DROP TABLE IF EXISTS step_two`)
-		gormDb.Migrator().DropTable(&db.Migration{})
+		assert.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS step_one`).Error)
+		assert.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS step_two`).Error)
+		assert.NoError(t, gormDb.Migrator().DropTable(&db.Migration{}))
 	}
 	reset()
 	t.Cleanup(reset)
@@ -842,13 +849,13 @@ func TestT17_StepsRollsBackSeveralAtOnce(t *testing.T) {
 	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
 		return pgv2.NewDataSource(pgConfig())
 	})
-	defer ds.Close()
+	t.Cleanup(func() { ds.Close() })
 
 	gormDb := gormOf(t, ds)
 	reset := func() {
-		gormDb.Exec(`DROP TABLE IF EXISTS step_one`)
-		gormDb.Exec(`DROP TABLE IF EXISTS step_two`)
-		gormDb.Migrator().DropTable(&db.Migration{})
+		assert.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS step_one`).Error)
+		assert.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS step_two`).Error)
+		assert.NoError(t, gormDb.Migrator().DropTable(&db.Migration{}))
 	}
 	reset()
 	t.Cleanup(reset)
@@ -875,12 +882,12 @@ func TestT17_RollbackIsTransactional(t *testing.T) {
 	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
 		return pgv2.NewDataSource(pgConfig())
 	})
-	defer ds.Close()
+	t.Cleanup(func() { ds.Close() })
 
 	gormDb := gormOf(t, ds)
 	reset := func() {
-		gormDb.Exec(`DROP TABLE IF EXISTS step_one`)
-		gormDb.Migrator().DropTable(&db.Migration{})
+		assert.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS step_one`).Error)
+		assert.NoError(t, gormDb.Migrator().DropTable(&db.Migration{}))
 	}
 	reset()
 	t.Cleanup(reset)
@@ -1056,8 +1063,8 @@ func resetMigrateUpProbe(t *testing.T, gormDb *gorm.DB) {
 	t.Helper()
 
 	reset := func() {
-		gormDb.Exec(`DROP TABLE IF EXISTS ` + migrateUpProbe)
-		gormDb.Migrator().DropTable(&db.Migration{})
+		assert.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS `+migrateUpProbe).Error)
+		assert.NoError(t, gormDb.Migrator().DropTable(&db.Migration{}))
 	}
 	reset()
 	t.Cleanup(reset)
@@ -1182,7 +1189,7 @@ func createOrmSchema(t *testing.T, gormDb *gorm.DB, dialect string) {
 func dropOrmSchema(t *testing.T, gormDb *gorm.DB) {
 	t.Helper()
 	for _, table := range []string{"orm_widget_tags", "orm_widgets", "orm_tags"} {
-		gormDb.Exec("DROP TABLE IF EXISTS " + table)
+		assert.NoError(t, gormDb.Exec("DROP TABLE IF EXISTS "+table).Error)
 	}
 }
 
@@ -1346,13 +1353,13 @@ func TestTheUpsertOptInWorksThroughTheConfig(t *testing.T) {
 	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
 		return mysqlv2.NewDataSource(config)
 	})
-	defer ds.Close()
+	t.Cleanup(func() { ds.Close() })
 
 	gormDb := gormOf(t, ds)
 	require.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS upsert_optin_probe`).Error)
 	require.NoError(t, gormDb.Exec(
 		"CREATE TABLE upsert_optin_probe (id INT PRIMARY KEY, amount INT)").Error)
-	t.Cleanup(func() { gormDb.Exec(`DROP TABLE IF EXISTS upsert_optin_probe`) })
+	t.Cleanup(func() { assert.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS upsert_optin_probe`).Error) })
 
 	session, err := ds.NewSession()
 	require.NoError(t, err)
@@ -1416,7 +1423,7 @@ func sweepProbe(t *testing.T, gormDb *gorm.DB, expired int) {
 
 	require.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS sessions`).Error)
 	require.NoError(t, migration.NewSessionsMigration().Up()(gormDb))
-	t.Cleanup(func() { gormDb.Exec(`DROP TABLE IF EXISTS sessions`) })
+	t.Cleanup(func() { assert.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS sessions`).Error) })
 
 	for i := 0; i < expired; i++ {
 		require.NoError(t, gormDb.Exec(
@@ -1473,7 +1480,7 @@ func TestTheSessionSweepBatchesOnPostgres(t *testing.T) {
 	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
 		return pgv2.NewDataSource(pgConfig())
 	})
-	defer ds.Close()
+	t.Cleanup(func() { ds.Close() })
 
 	gormDb := gormOf(t, ds)
 	sweepProbe(t, gormDb, 25)
@@ -1490,7 +1497,7 @@ func TestTheSessionSweepBatchesOnMySQL(t *testing.T) {
 	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
 		return mysqlv2.NewDataSource(mysqlConfig())
 	})
-	defer ds.Close()
+	t.Cleanup(func() { ds.Close() })
 
 	gormDb := gormOf(t, ds)
 	sweepProbe(t, gormDb, 25)
@@ -1509,7 +1516,7 @@ func TestASweepWithNothingExpiredIsOneStatement(t *testing.T) {
 	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
 		return pgv2.NewDataSource(pgConfig())
 	})
-	defer ds.Close()
+	t.Cleanup(func() { ds.Close() })
 
 	gormDb := gormOf(t, ds)
 	sweepProbe(t, gormDb, 0)
