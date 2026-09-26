@@ -1,0 +1,43 @@
+# The e2e images (e2e/docker-compose.yml, and CI's `docker build -f e2e/Dockerfile .`)
+# use the repository root as their context and `COPY . .`, so whatever is not listed
+# here is sent to the daemon and baked into the image, git-ignored or not.
+#
+# This is a denylist, not the allowlist docs/DEPLOYMENT.md recommends for an
+# application: the image compiles every framework package plus e2e/ and testsupport/,
+# and an allowlist would have to name each top-level package and go stale whenever
+# one is added.
+
+# Version control, editor and agent state. .claude holds worktrees, which are whole
+# copies of the tree, secrets included.
+.git
+.idea
+.vscode
+.claude
+**/.DS_Store
+
+# Keys and credentials, wherever they sit. Git-ignoring a key does not keep it out of
+# a build context; this does. id_* is SSH key naming; Go sources that happen to share
+# the prefix are let back in.
+**/id_*
+!**/id_*.go
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/.netrc
+**/.git-credentials
+
+# Environment files hold local credentials. The fixture app's .env is tracked, holds
+# only throwaway values for the compose stack, and is what the fixture app boots from.
+**/.env
+**/.env.*
+!e2e/fixture-app/.env
+
+# Patches, and the application template: its own Go module, outside ./..., which
+# the e2e image never builds.
+*.patch
+docs/app-template
+
+# Output the unit tests leave in package directories (git-ignored as */resource).
+# The framework's own resource/ at the root is kept.
+*/resource

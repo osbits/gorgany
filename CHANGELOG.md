@@ -7,6 +7,28 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [2.3.1] — 2026-09-26
+
+### Security
+
+- The e2e image no longer carries the working tree. `e2e/docker-compose.yml` (and CI's
+  `docker build -f e2e/Dockerfile .`) build with the repository root as the context and
+  `COPY . .`, and there was no root `.dockerignore`, so a local `sh e2e/run.sh` sent the
+  whole checkout to the daemon and baked it into the image: `.git`, IDE and agent state
+  (`.claude` worktrees are whole copies of the tree), `.env` files, and git-ignored private
+  keys at the root. A root `.dockerignore` now excludes version-control, editor and agent
+  state, anything key-like (`id_*`, `*.pem`, `*.key`, `*.p12`, `*.pfx`, `.netrc`,
+  `.git-credentials`), every `.env` except the tracked `e2e/fixture-app/.env`, patches,
+  `docs/app-template` (its own module, which the image never builds), and the `*/resource`
+  output unit tests leave behind. What reaches the daemon is now the tracked tree, less the
+  patch and `docs/app-template`. It is a denylist rather than the allowlist
+  `docs/DEPLOYMENT.md` recommends for applications, because the image compiles every
+  framework package and an allowlist would go stale with each new one. Images and build cache from earlier local runs still hold what
+  was in the tree then: remove the `e2e-*` images and run `docker builder prune`, and rotate
+  any key that was in the checkout if such an image ever left the machine.
+
+---
+
 ## [2.3.0] — 2026-09-26
 
 ### Added
