@@ -1,7 +1,28 @@
 #!/bin/sh
+# Runs the dockerised e2e suite, the fixture app and the live engines, from the repository
+# root. The exit status is the suite's. Each run is its own compose project, torn down on exit:
+#
+#   sh e2e/run.sh                                     a project of its own, gorgany-e2e-<pid>
+#   COMPOSE_PROJECT_NAME=e2e-$RUN_ID sh e2e/run.sh    a project the caller names, as CI may
 set -eu
 
 compose_file="e2e/docker-compose.yml"
+
+# Without a name Compose derives the project from the compose file's directory, so every
+# checkout and every git worktree of this repository ran as the same project, `e2e`. A run
+# begins with `down -v` on its project and its exit trap does it again, so a run started in
+# one worktree deleted the containers and volumes of a run still going in another, which then
+# failed part-way through for no fault of its own. The compose file publishes no host ports,
+# so the project name is the only thing two runs can collide on.
+#
+# The default is keyed on this shell's PID, which no two scripts running at once on one host
+# share, so two runs in the same checkout are kept apart as well. A name the caller sets is
+# kept, and exported it reaches every `docker compose` below, the trap's included. Jobs in
+# separate PID namespaces that share one Docker daemon can draw the same PID, and should
+# name their projects.
+: "${COMPOSE_PROJECT_NAME:=gorgany-e2e-$$}"
+export COMPOSE_PROJECT_NAME
+printf 'e2e harness: compose project %s\n' "$COMPOSE_PROJECT_NAME" >&2
 
 # cleanup carries the real outcome out of the trap instead of leaving it to the shell.
 #
@@ -27,13 +48,24 @@ cleanup() {
     docker compose -f "$compose_file" logs --no-color --timestamps --tail=200 >&2 || true
   fi
 
-  docker compose -f "$compose_file" down -v --remove-orphans >/dev/null 2>&1 || true
+  # The four images this run built are tagged with its project name, so with a name per run
+  # they would pile up, four a run; --rmi local removes them. The pulled engine images carry
+  # tags of their own and are kept.
+  docker compose -f "$compose_file" down -v --remove-orphans --rmi local >/dev/null 2>&1 || true
 
   exit "$status"
 }
 
 trap cleanup EXIT
+# dash, /bin/sh on Debian and Ubuntu and so on CI, skips the EXIT trap when a signal kills
+# the script. A shared project name hid that, because the next run's opening `down` removed
+# whatever an interrupted run left behind; with a name per run nothing would. Turning INT and
+# TERM into exits runs the trap, so Ctrl-C tears the stack down too.
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
+# With the default name this finds nothing, the name being new. It is for a caller that
+# reuses a name, a retried CI job say, whose earlier attempt was killed before its trap ran.
 docker compose -f "$compose_file" down -v --remove-orphans >/dev/null 2>&1 || true
 
 docker compose -f "$compose_file" build app-migrate app-seed app-server runner

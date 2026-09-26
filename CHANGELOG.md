@@ -7,7 +7,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased]
+## [2.4.2] - 2026-09-26
 
 ### Fixed
 
@@ -25,6 +25,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   seeder only writes rows, which PostgreSQL and InnoDB both roll back, so a failed seeder leaves
   nothing behind on either engine. `docs/PROJECT_STRUCTURE.md` no longer says seeders are not
   atomic.
+- `sh e2e/run.sh` in one checkout or git worktree tore down a run in progress in another.
+  The script named no compose project, so Compose derived `e2e` from the compose file's
+  directory for all of them, and each run's opening `down -v` and its exit trap deleted the
+  other run's containers and volumes mid-test. A run now defaults to a project of its own,
+  `gorgany-e2e-<pid>`, which also keeps two runs in one checkout apart; an explicitly set
+  `COMPOSE_PROJECT_NAME` is still used. Because the name is new every run:
+  - the teardown adds `--rmi local`, so the four images each run builds do not pile up;
+  - `INT` and `TERM` now exit through the trap, so an interrupted run is still torn down under
+    dash, which skips an `EXIT` trap on a signal. The next run's opening `down` used to clear
+    up after an interrupted run, but it no longer shares the name.
 
 ---
 

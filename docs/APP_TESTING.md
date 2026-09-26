@@ -186,7 +186,10 @@ The harness is the framework's own `e2e/` harness, with the changes an applicati
   of in production: a binary renamed in the Dockerfile but not in CI, or a directory the image
   does not contain.
 - **It has one database engine**, at the production major version.
-- **Every run gets its own compose project**, so parallel CI jobs cannot collide.
+
+Both harnesses give every run its own compose project, `<name>-e2e-$$` unless
+`COMPOSE_PROJECT_NAME` is set, so runs in parallel, in CI jobs or in git worktrees, cannot
+collide.
 
 ```
 test/e2e/
