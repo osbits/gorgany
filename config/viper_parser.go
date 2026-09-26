@@ -36,6 +36,30 @@ var KeysWithoutSecureFallback = []string{
 	"auth.jwt.secret",
 }
 
+// secretKeyPatterns are the datasource credentials whose unresolved placeholder must stop
+// the boot. A `*` stands for exactly one key segment, the datasource's name, because a
+// credential lives under whichever `databases.<name>` entry uses it — which is also why they
+// cannot join SecurityRelevantKeys, whose entries are exact keys and which is exported, so a
+// pattern syntax there would change what every reader of it has to understand.
+//
+// None of them has a fallback, and a blanked one is worse than a missing one: the empty
+// string is itself meaningful to the engine that reads it. An empty client_secret reads as
+// "no secret configured", so the sign-in rules report a missing credential rather than the
+// variable nobody set; an empty certificate_password reads as "this certificate is not
+// encrypted", so the failure is a decoding error about the certificate file. Either way the
+// operator is sent looking in the wrong place, and with lazy_connect the error arrives on the
+// first request in production instead of at deploy. The boot is the one point where the cause
+// is still known, so it stops there.
+//
+// databases.<name>.password is deliberately not among them. A blank password is an ordinary
+// sign-in failure that names the login, and a database that accepts an empty password for it
+// is misconfigured whatever the framework does, so it keeps the blank-and-warn behaviour every
+// other key has.
+var secretKeyPatterns = []string{
+	"databases.*.auth.client_secret",
+	"databases.*.auth.certificate_password",
+}
+
 const (
 	// JwtSecretKey holds the HMAC key this app's tokens are signed and verified with.
 	JwtSecretKey = "auth.jwt.secret"
@@ -134,8 +158,9 @@ func envPlaceholder(value string) (string, bool) {
 // afterwards viper.IsSet was true for every key in config.yaml and viper.SetDefault
 // was inert for all of them — a trap for every default added from then on.
 //
-// Now: untouched keys are never rewritten, a security-relevant key whose placeholder
-// cannot be resolved stops the boot, and any other unresolved placeholder is blanked.
+// Now: untouched keys are never rewritten, a security-relevant key or datasource credential
+// whose placeholder cannot be resolved stops the boot, and any other unresolved placeholder
+// is blanked.
 //
 // Blanking, rather than leaving the literal in place, is a correction to the first fix
 // (F5). "Leave the key alone so its default applies" cannot work — every key
@@ -197,7 +222,9 @@ func KeepUnresolvedLiterals() ResolveOption {
 // ResolveEnvPlaceholders substitutes `${VAR}` values in the loaded config.
 //
 // An unresolved placeholder is blanked by default; see KeepUnresolvedLiterals. A
-// security-relevant key whose placeholder cannot be resolved stops the boot either way.
+// security-relevant key (SecurityRelevantKeys) or a datasource credential
+// (databases.<name>.auth.client_secret and .certificate_password) whose placeholder cannot
+// be resolved stops the boot either way.
 //
 // It also registers the JWT secret's placeholder default before it looks at anything, which
 // is how an auth.jwt.secret that appears nowhere in the config file becomes visible to the
@@ -218,6 +245,7 @@ func ResolveEnvPlaceholders(opts ...ResolveOption) error {
 	unresolved := make(map[string]string)
 	var unresolvedSecurityKeys []string
 	var unresolvedWithoutFallback []string
+	var unresolvedSecrets []string
 
 	// Substitutions are collected and applied together through MergeConfigMap rather
 	// than written one at a time with viper.Set. viper.Set writes the *override* layer,
@@ -262,6 +290,11 @@ func ResolveEnvPlaceholders(opts ...ResolveOption) error {
 				// error.
 				continue
 			}
+			if isSecretKey(key) {
+				// Not substituted either, for the same reason.
+				unresolvedSecrets = append(unresolvedSecrets, fmt.Sprintf("%s (${%s})", key, name))
+				continue
+			}
 
 			if options.keepUnresolvedLiterals {
 				continue
@@ -284,10 +317,20 @@ func ResolveEnvPlaceholders(opts ...ResolveOption) error {
 		}
 	}
 
+	// Both kinds are reported in one error, so an operator missing a signing key and a
+	// datasource secret learns about both from one failed deploy rather than two.
+	var failures []string
 	if len(unresolvedSecurityKeys) > 0 {
 		sort.Strings(unresolvedSecurityKeys)
-		return fmt.Errorf("config: %s", securityKeyFailureAdvice(
+		failures = append(failures, securityKeyFailureAdvice(
 			unresolvedSecurityKeys, unresolvedWithoutFallback))
+	}
+	if len(unresolvedSecrets) > 0 {
+		sort.Strings(unresolvedSecrets)
+		failures = append(failures, secretKeyFailureAdvice(unresolvedSecrets))
+	}
+	if len(failures) > 0 {
+		return fmt.Errorf("config: %s", strings.Join(failures, "; "))
 	}
 
 	// The message used to say "leaving the key unset so its default applies". Neither
@@ -343,6 +386,41 @@ func isSecurityRelevant(key string) bool {
 	return false
 }
 
+// isSecretKey reports whether key is a datasource credential matched by secretKeyPatterns.
+//
+// Each `*` matches exactly one segment, and every other segment must match whole, ignoring
+// case as isSecurityRelevant does. Anything looser would reach keys the framework does not
+// read: a suffix test would stop the boot over an app's own integrations.crm.auth.client_secret,
+// whose owner may well read a blank as "integration switched off".
+func isSecretKey(key string) bool {
+	segments := strings.Split(key, ".")
+
+	for _, pattern := range secretKeyPatterns {
+		if segmentsMatch(strings.Split(pattern, "."), segments) {
+			return true
+		}
+	}
+	return false
+}
+
+func segmentsMatch(pattern, segments []string) bool {
+	if len(pattern) != len(segments) {
+		return false
+	}
+	for i, want := range pattern {
+		if want == "*" {
+			if segments[i] == "" {
+				return false
+			}
+			continue
+		}
+		if !strings.EqualFold(want, segments[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 // hasNoSecureFallback reports whether "remove the placeholder" would leave this key in an
 // unsafe state rather than on a safe default. See KeysWithoutSecureFallback.
 func hasNoSecureFallback(key string) bool {
@@ -382,6 +460,21 @@ func securityKeyFailureAdvice(described []string, withoutFallback []string) stri
 	}
 
 	return message
+}
+
+// secretKeyFailureAdvice builds the boot error for unresolved datasource credentials.
+//
+// It is separate from securityKeyFailureAdvice because neither of that function's endings is
+// true here. There is no secure default to fall back to, so "remove the placeholder" is no
+// repair; and the no-fallback sentence it has describes a signing key, which a client secret
+// is not.
+func secretKeyFailureAdvice(described []string) string {
+	return fmt.Sprintf(
+		"datasource credential(s) reference environment variables that are not set: %s. "+
+			"There is no secure fallback for a credential, so the variable has to be set — "+
+			"removing the placeholder does not repair it, it leaves an empty credential that "+
+			"the sign-in reports as missing or unreadable without naming the variable",
+		strings.Join(described, ", "))
 }
 
 func sortedKeys(m map[string]string) []string {

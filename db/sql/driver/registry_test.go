@@ -134,3 +134,91 @@ func TestNamesIsSorted(t *testing.T) {
 
 	assert.Equal(t, []string{"alpha", "mid", "zeta"}, Names())
 }
+
+// policyDataSource is a datasource that reports a fixed policy and counts its closes.
+type policyDataSource struct {
+	fakeDataSource
+	policy dbCore.DataSourcePolicy
+	closed int
+}
+
+func (p *policyDataSource) Policy() dbCore.DataSourcePolicy { return p.policy }
+func (p *policyDataSource) Close() error                    { p.closed++; return nil }
+
+// closingDataSource is a datasource that knows no policy and counts its closes, as one an app
+// wrote before the flags existed does.
+type closingDataSource struct {
+	fakeDataSource
+	closed int
+}
+
+func (c *closingDataSource) Close() error { c.closed++; return nil }
+
+// TestNewRefusesADriverThatIgnoresAPolicyFlag. A constructor written before external_schema and
+// read_only existed ignores them, and its datasource reports the zero policy, so without this
+// check it would boot as one gorgany owns and may write to, and every later check that asks
+// core.PolicyOf would agree.
+func TestNewRefusesADriverThatIgnoresAPolicyFlag(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		cfg     dsconfig.DataSource
+		ignored string
+	}{
+		{"read_only", dsconfig.DataSource{ReadOnly: true}, "read_only"},
+		{"external_schema", dsconfig.DataSource{ExternalSchema: true}, "external_schema"},
+		{"both", dsconfig.DataSource{ReadOnly: true, ExternalSchema: true}, "external_schema and read_only"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			withCleanRegistry(t)
+
+			built := &closingDataSource{}
+			Register("app_engine", func(dsconfig.DataSource) (dbCore.IDataSource, error) { return built, nil })
+
+			c.cfg.Driver, c.cfg.Database = "app_engine", "legacy"
+			ds, err := New(c.cfg)
+			require.Error(t, err)
+			assert.Nil(t, ds)
+
+			assert.True(t, dbCore.IsUnsupported(err), "a refused setting is an UnsupportedError, as on Postgres and MySQL: %v", err)
+			assert.Contains(t, err.Error(), `driver "app_engine" does not support `+c.ignored+";")
+			assert.Contains(t, err.Error(), "core.PolicyReporter")
+			assert.Equal(t, 1, built.closed, "the datasource the caller never receives must be closed")
+		})
+	}
+}
+
+// TestNewRefusesADriverThatReportsLessThanItsConfigSets: reporting one flag does not excuse
+// ignoring the other.
+func TestNewRefusesADriverThatReportsLessThanItsConfigSets(t *testing.T) {
+	withCleanRegistry(t)
+
+	built := &policyDataSource{policy: dbCore.DataSourcePolicy{ExternalSchema: true}}
+	Register("app_engine", func(dsconfig.DataSource) (dbCore.IDataSource, error) { return built, nil })
+
+	_, err := New(dsconfig.DataSource{Driver: "app_engine", Database: "legacy", ExternalSchema: true, ReadOnly: true})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support read_only;")
+	assert.NotContains(t, err.Error(), "external_schema", "the flag it reports is not the problem")
+	assert.Equal(t, 1, built.closed)
+}
+
+// TestNewAcceptsADriverThatReportsItsFlags, and one that knows no policy when its config sets
+// none, which is every driver written before the flags existed.
+func TestNewAcceptsADriverThatReportsItsFlags(t *testing.T) {
+	withCleanRegistry(t)
+
+	enforcing := &policyDataSource{policy: dbCore.DataSourcePolicy{ExternalSchema: true, ReadOnly: true}}
+	Register("enforcing", func(dsconfig.DataSource) (dbCore.IDataSource, error) { return enforcing, nil })
+	plain := &closingDataSource{}
+	Register("plain", func(dsconfig.DataSource) (dbCore.IDataSource, error) { return plain, nil })
+
+	ds, err := New(dsconfig.DataSource{Driver: "enforcing", Database: "legacy", ExternalSchema: true, ReadOnly: true})
+	require.NoError(t, err)
+	assert.Same(t, enforcing, ds)
+	assert.Zero(t, enforcing.closed)
+
+	ds, err = New(dsconfig.DataSource{Driver: "plain", Database: "legacy"})
+	require.NoError(t, err)
+	assert.Same(t, plain, ds)
+	assert.Zero(t, plain.closed)
+}

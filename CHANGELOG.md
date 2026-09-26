@@ -28,9 +28,177 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `core.TriggerSensitiveReturning` / `core.ReturningBlockedByTriggers(d)`: optional dialect
   capabilities, probed the way `SupportsReturning` is. Neither shipped dialect declares them,
   so both probes answer on Postgres and MySQL what callers assumed before they existed.
+- Five datasource keys under `databases.<name>`: `instance`, `external_schema`, `read_only`,
+  `lazy_connect`, and an `auth` block (`method`, `tenant_id`, `client_id`, `client_secret`,
+  `certificate_path`, `certificate_password`, `send_certificate_chain`, `resource_id`,
+  `object_id`, `token_file_path`, `redirect_url`, `scope`, `login_timeout` in seconds). They are
+  parsed as strictly as the other keys: a flag that is not a boolean (an unresolved `${VAR}`
+  included), an unknown key under `auth` and a negative `login_timeout` all fail the boot.
+  A SQL Server or Azure spelling at the top level, such as `encrypt`, `server`, `fedauth`,
+  `ApplicationIntent` or `tenant_id`, gets a suggestion naming the key it belongs to. The keys
+  are written for the SQL Server engine that follows. On Postgres and MySQL today:
+  - `instance` is refused, since a named instance is a SQL Server concept.
+  - `auth` is refused unless it is absent or `method: sql` with nothing else in it. That is the
+    top-level username and password both engines have always used.
+  - `read_only: true` is refused. Neither engine enforces it yet, and a flag that is accepted
+    but not enforced reads as a guarantee it is not. Use a read-only database role.
+  - `external_schema: true` says another system owns the schema. The datasource reports it in
+    its policy, and its connection refuses DDL through the `db/sql/gorm/guard` guard below.
+    That guard is all that enforces it in this change. `db:migrate`, `db:seed` and `db:diff`
+    do not refuse such a datasource up front yet. They fail at the first DDL they send, such as
+    creating their `migrations` or `seeders` table or a migration's own statement, with the
+    guard's `core.ErrExternalSchema` refusal. Where those tables already exist, a migration or
+    seeder that only writes rows still runs and is recorded. The provider still attaches the
+    sessions migrations to such a `default`, and cascading saves are not refused. The command
+    and provider refusals are the next change. DDL the guard cannot see is not refused either:
+    what server code runs on a statement's behalf, such as a `CALL`, or a function or
+    procedure that runs DDL, and a statement sent on the `*sql.DB` that `DB()` returns. Dynamic
+    SQL, whose statement the guard cannot read, is refused instead: a Postgres `DO` block and
+    MySQL's `PREPARE … FROM`. A principal without DDL rights is the guarantee.
+  - `lazy_connect: true` works on both engines. The constructor opens no connection, so the
+    first query opens the first one, and an unreachable server or a bad credential surfaces
+    there rather than at boot. On MySQL it also skips gorm.io/driver/mysql's `SELECT VERSION()`.
+    Without the answer, the driver writes the SQL MySQL 8 takes, and MariaDB and MySQL 5.x
+    reject some of it, so leave the key off against those.
+
+  Each refusal is a `core.UnsupportedError` naming the key. It is returned before anything is
+  dialled. A refused `auth` block is named by its method, and no other value from the block
+  is repeated.
+
+  A driver an app registers gets the same rule from `driver.New`: when the config sets
+  `external_schema` or `read_only` and the datasource its constructor returns does not report
+  the flag through `core.PolicyReporter`, the datasource is closed and the boot fails with a
+  `core.UnsupportedError` naming the driver and the key. Only the engine can enforce either
+  flag, and a constructor written before they existed ignores them. A config that sets neither
+  boots as before.
+- `core.DataSourcePolicy`, `core.PolicyReporter`, `core.PolicyOf`, `core.IsExternalSchema` and
+  `core.IsReadOnly`: what a datasource's configuration lets gorgany do beyond reading. Any
+  `IDataSource` can be asked. One that does not implement `PolicyReporter`, including one an app
+  wrote, reports the zero policy, which is what gorgany assumed of every datasource before, and
+  `driver.New` refuses it when its config sets either flag (see above). The Postgres and MySQL
+  datasources implement it. Every policy refusal, from whichever layer, wraps
+  `core.ErrExternalSchema` or `core.ErrReadOnly`, so `errors.Is` tells a refusal from a database
+  error.
+- SQL guards in `db/sql/core`, which never quote the SQL in their errors. A refusal names what
+  it refused in the guard's own words, as in `INSERT statement refused`:
+  - `GuardReadOnlySQL` checks every word, for SQL written by hand. It refuses the words that
+    write, lock or change the session wherever they stand, `NEXT VALUE FOR`, and the locking
+    clauses, `FOR SHARE` and `FOR KEY SHARE` included. On SQL Server, which needs no `;`
+    between statements, it also refuses the reserved words that begin a statement and have no
+    place in a query, such as `BEGIN`, `COMMIT`, `IF`, `WAITFOR` and `SETUSER`, so
+    `SELECT 1 DELETE FROM t` and `SELECT 1 BEGIN TRAN` are refused. SQL Server's locking
+    clauses are table hints, and it refuses the ones that lock, `UPDLOCK`, `XLOCK`, `TABLOCK`,
+    `TABLOCKX`, `HOLDLOCK`, `SERIALIZABLE` and `REPEATABLEREAD`, with or without `WITH`, and
+    bracketed or quoted in a hint list, as in `WITH ([UPDLOCK])`. `NOLOCK`, `READUNCOMMITTED`
+    and `READPAST` pass, and so does a column named `[updlock]`. A second read with no `;`,
+    `SELECT 1 SELECT 2`, is not told from one statement there.
+  - `GuardReadOnlyShape` checks only the structure, for SQL a dialect rendered: one statement,
+    no `INTO`, no locking clause, no `NEXT VALUE FOR`, and CTEs that read. On SQL Server it is
+    `GuardReadOnlySQL`, since a structure check cannot tell where a statement ends there, and
+    a builder carries an app's raw fragments into the SQL it renders.
+  - `GuardExternalSchemaSQL` refuses DDL and `SELECT … INTO` a permanent table. DDL includes
+    Postgres's `IMPORT FOREIGN SCHEMA`, `REASSIGN OWNED` and `SECURITY LABEL`, MySQL's
+    `IMPORT TABLE`, and the statements that rebuild what the owner manages:
+    `REFRESH MATERIALIZED VIEW`, `CLUSTER`, `REINDEX`, `VACUUM FULL`, and MySQL's
+    `OPTIMIZE TABLE` and `REPAIR TABLE`. A plain `VACUUM` and
+    `ANALYZE` pass, since they rewrite no table and block no read or write. An `EXPLAIN` is
+    checked with the statement it explains standing alone, since `EXPLAIN ANALYZE` runs it:
+    `EXPLAIN ANALYZE CREATE TABLE t AS SELECT 1` is refused, and `EXPLAIN SELECT …` passes. On
+    MySQL, `SELECT … INTO @var` assigns user variables and passes, and `INTO OUTFILE` and
+    `INTO DUMPFILE` are refused, since each writes a file on the database server. It also
+    refuses a `SET` of MySQL's `foreign_key_checks` or Postgres's `session_replication_role`,
+    which switch the owner's constraints off for as long as the pooled connection lives. It
+    refuses dynamic SQL, whose statement it cannot read: a Postgres `DO` block, MySQL's
+    `PREPARE … FROM`, and on SQL Server `EXEC (…)`, an `EXEC` of a procedure named by a
+    variable, and `sp_executesql` and the other system procedures that run SQL text. That
+    refusal says to send the statement itself. A procedure called by name, such as
+    `EXEC dbo.usp_archive 1`, passes: what it runs is server code, like a function. On SQL
+    Server it also refuses the procedures that change a schema, such as `sp_rename`, and
+    `ENABLE TRIGGER` / `DISABLE TRIGGER`. `#temp` objects are exempt. Two gaps remain on SQL
+    Server. The guard does not read the query that `OPENQUERY`, `OPENROWSET` or
+    `OPENDATASOURCE` sends to a linked server, which may be this server. And it compares
+    procedure names by case alone, so it misses a name that a width- or accent-insensitive
+    collation folds to `sp_rename` or `sp_executesql`.
+
+  The lexicon presets `core.LexiconTSQL`, `core.LexiconPostgres` and `core.LexiconMySQL` tell
+  the guards how each engine reads literals, quoted identifiers and comments. Text the lexicon
+  cannot finish reading is refused. Where a server setting decides whether a backslash escapes,
+  the text is read both ways. The guards are a safety net: a database principal without the
+  rights is the guarantee.
+- `db/sql/gorm/guard`: `InstallReadOnly` and `InstallExternalSchema` enforce a datasource's
+  policy on a gorm handle at two points.
+  - A callback on each of gorm's Create, Update, Delete, Query, Row and Raw checks the SQL a
+    statement was given before gorm's own callbacks run: gorm's Migrator, an app's `db.Raw` or
+    `db.Exec`, SQL set with `db.Raw` and sent through `Create`, `Update` or `Delete`, and the
+    ORM and query builder where their executor goes through gorm. The read-only callback
+    refuses gorm's Create, Update and Delete outright.
+  - The connection pool checks every statement as it is sent: the handle's own pool, every
+    transaction begun from it, and the pool a statement carries when it reaches the callbacks,
+    such as the connection `db.Connection` pins. That is what sees the SQL gorm builds from a
+    model and from the fragments an app adds to it in `Select`, `Table`, `Where`, `Joins`,
+    `Group`, `Having`, `Order`, `Clauses` or a `gorm.Expr`, which no callback sees:
+    `Select("* INTO t").Find(&rows)` and `Where("1=1; DROP TABLE t")` are refused, and so is a
+    `DROP` with no `;` before it on SQL Server. It also sees what is sent on the pool
+    directly, such as the Postgres and MySQL executors' `ExecInsert`. External schema checks
+    with `GuardExternalSchemaSQL` there, read-only with `GuardReadOnlyShape`, so on Postgres
+    and MySQL the words of a fragment gorm builds into a query are not checked: a function it
+    calls, which may write, runs.
+
+  Every refusal wraps `core.ErrExternalSchema` or `core.ErrReadOnly`, and a refused statement
+  never reaches the database. One the pool refuses in a write gorm builds may have sent the
+  `BEGIN` of gorm's default transaction, which gorm rolls back. A refused `Row()` returns a
+  `*sql.Row` whose `Scan` and `Err` report the refusal, where gorm would return nil. The
+  callbacks run ahead of every callback the handle had when they were installed; one
+  registered later with `Before("*")` runs ahead of them, and what it sends is checked by the
+  pool. The guards do not see a statement sent on a pool they did not guard: the `*sql.DB` that
+  `DB()` returns, a `*sql.Conn` from it, or the pool a plugin such as gorm's dbresolver puts on
+  a statement after the guard's callback ran. Nor do they see what the server runs on a
+  statement's behalf. Only gorgany's own engines can mark a statement as rendered by their
+  dialect, which gives it the shape check in the read-only callback. The mark is internal to
+  `db/sql/gorm`, cannot be set with gorm's `Set`, and does not pass to a `Session` or
+  `Transaction` derived from a marked handle. Installing twice adds nothing, and the package
+  links no engine driver.
+- `IsAzureSQLHost`, `AzureCloudOf` and `Suggest` in `db/sql/config`. The first two recognise
+  Azure SQL, Synapse and Fabric SQL endpoints by whole DNS suffix, and tell which cloud one
+  belongs to. A host is recognised also when written as a connection string writes it, with
+  `tcp:`, `,1433` or `:1433`, or `\instance`, and a comma-separated host list is recognised
+  when any host in it is. `Suggest` is the "did you mean" matcher behind the config's own
+  suggestions, exported so an engine can suggest its own vocabulary with the same threshold.
+
+### Changed
+
+- An unresolved placeholder in `databases.<name>.auth.client_secret` or
+  `databases.<name>.auth.certificate_password` now stops the boot, as one in `auth.jwt.secret`
+  does. It is not blanked, and `KeepUnresolvedLiterals()` does not change that. A blank
+  credential sends whoever debugs the sign-in failure to the wrong place: an empty secret reads
+  as "none configured", an empty certificate password as "not encrypted". With `lazy_connect`,
+  that failure would also arrive on the first request instead of at deploy. The error names the
+  key and the variable, and is reported together with any unresolved security key.
+  Only an unresolved placeholder stops it: a variable that is set but empty boots with the
+  empty value. `databases.<name>.password` still blanks with a warning. `docs/DEPLOYMENT.md`,
+  `docs/PROJECT_STRUCTURE.md` and `MIGRATE_TO_V2_PROMPT.md` now list these keys among those
+  that stop the boot.
+
+  **Upgrade note:** up to and including 2.4.3, a datasource with an `auth` key failed to boot
+  as an unknown key. So this affects only an app that reads `databases` itself and keeps one of
+  these two keys there under a placeholder. Set the variable in every environment, or move the
+  key.
 
 ### Fixed
 
+- The Postgres and MySQL executors' `ExecInsert` sent its INSERT on the handle's pool,
+  `db.ConnPool`, which gorm keeps as the `*sql.DB` even inside a transaction. On a
+  transaction's executor the INSERT therefore ran on another pooled connection, outside the
+  transaction, and survived its rollback. On MySQL that is the path the ORM's `Create` takes.
+  It now goes to the statement's pool, which is the transaction there.
+
+  **Upgrade note:** an `ExecInsert` inside a transaction now commits or rolls back with it.
+  Code that relied on the INSERT surviving a rollback has to run it outside the transaction.
+- A type error in `databases.<name>.password`, or in a value under `options`, put the value
+  into the boot error, as in `key 'password' must be a string, got float64 (1234.5678)`. The
+  error lands in the deploy log, and options are where a driver's own credentials go. Both
+  errors now name the key and the type only. An unquoted int or bool is still read as the
+  password it spells, as before.
 - `core.RawCondition` consumed its own `Args` while expanding `"?."` placeholders, so it
   rendered correctly once. Rendering it again — a builder rendered twice, or a builder and its
   `Clone()`, which share their conditions — found the identifier args gone and sent the SQL

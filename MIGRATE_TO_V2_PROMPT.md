@@ -561,6 +561,15 @@ The two security-relevant keys now stop the boot when unresolved:
 - `auth.jwt.secret`
 - `auth.session.cookie.secure`
 
+Releases after v2.4.3 stop it for two datasource credentials as well, in every datasource:
+
+- `databases.<name>.auth.client_secret`
+- `databases.<name>.auth.certificate_password`
+
+Up to and including v2.4.3, a datasource has no `auth` block, so only the first two keys stop
+the boot there. Only an unresolved placeholder stops it: a variable that is set but empty
+boots with the empty value.
+
 ```
 config: security-relevant key(s) reference environment variables that are not set:
 auth.session.cookie.secure (${SESSION_COOKIE_SECURE}). Set them, or remove the

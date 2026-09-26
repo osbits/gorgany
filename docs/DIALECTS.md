@@ -234,6 +234,14 @@ wiring mistake with no correct resolution, and silently keeping one of them is
 how the pre-v2 provider ended up nondeterministic. An unknown driver name is a
 boot error listing the names that are registered.
 
+A config that sets `external_schema: true` or `read_only: true` boots only when the
+datasource your constructor returns reports the flag, by implementing
+`core.PolicyReporter`. Only the engine can enforce either one, by refusing DDL or
+writes on its own connection, so `driver.New` closes a datasource that does not
+report a flag its config sets and fails the boot with a `core.UnsupportedError`
+naming the driver and the key. A constructor written before the flags existed
+therefore keeps working for every config that leaves them off.
+
 ### 7. Test with pure string assertions
 
 Dialect tests need no server. Write one case per method pinning either the exact
@@ -284,6 +292,9 @@ default). The dialect never emits SQL that relies on loose grouping.
 | `CUBE` | No MySQL equivalent. | Enumerate the grouping combinations as a `UNION ALL` of `GROUP BY` queries. |
 | `GROUPING SETS` | No MySQL equivalent. | As `CUBE`. |
 | `search_path` | A MySQL schema *is* a database, so there is no schema search path to set. Ignoring the setting would silently connect to the wrong place. | Point `db` at the schema you want. |
+| `instance` | A named instance is a SQL Server concept. A config that names one was written for another engine, and connecting to whatever answers on the host's port would hide that. Postgres refuses it too. | Remove the key, and point `host` and `port` at the server. |
+| `auth`, other than `method: sql` alone | MySQL signs in with the top-level `username` and `password` only. Any other method, or any other key under `auth`, would be dropped, and the sign-in would not be the one configured. Postgres refuses it too. | Remove the block, or leave only `method: sql` in it. |
+| `read_only` | Not enforced on MySQL in this build, and a flag that is accepted but not enforced reads as a guarantee it is not. Postgres refuses it too. | Connect as a database role that can only read. |
 
 ### Translated
 

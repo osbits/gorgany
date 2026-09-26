@@ -120,6 +120,90 @@ func TestVocabularyConfusionsGetASuggestion(t *testing.T) {
 	}
 }
 
+// TestAzureVocabularyGetsASuggestion. Someone arriving from SQL Server writes what a
+// go-mssqldb or ADO.NET connection string says — encrypt, server, fedauth, ApplicationIntent —
+// and an Azure snippet puts the tenant and client at the top level. The setting exists here
+// under another name, sometimes nested, and the suggestion has to say where.
+func TestAzureVocabularyGetsASuggestion(t *testing.T) {
+	tests := map[string]string{
+		"encrypt":               "ssl",
+		"tls":                   "ssl",
+		"fedauth":               "auth",
+		"authentication":        "auth",
+		"auth_method":           "auth",
+		"authentication_method": "auth",
+		"tenant_id":             "auth.tenant_id",
+		"client_id":             "auth.client_id",
+		"client_secret":         "auth.client_secret",
+		"applicationintent":     "read_only",
+		"ApplicationIntent":     "read_only",
+		"application_intent":    "read_only",
+		"readonly":              "read_only",
+		"instance_name":         "instance",
+		"server":                "host",
+		"unmanaged":             "external_schema",
+		"schema_owner":          "external_schema",
+		"lazy":                  "lazy_connect",
+	}
+
+	for written, want := range tests {
+		t.Run(written, func(t *testing.T) {
+			nearest, ok := nearestKnownKey(written)
+			require.True(t, ok)
+			assert.Equal(t, want, nearest)
+		})
+	}
+}
+
+// TestAMisleadingAzureSpellingGetsNoSuggestion. Each of these would be renamed as suggested
+// and keep its value, and the result would not mean what the reader meant. `managed: false`
+// says gorgany does not manage the schema, and `external_schema: false` says it does. And
+// TrustServerCertificate has no key on any engine in this build: under `options` Postgres and
+// MySQL would forward it to a server that refuses it at connect time, which is a worse failure
+// than the unknown key at boot.
+func TestAMisleadingAzureSpellingGetsNoSuggestion(t *testing.T) {
+	for _, key := range []string{"managed", "Managed", "trustservercertificate", "TrustServerCertificate", "trust_server_certificate"} {
+		t.Run(key, func(t *testing.T) {
+			nearest, ok := nearestKnownKey(key)
+			assert.Falsef(t, ok, "%s should not suggest %q", key, nearest)
+
+			err := parseWithKeys(t, map[string]any{key: false})
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), "did you mean")
+			assert.Contains(t, err.Error(), "recognised keys are", "the reader still gets the list to choose from")
+		})
+	}
+}
+
+// TestANestedSuggestionNamesTheNestedKey, through the error a reader actually sees.
+func TestANestedSuggestionNamesTheNestedKey(t *testing.T) {
+	err := parseWithKeys(t, map[string]any{"tenant_id": "00000000-0000-0000-0000-000000000000"})
+	require.Error(t, err)
+
+	assert.Contains(t, err.Error(), "did you mean 'auth.tenant_id' instead of 'tenant_id'?")
+	assert.NotContains(t, err.Error(), "00000000-0000-0000-0000-000000000000",
+		"the unknown-key error names keys, never values")
+}
+
+// TestTheNewKeysCatchTheirOwnTypos, by distance like every other key.
+func TestTheNewKeysCatchTheirOwnTypos(t *testing.T) {
+	tests := map[string]string{
+		"instnace":       "instance",
+		"external_schem": "external_schema",
+		"read_onyl":      "read_only",
+		"lazy_conect":    "lazy_connect",
+		"auht":           "auth",
+	}
+
+	for typo, want := range tests {
+		t.Run(typo, func(t *testing.T) {
+			nearest, ok := nearestKnownKey(typo)
+			require.True(t, ok)
+			assert.Equal(t, want, nearest)
+		})
+	}
+}
+
 // TestAnUnrelatedKeyGetsNoSuggestion. Suggesting on distance alone would be worse than
 // saying nothing: it reads as authoritative and sends the reader to rename a key that was
 // never meant to be one of ours.
@@ -158,14 +242,26 @@ func TestTheKeysAreListedInAStableOrder(t *testing.T) {
 }
 
 // TestAValidConfigIsStillAccepted, including every recognised key at once — the guard
-// against a knownKeys entry being dropped.
+// against a knownKeys or knownAuthKeys entry being dropped.
 func TestAValidConfigIsStillAccepted(t *testing.T) {
 	_, err := Parse(map[string]any{
 		"driver": "postgres_gorm", "host": "localhost", "port": 5432,
 		"username": "u", "password": "p", "db": "app", "ssl": "disable",
 		"search_path": "tenant", "options": map[string]any{"application_name": "app"},
 		"prefer_simple_protocol": true, "log": false,
-		"properties": map[string]any{"maxOpenConnections": 5},
+		"properties":              map[string]any{"maxOpenConnections": 5},
+		"allow_unfaithful_upsert": false,
+		"instance":                "legacy",
+		"external_schema":         true,
+		"read_only":               true,
+		"lazy_connect":            true,
+		"auth": map[string]any{
+			"method": "service_principal", "tenant_id": "t", "client_id": "c",
+			"client_secret": "s", "certificate_path": "/p", "certificate_password": "pw",
+			"send_certificate_chain": true, "resource_id": "r", "object_id": "o",
+			"token_file_path": "/f", "redirect_url": "http://localhost:8400",
+			"scope": "https://database.windows.net/.default", "login_timeout": 60,
+		},
 	})
 	assert.NoError(t, err)
 }

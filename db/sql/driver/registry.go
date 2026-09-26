@@ -11,6 +11,7 @@ package driver
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 
 	dsconfig "github.com/osbits/gorgany/v2/db/sql/config"
@@ -71,7 +72,8 @@ func Names() []string {
 // New builds the datasource for cfg.Driver.
 //
 // An unregistered driver is an error naming what is available, rather than a
-// silently skipped connection.
+// silently skipped connection. So is a datasource that does not report the
+// external_schema or read_only its config sets; see requireEnforcedPolicy.
 func New(cfg dsconfig.DataSource) (dbCore.IDataSource, error) {
 	registered := Names()
 
@@ -111,7 +113,42 @@ func New(cfg dsconfig.DataSource) (dbCore.IDataSource, error) {
 	if ds == nil {
 		return nil, fmt.Errorf("datasource config: driver %q returned a nil datasource", cfg.Driver)
 	}
+	if err := requireEnforcedPolicy(cfg, ds); err != nil {
+		return nil, err
+	}
 	return ds, nil
+}
+
+// requireEnforcedPolicy refuses a datasource that does not report a policy flag its config
+// sets, closing it first, since the caller never receives it.
+//
+// Only the engine can enforce external_schema or read_only, by refusing DDL or writes on its
+// own connection, and core.PolicyOf is how every later check learns that it does. A
+// constructor written before the flags existed, which is the ordinary case for a driver an app
+// registered, ignores them, so its datasource reports the zero policy: it would boot as a
+// datasource gorgany owns and may write to, and every check that asks PolicyOf would agree. A
+// flag that is accepted but not enforced reads as a guarantee it is not, so the boot stops here
+// and names the driver, as Postgres and MySQL refuse read_only themselves.
+func requireEnforcedPolicy(cfg dsconfig.DataSource, ds dbCore.IDataSource) error {
+	policy := dbCore.PolicyOf(ds)
+
+	var ignored []string
+	if cfg.ExternalSchema && !policy.ExternalSchema {
+		ignored = append(ignored, "external_schema")
+	}
+	if cfg.ReadOnly && !policy.ReadOnly {
+		ignored = append(ignored, "read_only")
+	}
+	if len(ignored) == 0 {
+		return nil
+	}
+
+	// The refusal is what the operator has to act on; a failure to close a pool nothing has
+	// used yet would only bury it.
+	_ = ds.Close()
+	return dbCore.Unsupported(fmt.Sprintf("driver %q", cfg.Driver), strings.Join(ignored, " and "),
+		"its datasource does not report the flag through core.PolicyReporter, so nothing would "+
+			"enforce it; remove the key, or use a driver that enforces it")
 }
 
 // importHint names the blank imports that populate the registry, and is empty when

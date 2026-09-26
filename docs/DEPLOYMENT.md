@@ -162,11 +162,14 @@ resource/public/storage/
   placeholder.
 - **A placeholder must be the whole value.** `url: ${APP_URL}` works. `url: https://${HOST}` and
   `${VAR:-default}` do not.
-- **An unresolved placeholder becomes an empty string**, with a warning in the log. Only two
-  keys stop the boot when their placeholder is unresolved: `auth.jwt.secret` and
-  `auth.session.cookie.secure`. Every other key, `app.server.url` and `databases.default.ssl`
-  included, boots with the empty value, so the provider that reads a security setting checks
-  it itself. The template's route provider panics on an empty `app.server.url`.
+- **An unresolved placeholder becomes an empty string**, with a warning in the log. These keys
+  stop the boot instead: `auth.jwt.secret`, `auth.session.cookie.secure`, and every
+  datasource's `databases.<name>.auth.client_secret` and
+  `databases.<name>.auth.certificate_password`. Every other key, `app.server.url`,
+  `databases.<name>.password` and `databases.default.ssl` included, boots with the empty value,
+  so the provider that reads a security setting checks it itself. The template's route
+  provider panics on an empty `app.server.url`. Up to and including v2.4.3, a datasource has
+  no `auth` block, so only `auth.jwt.secret` and `auth.session.cookie.secure` stop the boot.
 - **The framework reads some variables that no placeholder of yours mentions.** It reads `MODE`,
   and the mail service's `SMTP_*`, straight from the environment. `JWT_SECRET` is the default
   for `auth.jwt.secret` as soon as any `auth.jwt` key is set, and it must be at least 32 bytes.

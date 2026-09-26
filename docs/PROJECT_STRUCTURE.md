@@ -306,7 +306,11 @@ worse: it treats an empty `AllowedOrigins` as every origin, so an allowlist read
 becomes `Access-Control-Allow-Origin: *`. `deferred` removes the trap without giving up
 constructor functions. A security setting should still fail closed: check it, and panic at boot when it
 is empty. The framework does this itself only for `auth.jwt.secret` and
-`auth.session.cookie.secure`.
+`auth.session.cookie.secure`. For a datasource's `auth.client_secret` and
+`auth.certificate_password` it does less: it stops the boot when their placeholder is
+unresolved, but a variable that is set but empty, or an empty literal, boots with the empty
+value, which an unencrypted certificate's password legitimately is. Up to and including
+v2.4.3, a datasource has no `auth` block, so that check does not exist there.
 
 **Why two lists, and why these differences.**
 

@@ -7,6 +7,7 @@ import (
 
 	dsconfig "github.com/osbits/gorgany/v2/db/sql/config"
 	"github.com/osbits/gorgany/v2/db/sql/core"
+	"github.com/osbits/gorgany/v2/db/sql/gorm/guard"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -15,6 +16,10 @@ import (
 // gormPostgresDataSource implements the IDataSource interface
 type gormPostgresDataSource struct {
 	db *gorm.DB
+
+	// externalSchema carries databases.<name>.external_schema, which Policy reports. The
+	// connection's DDL guard is installed from the same flag, so the two cannot disagree.
+	externalSchema bool
 }
 
 // NewDataSource creates a Postgres datasource from a raw `databases.<name>` map.
@@ -33,8 +38,18 @@ func NewDataSource(config map[string]any) (core.IDataSource, error) {
 }
 
 // NewDataSourceWithConfig creates a Postgres datasource from a typed config.
+//
+// Settings Postgres cannot honour are refused before anything is opened; see
+// refuseUnsupported. With lazy_connect the constructor opens nothing at all: gorm's initial
+// ping is skipped, so the first query makes the first connection. Without it, an unreachable
+// server fails the constructor, as it always has. With external_schema, the connection
+// refuses DDL (see guard.InstallExternalSchema) from before the first statement anyone can
+// send on it.
 func NewDataSourceWithConfig(cfg dsconfig.DataSource) (core.IDataSource, error) {
 	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	if err := refuseUnsupported(cfg); err != nil {
 		return nil, err
 	}
 
@@ -46,10 +61,20 @@ func NewDataSourceWithConfig(cfg dsconfig.DataSource) (core.IDataSource, error) 
 	gormConfig := postgres.Config{DSN: dsn, PreferSimpleProtocol: cfg.PreferSimpleProtocol}
 	db, err := gorm.Open(postgres.New(gormConfig), &gorm.Config{
 		DisableForeignKeyConstraintWhenMigrating: true,
+		DisableAutomaticPing:                     cfg.LazyConnect,
 		Logger:                                   logger.Default.LogMode(logger.Silent),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("postgres: cannot open connection to %s:%d/%s: %w", cfg.Host, cfg.Port, cfg.Database, err)
+	}
+
+	// Installed on the handle gorm.Open returned, before Debug() below derives one from it:
+	// every handle derived from it shares its callbacks and its guarded pool, so the guard
+	// covers the logging handle, every session and every transaction.
+	if cfg.ExternalSchema {
+		if err := guard.InstallExternalSchema(db, core.LexiconPostgres); err != nil {
+			return nil, closeAfter(db, fmt.Errorf("postgres: %w", err))
+		}
 	}
 
 	rawDb, err := db.DB()
@@ -74,7 +99,64 @@ func NewDataSourceWithConfig(cfg dsconfig.DataSource) (core.IDataSource, error) 
 		db = db.Debug()
 	}
 
-	return &gormPostgresDataSource{db: db}, nil
+	return &gormPostgresDataSource{db: db, externalSchema: cfg.ExternalSchema}, nil
+}
+
+// refuseUnsupported refuses the datasource settings Postgres does not honour, each with an
+// UnsupportedError that names the key.
+//
+// Every one of them is refused rather than ignored, because ignoring it would change what the
+// config means without saying so:
+//
+//   - instance names a SQL Server named instance. A config that sets it was written for
+//     another engine, and connecting to whatever answers on the host's default port would
+//     hide that.
+//   - auth selects a sign-in method, and Postgres here signs in one way only: the top-level
+//     username and password, which is what method "sql" and an absent block mean. Any other
+//     method, or any other setting under auth, would be dropped on the floor, and the
+//     sign-in that followed would not be the one configured.
+//   - read_only is refused until this engine enforces it. Accepting a flag that nothing
+//     enforces would read as a guarantee it is not.
+//
+// external_schema and lazy_connect are honoured, so they are not here.
+func refuseUnsupported(cfg dsconfig.DataSource) error {
+	if cfg.Instance != "" {
+		return core.Unsupported(DialectName, "instance", "named instances are a SQL Server concept")
+	}
+	if err := refuseNonSQLAuth(cfg.Auth); err != nil {
+		return err
+	}
+	if cfg.ReadOnly {
+		return core.Unsupported(DialectName, "read_only",
+			"not yet enforced on this engine in this build; use a read-only database role")
+	}
+	return nil
+}
+
+// refuseNonSQLAuth refuses an auth block that asks for anything but the top-level username
+// and password. The error names the method, which is a word from the config's vocabulary, and
+// never a value from any other auth key, which may be a secret.
+func refuseNonSQLAuth(auth dsconfig.Auth) error {
+	method := strings.ToLower(strings.TrimSpace(auth.Method))
+	if method != "" && method != "sql" {
+		return core.Unsupported(DialectName, fmt.Sprintf("auth method %q", auth.Method),
+			"Postgres signs in with the top-level username and password only; remove the auth block or set method: sql")
+	}
+	auth.Method = ""
+	if !auth.IsZero() {
+		return core.Unsupported(DialectName, "auth settings other than method",
+			"method sql signs in with the top-level username and password and takes no other auth key; remove them")
+	}
+	return nil
+}
+
+// closeAfter closes the pool gorm.Open opened for db, since the caller is about to fail
+// without handing db to anyone who could, and returns err.
+func closeAfter(db *gorm.DB, err error) error {
+	if sqlDB, dbErr := db.DB(); dbErr == nil {
+		_ = sqlDB.Close()
+	}
+	return err
 }
 
 // BuildDSN renders cfg as a libpq keyword/value connection string.
@@ -166,6 +248,12 @@ func escapeDSNValue(value string) string {
 // this datasource hand it to every builder they produce.
 func (ds *gormPostgresDataSource) Dialect() core.SQLDialect {
 	return &PostgresDialect{}
+}
+
+// Policy reports what the datasource's configuration allows (see core.DataSourcePolicy).
+// ReadOnly is always false: NewDataSourceWithConfig refuses read_only on this engine.
+func (ds *gormPostgresDataSource) Policy() core.DataSourcePolicy {
+	return core.DataSourcePolicy{ExternalSchema: ds.externalSchema}
 }
 
 func (ds *gormPostgresDataSource) GetDriver() (any, error) {

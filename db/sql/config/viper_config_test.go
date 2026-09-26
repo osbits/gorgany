@@ -213,3 +213,117 @@ func TestDuplicateKeysInDifferentCasesAreDeterministic(t *testing.T) {
 			"colliding key cases must resolve deterministically")
 	}
 }
+
+// azureShapedYAML is the shape a SQL Server datasource on Azure takes: the new flags, an
+// auth block, and option keys in go-mssqldb's own spelling.
+const azureShapedYAML = `
+databases:
+  default:
+    driver: sqlserver_gorm
+    host: example.database.windows.net
+    port: 1433
+    username: user@example.com
+    db: Example-db
+    ssl: "true"
+    external_schema: true
+    read_only: "true"
+    lazy_connect: false
+    auth:
+      method: Interactive
+      tenant_id: 00000000-0000-0000-0000-000000000000
+      redirect_url: http://localhost:8400
+      login_timeout: 300
+    options:
+      app name: example-app
+`
+
+// TestAnAzureSQLConfigFromYAMLParses, through Viper, because Viper lowercases keys and hands
+// back quoted scalars as strings — the two things a hand-built map would not exercise.
+func TestAnAzureSQLConfigFromYAMLParses(t *testing.T) {
+	cfg, err := parseFromYAML(t, azureShapedYAML)
+	require.NoError(t, err)
+
+	assert.Equal(t, "sqlserver_gorm", cfg.Driver)
+	assert.Equal(t, "example.database.windows.net", cfg.Host)
+	assert.True(t, config.IsAzureSQLHost(cfg.Host))
+	assert.Equal(t, config.AzureCloudPublic, config.AzureCloudOf(cfg.Host))
+	assert.Equal(t, 1433, cfg.Port)
+	assert.Equal(t, "user@example.com", cfg.Username)
+	assert.Equal(t, "Example-db", cfg.Database, "the database name is verbatim, hyphen and case")
+	assert.Equal(t, "true", cfg.SSL)
+
+	assert.True(t, cfg.ExternalSchema)
+	assert.True(t, cfg.ReadOnly, `a quoted "true" is still true`)
+	assert.False(t, cfg.LazyConnect)
+
+	assert.Equal(t, "interactive", cfg.Auth.Method, "the method is folded")
+	assert.Equal(t, "00000000-0000-0000-0000-000000000000", cfg.Auth.TenantID)
+	assert.Equal(t, "http://localhost:8400", cfg.Auth.RedirectURL)
+	assert.Equal(t, 300*time.Second, cfg.Auth.LoginTimeout)
+	assert.Empty(t, cfg.Auth.ClientSecret)
+
+	require.NoError(t, cfg.Validate())
+}
+
+// TestAuthKeysFromYAMLAreCaseInsensitive: whatever case the file uses, Viper lowercases it, and
+// knownAuthKeys must match what arrives.
+func TestAuthKeysFromYAMLAreCaseInsensitive(t *testing.T) {
+	cfg, err := parseFromYAML(t, `
+databases:
+  default:
+    driver: sqlserver_gorm
+    host: example.database.windows.net
+    db: Example-db
+    auth:
+      Method: service_principal
+      Tenant_ID: 00000000-0000-0000-0000-000000000000
+      CLIENT_ID: 11111111-1111-1111-1111-111111111111
+      Client_Secret: example-client-secret
+      Login_Timeout: 60
+`)
+	require.NoError(t, err)
+
+	assert.Equal(t, "service_principal", cfg.Auth.Method)
+	assert.Equal(t, "00000000-0000-0000-0000-000000000000", cfg.Auth.TenantID)
+	assert.Equal(t, "11111111-1111-1111-1111-111111111111", cfg.Auth.ClientID)
+	assert.Equal(t, "example-client-secret", cfg.Auth.ClientSecret)
+	assert.Equal(t, 60*time.Second, cfg.Auth.LoginTimeout)
+}
+
+// TestAnUnknownAuthKeyFromYAMLIsReported: folding case must not weaken the strict check.
+func TestAnUnknownAuthKeyFromYAMLIsReported(t *testing.T) {
+	_, err := parseFromYAML(t, `
+databases:
+  default:
+    driver: sqlserver_gorm
+    host: example.database.windows.net
+    db: Example-db
+    auth:
+      TenantId: 00000000-0000-0000-0000-000000000000
+`)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "'tenantid' under 'auth'", "Viper lowercased it on the way in")
+	assert.Contains(t, err.Error(), "did you mean 'tenant_id'")
+}
+
+// TestOptionKeysWithSpacesSurviveViper. go-mssqldb spells several of its keys with a space
+// ("app name", "packet size"), and Options passes keys through verbatim, so the space has to
+// survive the trip.
+func TestOptionKeysWithSpacesSurviveViper(t *testing.T) {
+	cfg, err := parseFromYAML(t, azureShapedYAML)
+	require.NoError(t, err)
+
+	assert.Equal(t, map[string]string{"app name": "example-app"}, cfg.Options)
+}
+
+// TestTheFlagsFromYAMLDefaultToOff: an existing config never mentions them.
+func TestTheFlagsFromYAMLDefaultToOff(t *testing.T) {
+	cfg, err := parseFromYAML(t, fixtureShapedYAML)
+	require.NoError(t, err)
+
+	assert.False(t, cfg.ExternalSchema)
+	assert.False(t, cfg.ReadOnly)
+	assert.False(t, cfg.LazyConnect)
+	assert.Empty(t, cfg.Instance)
+	assert.True(t, cfg.Auth.IsZero())
+}

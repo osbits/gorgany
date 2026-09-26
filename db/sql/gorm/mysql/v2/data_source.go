@@ -8,6 +8,7 @@ import (
 
 	dsconfig "github.com/osbits/gorgany/v2/db/sql/config"
 	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
+	"github.com/osbits/gorgany/v2/db/sql/gorm/guard"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -30,6 +31,10 @@ type gormMySQLDataSource struct {
 	// the dialect. See dsconfig.DataSource.AllowUnfaithfulUpsert for why the config is
 	// the only route: everything downstream builds its builder from Dialect().
 	allowUnfaithfulUpsert bool
+
+	// externalSchema carries databases.<name>.external_schema, which Policy reports. The
+	// connection's DDL guard is installed from the same flag, so the two cannot disagree.
+	externalSchema bool
 }
 
 // NewDataSource creates a MySQL datasource from a raw `databases.<name>` map.
@@ -44,8 +49,25 @@ func NewDataSource(config map[string]any) (dbCore.IDataSource, error) {
 }
 
 // NewDataSourceWithConfig creates a MySQL datasource from a typed config.
+//
+// Settings MySQL cannot honour are refused before anything is opened; see refuseUnsupported.
+// With external_schema, the connection refuses DDL (see guard.InstallExternalSchema) from
+// before the first statement anyone can send on it.
+//
+// Without lazy_connect the constructor talks to the server twice, and an unreachable one
+// fails it, as it always has: gorm.io/driver/mysql asks for SELECT VERSION() while it
+// initialises, and gorm pings. With lazy_connect it does neither, so the first query makes the
+// first connection. Skipping the version query has a cost, because the driver uses the answer
+// to choose some of the SQL it writes. Without it the driver assumes a current MySQL (8.0 or
+// later): its Migrator writes RENAME COLUMN, RENAME INDEX, ALTER TABLE … DROP CONSTRAINT and
+// DATETIME(3) columns, a shared lock is FOR SHARE, and nothing uses RETURNING. MariaDB and
+// MySQL 5.x reject some of those, so against them leave lazy_connect off. That is
+// gorm.io/driver/mysql v1.6.0's behaviour; a later version may choose differently.
 func NewDataSourceWithConfig(cfg dsconfig.DataSource) (dbCore.IDataSource, error) {
 	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	if err := refuseUnsupported(cfg); err != nil {
 		return nil, err
 	}
 
@@ -54,12 +76,23 @@ func NewDataSourceWithConfig(cfg dsconfig.DataSource) (dbCore.IDataSource, error
 		return nil, err
 	}
 
-	db, err := gorm.Open(mysql.New(mysql.Config{DSN: dsn}), &gorm.Config{
+	dialector := mysql.New(mysql.Config{DSN: dsn, SkipInitializeWithVersion: cfg.LazyConnect})
+	db, err := gorm.Open(dialector, &gorm.Config{
 		DisableForeignKeyConstraintWhenMigrating: true,
+		DisableAutomaticPing:                     cfg.LazyConnect,
 		Logger:                                   logger.Default.LogMode(logger.Silent),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("mysql: cannot open connection to %s:%d/%s: %w", cfg.Host, cfg.Port, cfg.Database, err)
+	}
+
+	// Installed on the handle gorm.Open returned, before Debug() below derives one from it:
+	// every handle derived from it shares its callbacks and its guarded pool, so the guard
+	// covers the logging handle, every session and every transaction.
+	if cfg.ExternalSchema {
+		if err := guard.InstallExternalSchema(db, dbCore.LexiconMySQL); err != nil {
+			return nil, closeAfter(db, fmt.Errorf("mysql: %w", err))
+		}
 	}
 
 	rawDb, err := db.DB()
@@ -87,7 +120,66 @@ func NewDataSourceWithConfig(cfg dsconfig.DataSource) (dbCore.IDataSource, error
 	return &gormMySQLDataSource{
 		db:                    db,
 		allowUnfaithfulUpsert: cfg.AllowUnfaithfulUpsert,
+		externalSchema:        cfg.ExternalSchema,
 	}, nil
+}
+
+// refuseUnsupported refuses the datasource settings MySQL does not honour, each with an
+// UnsupportedError that names the key.
+//
+// Every one of them is refused rather than ignored, because ignoring it would change what the
+// config means without saying so:
+//
+//   - instance names a SQL Server named instance. A config that sets it was written for
+//     another engine, and connecting to whatever answers on the host's default port would
+//     hide that.
+//   - auth selects a sign-in method, and MySQL here signs in one way only: the top-level
+//     username and password, which is what method "sql" and an absent block mean. Any other
+//     method, or any other setting under auth, would be dropped on the floor, and the
+//     sign-in that followed would not be the one configured.
+//   - read_only is refused until this engine enforces it. Accepting a flag that nothing
+//     enforces would read as a guarantee it is not.
+//
+// external_schema and lazy_connect are honoured, so they are not here. search_path is
+// refused by BuildDSN, which is where it would otherwise be dropped.
+func refuseUnsupported(cfg dsconfig.DataSource) error {
+	if cfg.Instance != "" {
+		return dbCore.Unsupported(DialectName, "instance", "named instances are a SQL Server concept")
+	}
+	if err := refuseNonSQLAuth(cfg.Auth); err != nil {
+		return err
+	}
+	if cfg.ReadOnly {
+		return dbCore.Unsupported(DialectName, "read_only",
+			"not yet enforced on this engine in this build; use a read-only database role")
+	}
+	return nil
+}
+
+// refuseNonSQLAuth refuses an auth block that asks for anything but the top-level username
+// and password. The error names the method, which is a word from the config's vocabulary, and
+// never a value from any other auth key, which may be a secret.
+func refuseNonSQLAuth(auth dsconfig.Auth) error {
+	method := strings.ToLower(strings.TrimSpace(auth.Method))
+	if method != "" && method != "sql" {
+		return dbCore.Unsupported(DialectName, fmt.Sprintf("auth method %q", auth.Method),
+			"MySQL signs in with the top-level username and password only; remove the auth block or set method: sql")
+	}
+	auth.Method = ""
+	if !auth.IsZero() {
+		return dbCore.Unsupported(DialectName, "auth settings other than method",
+			"method sql signs in with the top-level username and password and takes no other auth key; remove them")
+	}
+	return nil
+}
+
+// closeAfter closes the pool gorm.Open opened for db, since the caller is about to fail
+// without handing db to anyone who could, and returns err.
+func closeAfter(db *gorm.DB, err error) error {
+	if sqlDB, dbErr := db.DB(); dbErr == nil {
+		_ = sqlDB.Close()
+	}
+	return err
 }
 
 // BuildDSN renders cfg as a go-sql-driver/mysql DSN:
@@ -248,6 +340,12 @@ func validateDSNParam(key string) error {
 // set it.
 func (ds *gormMySQLDataSource) Dialect() dbCore.SQLDialect {
 	return &MySQLDialect{AllowUnfaithfulUpsert: ds.allowUnfaithfulUpsert}
+}
+
+// Policy reports what the datasource's configuration allows (see dbCore.DataSourcePolicy).
+// ReadOnly is always false: NewDataSourceWithConfig refuses read_only on this engine.
+func (ds *gormMySQLDataSource) Policy() dbCore.DataSourcePolicy {
+	return dbCore.DataSourcePolicy{ExternalSchema: ds.externalSchema}
 }
 
 // GetDriver returns the underlying *gorm.DB.

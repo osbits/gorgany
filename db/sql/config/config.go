@@ -49,6 +49,13 @@ type DataSource struct {
 	// (false/true/skip-verify/preferred).
 	SSL string
 
+	// Instance names a SQL Server named instance, the part after the backslash in
+	// host\instance. It is for the SQL Server engine; no engine in this build reads it.
+	// Postgres and MySQL have no such concept and refuse the key rather than ignore it: a
+	// config that names an instance was written for another engine, and connecting to
+	// whatever answers on the default port would hide that.
+	Instance string
+
 	// SearchPath sets the schema search path the connection starts in. It is what
 	// makes schema-per-test isolation possible: without it a consumer is forced
 	// into CREATE DATABASE per test run plus truncate-between-tests.
@@ -85,12 +92,120 @@ type DataSource struct {
 	// is updated is not the caller's to control.
 	AllowUnfaithfulUpsert bool
 
+	// ExternalSchema declares that this database's schema is owned outside gorgany — by
+	// another application, its migrations tool, or a DBA. Every engine reads it.
+	//
+	// It exists because the framework's defaults assume ownership: db:migrate creates a
+	// migrations table and runs DDL, db:seed records what it seeded, db:diff proposes
+	// ALTERs, and the session store creates its own table. Against a schema another system
+	// migrates, each of those is a write nobody reviewed.
+	//
+	// In this build the flag does two things. The datasource reports it through
+	// core.PolicyOf, and its connection refuses DDL: Postgres and MySQL install the guard in
+	// db/sql/gorm/guard, which refuses a schema change that reaches gorm. Nothing yet refuses
+	// the rest up front. db:migrate, db:seed and db:diff still run, and fail at the first DDL
+	// they send; a migration or seeder that only writes rows, into migrations and seeders
+	// tables that already exist, still runs and is recorded; and the provider still attaches
+	// the session store's migrations to such a default. Refusing those is the commands' and
+	// the provider's job, which a later change adds. DDL the guard cannot see, such as a Postgres DO block or a procedure that
+	// runs DDL, is not refused either, so a principal without DDL rights is the guarantee.
+	ExternalSchema bool
+
+	// ReadOnly declares that nothing may be written through this datasource. No engine in
+	// this build enforces it, so Postgres and MySQL refuse the key, and driver.New refuses a
+	// datasource from any other driver that does not report it (core.PolicyReporter): a flag
+	// that is accepted but not enforced reads as a guarantee it is not. The SQL Server engine
+	// that follows is to enforce it with a dialect that refuses writes, a guard on the
+	// connection (guard.InstallReadOnly) and ApplicationIntent=ReadOnly.
+	//
+	// It is a safety net, not a permission: the guards recognise write statements, they do
+	// not prove their absence. When a guarantee is what you need, connect as a principal
+	// that can only read.
+	ReadOnly bool
+
+	// LazyConnect skips connecting at boot, so the first query opens the first connection
+	// instead. Postgres and MySQL skip gorm's initial ping, and MySQL its version query. The
+	// cost is that an unreachable server, or a credential that does not work, surfaces on the
+	// first request instead of failing the deploy. On MySQL there is a second cost: without
+	// the version query gorm's driver writes the SQL MySQL 8 takes, some of which MariaDB and
+	// MySQL 5.x reject, so leave it off against those.
+	LazyConnect bool
+
+	// Auth selects how the connection signs in when a username and password are not the
+	// whole story. The zero value, and Method "sql", mean exactly that: Username and
+	// Password at the top level. Postgres and MySQL speak nothing else and refuse any other
+	// method; the other methods are for the SQL Server engine that follows, and no engine in
+	// this build reads them.
+	Auth Auth
+
 	// Log turns on statement logging for this connection.
 	Log bool
 
 	// Pool holds connection-pool settings.
 	Pool Pool
 }
+
+// Auth is the `auth` block of a datasource: which sign-in method to use and the settings
+// that method takes.
+//
+// Every field is a plain value, parsed strictly like the rest of DataSource, and none of
+// them is interpreted here. Which fields a method requires, allows or refuses is the
+// engine's rule to apply — a service principal needs a tenant and a client, an interactive
+// sign-in refuses a client secret — because only the engine knows the methods it offers.
+// Parse only guarantees that every key is one of ours and every value has the right type.
+type Auth struct {
+	// Method names the sign-in method, lowercased and trimmed when parsed so that a value
+	// written as "Service_Principal " still selects one. Empty means "sql".
+	Method string
+
+	// TenantID is the Microsoft Entra tenant (directory) the principal belongs to.
+	TenantID string
+
+	// ClientID is the application (client) ID of the app registration or the user-assigned
+	// managed identity that signs in.
+	ClientID string
+
+	// ClientSecret is a service principal's client secret. An unresolved ${VAR} placeholder
+	// here stops the boot rather than being blanked like other keys; see
+	// ResolveEnvPlaceholders in the framework's top-level config package.
+	ClientSecret string
+
+	// CertificatePath is the file holding a service principal's certificate and private
+	// key, the alternative to ClientSecret.
+	CertificatePath string
+
+	// CertificatePassword decrypts the file at CertificatePath. Like ClientSecret, an
+	// unresolved placeholder here stops the boot.
+	CertificatePassword string
+
+	// SendCertificateChain sends the certificate's whole chain rather than the leaf alone,
+	// which subject-name/issuer authentication requires.
+	SendCertificateChain bool
+
+	// ResourceID and ObjectID select a user-assigned managed identity by its Azure
+	// resource ID or its principal's object ID, as alternatives to ClientID.
+	ResourceID string
+	ObjectID   string
+
+	// TokenFilePath is the file holding the projected service-account token a workload
+	// identity signs in with.
+	TokenFilePath string
+
+	// RedirectURL is where an interactive sign-in returns to; it must match the app
+	// registration's redirect URI.
+	RedirectURL string
+
+	// Scope overrides the token scope, which is otherwise derived from the host.
+	Scope string
+
+	// LoginTimeout bounds one sign-in, configured in seconds. Zero leaves the engine's
+	// default in place; a negative value is refused.
+	LoginTimeout time.Duration
+}
+
+// IsZero reports whether a is the zero value, which is what an absent `auth` block parses
+// to.
+func (a Auth) IsZero() bool { return a == Auth{} }
 
 // Validate reports the first structural problem with c.
 func (c *DataSource) Validate() error {
@@ -109,6 +224,11 @@ func (c *DataSource) Validate() error {
 	if c.Pool.MaxIdleConnections < 0 {
 		return fmt.Errorf("datasource config: 'properties.maxIdleConnections' must not be negative, got %d", c.Pool.MaxIdleConnections)
 	}
+	// Parse refuses a negative login_timeout already; this catches a DataSource built by
+	// hand, which never went through Parse.
+	if c.Auth.LoginTimeout < 0 {
+		return fmt.Errorf("datasource config: 'auth.login_timeout' must not be negative, got %s", c.Auth.LoginTimeout)
+	}
 	return nil
 }
 
@@ -126,6 +246,8 @@ var knownKeys = map[string]bool{
 	"password": true, "db": true, "ssl": true, "search_path": true,
 	"options": true, "prefer_simple_protocol": true, "log": true,
 	"properties": true, "allow_unfaithful_upsert": true,
+	"instance": true, "external_schema": true, "read_only": true,
+	"lazy_connect": true, "auth": true,
 }
 
 // Parse decodes a raw `databases.<name>` map into a DataSource.
@@ -162,7 +284,7 @@ func Parse(rawInput map[string]any) (DataSource, error) {
 	if cfg.Username, err = optString(raw, "username"); err != nil {
 		return cfg, err
 	}
-	if cfg.Password, err = optString(raw, "password"); err != nil {
+	if cfg.Password, err = optPassword(raw); err != nil {
 		return cfg, err
 	}
 	if cfg.Database, err = optString(raw, "db"); err != nil {
@@ -174,10 +296,22 @@ func Parse(rawInput map[string]any) (DataSource, error) {
 	if cfg.SearchPath, err = optString(raw, "search_path"); err != nil {
 		return cfg, err
 	}
+	if cfg.Instance, err = optString(raw, "instance"); err != nil {
+		return cfg, err
+	}
 	if cfg.PreferSimpleProtocol, err = optBool(raw, "prefer_simple_protocol"); err != nil {
 		return cfg, err
 	}
 	if cfg.AllowUnfaithfulUpsert, err = optBool(raw, "allow_unfaithful_upsert"); err != nil {
+		return cfg, err
+	}
+	if cfg.ExternalSchema, err = optBool(raw, "external_schema"); err != nil {
+		return cfg, err
+	}
+	if cfg.ReadOnly, err = optBool(raw, "read_only"); err != nil {
+		return cfg, err
+	}
+	if cfg.LazyConnect, err = optBool(raw, "lazy_connect"); err != nil {
 		return cfg, err
 	}
 	if cfg.Log, err = optBool(raw, "log"); err != nil {
@@ -187,6 +321,9 @@ func Parse(rawInput map[string]any) (DataSource, error) {
 		return cfg, err
 	}
 	if cfg.Pool, err = parsePool(raw); err != nil {
+		return cfg, err
+	}
+	if cfg.Auth, err = parseAuth(raw); err != nil {
 		return cfg, err
 	}
 
@@ -249,6 +386,157 @@ func parsePool(raw map[string]any) (Pool, error) {
 // under the camelCase spelling the docs and config files use.
 func poolInt(props map[string]any, camelKey string) (int, error) {
 	return optIntUnder(props, "properties", strings.ToLower(camelKey), camelKey)
+}
+
+// knownAuthKeys are the `auth` keys, lowercased — see knownKeys for why. They are
+// snake_case, like every other key the framework owns, even where the driver's own
+// connection-string vocabulary spells the same setting differently.
+var knownAuthKeys = map[string]bool{
+	"method": true, "tenant_id": true, "client_id": true, "client_secret": true,
+	"certificate_path": true, "certificate_password": true, "send_certificate_chain": true,
+	"resource_id": true, "object_id": true, "token_file_path": true,
+	"redirect_url": true, "scope": true, "login_timeout": true,
+}
+
+// topLevelUsername and topLevelPassword are the suggestions for a login name or password
+// written inside `auth`. They are phrases rather than keys, because the keys they point to are
+// not under `auth` at all.
+const (
+	topLevelUsername = "the top-level username"
+	topLevelPassword = "the top-level password"
+)
+
+// authKeyAliases maps what someone arriving from an Azure portal snippet, a go-mssqldb
+// connection string or an identity SDK writes to our key — see keyAliases for why edit
+// distance cannot catch these.
+//
+// The login is the odd one out. Its name stays the datasource's own `username`, where an
+// interactive sign-in reads it as the account hint, and its password the datasource's own
+// `password`, so `user` or `password` inside `auth` is pointed back out of the block rather
+// than given a second home in it — which is also what `method: sql` reads.
+//
+// The short forms of certificate_password are listed because edit distance gets them wrong,
+// not merely misses them: certificate_pass is two edits from certificate_path and four from
+// certificate_password, so on distance alone the reader would be told to put the password
+// where the path goes.
+var authKeyAliases = map[string]string{
+	"tenant":              "tenant_id",
+	"tenantid":            "tenant_id",
+	"client":              "client_id",
+	"clientid":            "client_id",
+	"app_id":              "client_id",
+	"application_id":      "client_id",
+	"applicationclientid": "client_id",
+	"secret":              "client_secret",
+	"clientsecret":        "client_secret",
+	"cert":                "certificate_path",
+	"certificate":         "certificate_path",
+	"cert_path":           "certificate_path",
+	"clientcertpath":      "certificate_path",
+	"cert_password":       "certificate_password",
+	"cert_pass":           "certificate_password",
+	"cert_pwd":            "certificate_password",
+	"certificate_pass":    "certificate_password",
+	"certificate_pwd":     "certificate_password",
+	"type":                "method",
+	"mode":                "method",
+	"fedauth":             "method",
+	"authentication":      "method",
+	"login_hint":          topLevelUsername,
+	"user":                topLevelUsername,
+	"user_id":             topLevelUsername,
+	"username":            topLevelUsername,
+	"password":            topLevelPassword,
+}
+
+// parseAuth decodes the optional `auth` block, as strictly as parsePool decodes
+// `properties`: an absent or null block is the zero Auth, anything but a map is refused, and
+// an unrecognised key is refused with a suggestion.
+//
+// Strictness matters more here than anywhere else in the config. An ignored, misspelt pool
+// key costs performance; an ignored, misspelt `tenant_id` signs in against the identity
+// SDK's default tenant instead, and the failure that follows names neither the key nor the
+// typo.
+func parseAuth(raw map[string]any) (Auth, error) {
+	var auth Auth
+
+	authRaw, ok := raw["auth"]
+	if !ok || authRaw == nil {
+		return auth, nil
+	}
+
+	authInput, ok := toStringMap(authRaw)
+	if !ok {
+		return auth, fmt.Errorf("datasource config: key 'auth' must be a map, got %T", authRaw)
+	}
+	fields := foldKeys(authInput)
+
+	if unknown := unknownKeys(authInput, knownAuthKeys); len(unknown) > 0 {
+		parts := []string{fmt.Sprintf("datasource config: unknown key(s) %s under 'auth'",
+			strings.Join(quoteAll(unknown), ", "))}
+		for _, key := range unknown {
+			nearest, found := nearestKey(key, knownAuthKeys, authKeyAliases)
+			if !found {
+				continue
+			}
+			if knownAuthKeys[nearest] {
+				nearest = "'" + nearest + "'"
+			}
+			parts = append(parts, fmt.Sprintf("did you mean %s instead of '%s'?", nearest, key))
+		}
+		parts = append(parts, "recognised keys are "+strings.Join(sortedKeysOf(knownAuthKeys), ", "))
+		return auth, errors.New(strings.Join(parts, " — "))
+	}
+
+	var err error
+	if auth.Method, err = optStringUnder(fields, "auth", "method"); err != nil {
+		return auth, err
+	}
+	// Folded like a key, because it is matched like one: `Service_Principal` and a value
+	// with a trailing space from a hand-edited env file should select the method they name
+	// rather than fail as an unknown one.
+	auth.Method = strings.ToLower(strings.TrimSpace(auth.Method))
+
+	for _, field := range []struct {
+		key    string
+		target *string
+	}{
+		{"tenant_id", &auth.TenantID},
+		{"client_id", &auth.ClientID},
+		{"certificate_path", &auth.CertificatePath},
+		{"resource_id", &auth.ResourceID},
+		{"object_id", &auth.ObjectID},
+		{"token_file_path", &auth.TokenFilePath},
+		{"redirect_url", &auth.RedirectURL},
+		{"scope", &auth.Scope},
+	} {
+		if *field.target, err = optStringUnder(fields, "auth", field.key); err != nil {
+			return auth, err
+		}
+	}
+
+	if auth.ClientSecret, err = optSecretString(fields, "auth", "client_secret"); err != nil {
+		return auth, err
+	}
+	if auth.CertificatePassword, err = optSecretString(fields, "auth", "certificate_password"); err != nil {
+		return auth, err
+	}
+
+	if auth.SendCertificateChain, err = optBoolUnder(fields, "auth", "send_certificate_chain"); err != nil {
+		return auth, err
+	}
+
+	// Seconds, like the pool's lifetimes.
+	timeout, err := optIntUnder(fields, "auth", "login_timeout", "login_timeout")
+	if err != nil {
+		return auth, err
+	}
+	if timeout < 0 {
+		return auth, fmt.Errorf("datasource config: key 'auth.login_timeout' must not be negative, got %d", timeout)
+	}
+	auth.LoginTimeout = time.Duration(timeout) * time.Second
+
+	return auth, nil
 }
 
 // foldKeys returns m with every key lowercased. A collision (the same key in two
@@ -333,9 +621,24 @@ func unknownKeyError(unknown []string) error {
 // MySQL DSN writes `user` and `pass`. Each is far enough from our spelling that no
 // threshold would match, and close enough in intent that the reader is certain they got it
 // right.
+//
+// The same holds for someone arriving from SQL Server: a go-mssqldb or ADO.NET connection
+// string says `encrypt`, `server`, `fedauth` and `ApplicationIntent`, and someone used to an
+// identity SDK writes `tenant_id` and `client_id` beside the host. The entries pointing into
+// `auth.` name the nested key, since that is where the setting lives here.
+//
+// Some names are deliberately absent. `tenant` and `cache` say too little at the top level to
+// point anywhere, and TestAnUnrelatedKeyGetsNoSuggestion pins that. `managed` reads the other
+// way round from external_schema: `managed: false` renamed as suggested would become
+// `external_schema: false`, which is the owned schema the reader meant to rule out. And
+// `TrustServerCertificate` has no key here until an engine defines one: pointing it at
+// `options` would hand Postgres and MySQL a parameter their servers refuse at connect time,
+// which is a worse failure than this one at boot.
 var keyAliases = map[string]string{
 	"sslmode":     "ssl",
 	"ssl_mode":    "ssl",
+	"encrypt":     "ssl",
+	"tls":         "ssl",
 	"dbname":      "db",
 	"db_name":     "db",
 	"database":    "db",
@@ -347,51 +650,55 @@ var keyAliases = map[string]string{
 	"hostname":    "host",
 	"addr":        "host",
 	"address":     "host",
+	"server":      "host",
 	"params":      "options",
 	"parameters":  "options",
 	"props":       "properties",
 	"pool":        "properties",
 	"connections": "properties",
+
+	"instance_name": "instance",
+
+	"fedauth":               "auth",
+	"authentication":        "auth",
+	"auth_method":           "auth",
+	"authentication_method": "auth",
+	"tenant_id":             "auth.tenant_id",
+	"client_id":             "auth.client_id",
+	"client_secret":         "auth.client_secret",
+
+	"applicationintent":  "read_only",
+	"application_intent": "read_only",
+	"readonly":           "read_only",
+
+	"unmanaged":    "external_schema",
+	"schema_owner": "external_schema",
+
+	"lazy": "lazy_connect",
 }
 
-// nearestKnownKey returns the known key closest to input, when one is close enough to be a
-// likely typo or a known confusion.
+// nearestKnownKey returns the top-level key closest to input; see nearestKey.
+func nearestKnownKey(input string) (string, bool) {
+	return nearestKey(input, knownKeys, keyAliases)
+}
+
+// nearestKey returns the key in known closest to input, when one is close enough to be a
+// likely typo, or the alias for input when it is a known confusion. An alias may name
+// something other than a key in known — a nested key such as auth.tenant_id, or a phrase —
+// so the caller decides how to quote it.
 //
 // The edit-distance threshold is deliberately tight. Suggesting 'db' for 'pool' on distance
 // alone would be worse than saying nothing: it reads as authoritative and sends the reader
 // to rename a key that was never meant to be one of ours. (`pool` does get a suggestion, but
 // from keyAliases, where it is a deliberate entry rather than a coincidence of spelling.)
-func nearestKnownKey(input string) (string, bool) {
+func nearestKey(input string, known map[string]bool, aliases map[string]string) (string, bool) {
 	lowered := strings.ToLower(input)
 
-	if alias, ok := keyAliases[lowered]; ok {
+	if alias, ok := aliases[lowered]; ok {
 		return alias, true
 	}
 
-	best := ""
-	bestDistance := 0
-	for _, known := range sortedKnownKeys() {
-		distance := editDistance(lowered, known)
-
-		// At most a third of the shorter name may differ, and never more than two edits.
-		limit := len(known)
-		if len(lowered) < limit {
-			limit = len(lowered)
-		}
-		limit /= 3
-		if limit > 2 {
-			limit = 2
-		}
-		if limit < 1 {
-			continue
-		}
-
-		if distance <= limit && (best == "" || distance < bestDistance) {
-			best, bestDistance = known, distance
-		}
-	}
-
-	return best, best != ""
+	return Suggest(lowered, sortedKeysOf(known))
 }
 
 // editDistance is Damerau-Levenshtein, counting a transposition as one edit rather than
@@ -473,22 +780,82 @@ func toStringMap(v any) (map[string]any, bool) {
 }
 
 func optString(raw map[string]any, key string) (string, error) {
+	return optStringUnder(raw, "", key)
+}
+
+// optStringUnder reads raw[key], naming it parent.key in an error.
+func optStringUnder(raw map[string]any, parent, key string) (string, error) {
 	v, ok := raw[key]
 	if !ok || v == nil {
 		return "", nil
 	}
+	if s, ok := scalarString(v); ok {
+		return s, nil
+	}
+	return "", fmt.Errorf("datasource config: key '%s' must be a string, got %T (%v)", qualify(parent, key), v, v)
+}
+
+// scalarString is v as the string optString accepts it as: a string itself, or an int or a
+// bool YAML read from an unquoted literal.
+func scalarString(v any) (string, bool) {
 	switch s := v.(type) {
 	case string:
-		return s, nil
+		return s, true
 	case int:
-		return strconv.Itoa(s), nil
+		return strconv.Itoa(s), true
 	case int64:
-		return strconv.FormatInt(s, 10), nil
+		return strconv.FormatInt(s, 10), true
 	case bool:
-		return strconv.FormatBool(s), nil
+		return strconv.FormatBool(s), true
 	default:
-		return "", fmt.Errorf("datasource config: key '%s' must be a string, got %T (%v)", key, v, v)
+		return "", false
 	}
+}
+
+// optPassword reads the top-level password as optString does, except that an error never
+// shows the value, for optSecretString's reason.
+//
+// It still converts an unquoted int or bool, as optString does, rather than refusing it the
+// way optSecretString does: `password: 123456` boots today, and refusing it would stop a
+// working deploy over a value that reads back as written. An unquoted literal that does not
+// read back — 0x1F, which YAML hands over as 31 — is a password that fails to sign in with
+// or without this, and the sign-in error names the login.
+func optPassword(raw map[string]any) (string, error) {
+	v, ok := raw["password"]
+	if !ok || v == nil {
+		return "", nil
+	}
+	if s, ok := scalarString(v); ok {
+		return s, nil
+	}
+	return "", fmt.Errorf("datasource config: key 'password' must be a string — quote it if it "+
+		"is written inline — got %T (the value is not shown, because it is a secret)", v)
+}
+
+// optSecretString reads a secret, which must be a string, and never puts the value it
+// found into an error.
+//
+// optString echoes the offending value, which is the right call for a host or a port and
+// the wrong one here: a boot error lands in the deploy log, the terminal scrollback and
+// whatever collects both, so a secret mistyped as a map or a number would be published by
+// the very message that reports it.
+//
+// It also refuses the numbers and booleans optString converts. A YAML scalar that parses
+// as one is no longer the text the operator wrote — an unquoted 0x1F becomes 31, and 1e3
+// becomes 1000 — so converting it back would hand the identity provider a secret that
+// looks right in the file and fails at sign-in. A value from a ${VAR} placeholder is
+// always a string, so this only ever stops a literal that needed quotes.
+func optSecretString(raw map[string]any, parent, key string) (string, error) {
+	v, ok := raw[key]
+	if !ok || v == nil {
+		return "", nil
+	}
+	if s, isString := v.(string); isString {
+		return s, nil
+	}
+	return "", fmt.Errorf("datasource config: key '%s' must be a string — quote it if it is "+
+		"written inline — got %T (the value is not shown, because it is a secret)",
+		qualify(parent, key), v)
 }
 
 func optInt(raw map[string]any, key string) (int, error) {
@@ -530,6 +897,11 @@ func optIntUnder(raw map[string]any, parent, key, displayKey string) (int, error
 }
 
 func optBool(raw map[string]any, key string) (bool, error) {
+	return optBoolUnder(raw, "", key)
+}
+
+// optBoolUnder reads raw[key], naming it parent.key in an error.
+func optBoolUnder(raw map[string]any, parent, key string) (bool, error) {
 	v, ok := raw[key]
 	if !ok || v == nil {
 		return false, nil
@@ -540,11 +912,11 @@ func optBool(raw map[string]any, key string) (bool, error) {
 	case string:
 		parsed, err := strconv.ParseBool(strings.TrimSpace(b))
 		if err != nil {
-			return false, fmt.Errorf("datasource config: key '%s' must be a boolean, got %q", key, b)
+			return false, fmt.Errorf("datasource config: key '%s' must be a boolean, got %q", qualify(parent, key), b)
 		}
 		return parsed, nil
 	default:
-		return false, fmt.Errorf("datasource config: key '%s' must be a boolean, got %T (%v)", key, v, v)
+		return false, fmt.Errorf("datasource config: key '%s' must be a boolean, got %T (%v)", qualify(parent, key), v, v)
 	}
 }
 
@@ -562,11 +934,17 @@ func optStringMap(raw map[string]any, key string) (map[string]string, error) {
 	// drivers are case-sensitive about them. Viper will already have lowercased
 	// anything read from a config file — see the note on DataSource.Options.
 
+	// An error names the option and never its value: options are where a driver's own
+	// credentials go when the typed config has no key for them, so a value may be a secret.
 	out := make(map[string]string, len(m))
 	for k, val := range m {
-		s, err := optString(map[string]any{k: val}, k)
-		if err != nil {
-			return nil, fmt.Errorf("datasource config: key '%s.%s' must be a scalar, got %T (%v)", key, k, val, val)
+		if val == nil {
+			out[k] = ""
+			continue
+		}
+		s, ok := scalarString(val)
+		if !ok {
+			return nil, fmt.Errorf("datasource config: key '%s.%s' must be a scalar, got %T (the value is not shown, since an option may carry a credential)", key, k, val)
 		}
 		out[k] = s
 	}

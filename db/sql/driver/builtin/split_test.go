@@ -85,6 +85,31 @@ func TestDbProviderLinksNeitherEngine(t *testing.T) {
 	}
 }
 
+// TestThePolicyGuardLinksNoEngine: db/sql/gorm/guard is installed by every engine's
+// datasource, so it must link none of them. It reads an engine's SQL through the lexicon the
+// engine hands it, and if it imported a driver to learn anything else, every engine would link
+// that one — the SQL Server engine the Postgres driver, say. The SQL Server names are checked
+// before that engine exists so that it cannot be the first to break the rule.
+func TestThePolicyGuardLinksNoEngine(t *testing.T) {
+	out, err := exec.Command("go", "list", "-deps", "github.com/osbits/gorgany/v2/db/sql/gorm/guard").CombinedOutput()
+	if err != nil {
+		t.Skipf("go list unavailable: %v", err)
+	}
+
+	deps := string(out)
+	assert.Contains(t, deps, "gorm.io/gorm", "the guard is a set of gorm callbacks")
+	for _, engine := range []string{
+		"github.com/jackc/pgx",
+		"github.com/go-sql-driver/mysql",
+		"gorm.io/driver/postgres",
+		"gorm.io/driver/mysql",
+		"gorm.io/driver/sqlserver",
+		"github.com/microsoft/go-mssqldb",
+	} {
+		assert.NotContainsf(t, deps, engine, "the guard must not link %s", engine)
+	}
+}
+
 // TestTheDriverNameConstantsAgree, since apps referenced builtin's before the split and the
 // single-engine packages expose their own.
 func TestTheDriverNameConstantsAgree(t *testing.T) {

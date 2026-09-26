@@ -105,16 +105,22 @@ func (e *Executor) CountRaw(ctx context.Context, sql string, args ...interface{}
 // ExecInsert runs q and reports any generated key, implementing
 // core.LastInsertIDExecutor.
 //
-// The key comes from the driver's sql.Result for this very statement, obtained via
-// GORM's ConnPool. That matters: on MySQL the value behind LAST_INSERT_ID() is
-// connection-scoped, so issuing a separate `SELECT LAST_INSERT_ID()` could be
-// served by a different pooled connection and return someone else's key, or zero.
-// Reading sql.Result cannot race that way, and inside a transaction ConnPool *is*
-// the *sql.Tx, so the read stays transactional.
+// The key comes from the driver's sql.Result for this very statement, obtained by
+// sending it on the statement's pool, Statement.ConnPool. That matters: on MySQL the
+// value behind LAST_INSERT_ID() is connection-scoped, so issuing a separate
+// `SELECT LAST_INSERT_ID()` could be served by a different pooled connection and
+// return someone else's key, or zero. Reading sql.Result cannot race that way.
+//
+// It is the statement's pool, not the handle's. The handle's, db.ConnPool, stays the
+// *sql.DB it was opened with even inside a transaction; the statement's is the
+// *sql.Tx there, so the INSERT runs in the transaction and is rolled back with it.
 //
 // A driver that does not implement LastInsertId — pgx, for one — leaves
 // HasLastInsertID false rather than reporting an error; Postgres reads generated
 // values back with RETURNING instead.
+//
+// Sending on the pool goes past gorm's callbacks, but not past a guard from
+// db/sql/gorm/guard, which guards the pool too: the INSERT is checked as it is sent.
 func (e *Executor) ExecInsert(ctx context.Context, query core.IQueryBuilder) core.InsertResult {
 	sql, args, err := query.ToSQL()
 	if err != nil {
@@ -122,7 +128,8 @@ func (e *Executor) ExecInsert(ctx context.Context, query core.IQueryBuilder) cor
 	}
 
 	db := e.db.WithContext(ctx)
-	if db.ConnPool == nil {
+	pool := db.Statement.ConnPool
+	if pool == nil {
 		// No pool to read a result from; fall back to a plain exec.
 		res := db.Exec(sql, args...)
 		return core.InsertResult{QueryResult: core.QueryResult{
@@ -131,7 +138,7 @@ func (e *Executor) ExecInsert(ctx context.Context, query core.IQueryBuilder) cor
 		}}
 	}
 
-	result, execErr := db.ConnPool.ExecContext(ctx, sql, args...)
+	result, execErr := pool.ExecContext(ctx, sql, args...)
 	if execErr != nil {
 		return core.InsertResult{QueryResult: core.QueryResult{Error: execErr}}
 	}
