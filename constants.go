@@ -13,7 +13,7 @@ package gorgany
 // It therefore gained the /v2 suffix along with everything else.
 const FrameworkGit = "github.com/osbits/gorgany/v2"
 
-const FrameworkVersion = "2.3.0"
+const FrameworkVersion = "2.3.1"
 
 type ExecType string
 
