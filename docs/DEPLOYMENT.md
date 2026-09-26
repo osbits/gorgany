@@ -285,7 +285,8 @@ same commands on the host from `/srv/myapp`, after `export IMAGE=<the tag>`:
    `docker compose -f compose.prod.yml run --rm migrate`. A failing migration exits `1`, and the
    release stops there.
 4. **Seed reference data**: `docker compose -f compose.prod.yml run --rm seed`. Each seeder runs
-   once per `Name()`, so the step is a no-op when nothing is new.
+   once per `Name()`, so the step is a no-op when nothing is new. A failing seeder exits `1`
+   with none of its rows saved, and the release stops there.
 5. **Roll the app**: `docker compose -f compose.prod.yml up -d --wait app`. `--wait` returns when
    the image's HEALTHCHECK passes, which means `/readyz` answered.
 6. Check that `/healthz` reports the new version.

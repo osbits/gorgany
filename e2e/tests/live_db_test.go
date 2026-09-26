@@ -1034,8 +1034,17 @@ func TestMigrateUpChildProcess(t *testing.T) {
 // returns its exit status and output.
 func runMigrateUpInChild(t *testing.T, scenario string) (int, string) {
 	t.Helper()
+	return runScenarioInChild(t, "TestMigrateUpChildProcess", migrateUpChildEnv, scenario)
+}
 
-	child := exec.Command(os.Args[0], "-test.run=^TestMigrateUpChildProcess$", "-test.count=1")
+// runScenarioInChild re-executes this test binary to run only the named child test, with
+// envVar set to scenario, and returns the child's exit status and output.
+func runScenarioInChild(t *testing.T, test, envVar, scenario string) (int, string) {
+	t.Helper()
+
+	// The timeout bounds a child that hangs, which a regression in db:seed's connection
+	// handling would do, rather than leaving it to the parent's much longer one.
+	child := exec.Command(os.Args[0], "-test.run=^"+test+"$", "-test.count=1", "-test.timeout=2m")
 
 	// The child is not a verification run, so it must not demand live cases of itself.
 	for _, entry := range os.Environ() {
@@ -1043,7 +1052,7 @@ func runMigrateUpInChild(t *testing.T, scenario string) (int, string) {
 			child.Env = append(child.Env, entry)
 		}
 	}
-	child.Env = append(child.Env, migrateUpChildEnv+"="+scenario)
+	child.Env = append(child.Env, envVar+"="+scenario)
 
 	output, err := child.CombinedOutput()
 	if err == nil {
@@ -1137,6 +1146,241 @@ func (m closureMigration) Up() core.MigrationClosure { return m.up }
 func (m closureMigration) Down() core.MigrationClosure {
 	return func(g *gorm.DB) error {
 		return g.Exec(`DROP TABLE IF EXISTS ` + migrateUpProbe).Error
+	}
+}
+
+// ------------------------------------------ db:seed commits a seeder with its row
+
+// seedChildEnv names the scenario TestSeedChildProcess runs. Like `db:migrate up`, a failed
+// `db:seed` ends with os.Exit(1), so the command runs in a child process.
+const seedChildEnv = "GORGANY_E2E_SEED_SCENARIO"
+
+// seedFailureMarker is what db:seed logs on its failure path. As with
+// migrateUpFailureMarker, it tells the command's exit 1 apart from a child whose own test
+// failed, which exits 1 too: the command's old panic reached the child as a failed
+// require.NotPanics.
+const seedFailureMarker = "Seeding has finished with error"
+
+// seedProbe is the model every scenario's seeder saves, so which of its rows survived is
+// directly observable. Its key is generated, so Save inserts it.
+type seedProbe struct {
+	ID    uint
+	Label string `gorm:"size:64"`
+}
+
+func (seedProbe) TableName() string { return "seed_probe" }
+
+// probeSeeder saves one seedProbe per label, in order.
+type probeSeeder struct {
+	name   string
+	labels []string
+}
+
+func (s probeSeeder) Name() string { return s.name }
+func (s probeSeeder) CollectInsertModels() []any {
+	models := make([]any, 0, len(s.labels))
+	for _, label := range s.labels {
+		models = append(models, &seedProbe{Label: label})
+	}
+	return models
+}
+
+type seedScenario struct {
+	config func() map[string]any
+	seeder probeSeeder
+	// prepare runs in the parent, after it has created the probe and seeders tables and
+	// before it starts the child. A seeder can only save rows, so a constraint that makes
+	// one of its writes fail is added here.
+	prepare func(*gorm.DB) error
+}
+
+// seedScenarios are the runs a child performs, by name.
+//
+// The command used to open one transaction for the whole run and then save every model,
+// and write the `seeders` row, on the pool instead. A model that failed to save left the
+// models before it committed, and the run panicked (exit 2). A row that could not be
+// written was not noticed: the models stayed, the seeder stayed unrecorded, and the run
+// exited 0. Either way the next run saved the models again.
+var seedScenarios = map[string]seedScenario{
+	// The control: without it, a child that failed for an unrelated reason would pass every
+	// assertion below that expects a failure.
+	"pg-succeeds": {pgConfig, probeSeeder{name: "probe_seeds", labels: []string{"one", "two"}}, nil},
+
+	// The idle transaction used to hold the pool's only connection while the lookup of the
+	// seeders table waited for it, so db:seed never finished.
+	"pg-one-connection": {pgOneConnectionConfig, probeSeeder{name: "probe_seeds", labels: []string{"one", "two"}}, nil},
+
+	// The second model fails a CHECK, after the first has been saved.
+	"pg-save-fails": {pgConfig, probeSeeder{name: "probe_save_fails", labels: []string{"one", "refused"}}, refuseProbeLabel},
+
+	// The duplicate passes the INSERT and fails the deferred check at COMMIT.
+	"pg-commit-fails": {pgConfig, probeSeeder{name: "probe_commit_fails", labels: []string{"same", "same"}}, deferProbeLabelUniqueness},
+
+	// Both models save, and the bookkeeping row is refused.
+	"pg-record-fails": {pgConfig, probeSeeder{name: "probe_record_fails", labels: []string{"one", "two"}}, refuseSeederRows},
+
+	"mysql-save-fails":   {mysqlConfig, probeSeeder{name: "probe_save_fails", labels: []string{"one", "refused"}}, refuseProbeLabel},
+	"mysql-record-fails": {mysqlConfig, probeSeeder{name: "probe_record_fails", labels: []string{"one", "two"}}, refuseSeederRows},
+}
+
+func pgOneConnectionConfig() map[string]any {
+	cfg := pgConfig()
+	cfg["properties"] = map[string]any{"maxOpenConnections": 1}
+	return cfg
+}
+
+func refuseProbeLabel(g *gorm.DB) error {
+	return g.Exec(`ALTER TABLE seed_probe ADD CONSTRAINT seed_probe_refused CHECK (label <> 'refused')`).Error
+}
+
+func deferProbeLabelUniqueness(g *gorm.DB) error {
+	return g.Exec(`ALTER TABLE seed_probe ADD CONSTRAINT seed_probe_label_unique UNIQUE (label) DEFERRABLE INITIALLY DEFERRED`).Error
+}
+
+func refuseSeederRows(g *gorm.DB) error {
+	return g.Exec(`ALTER TABLE seeders ADD CONSTRAINT seeders_refuse_rows CHECK (name = '')`).Error
+}
+
+// TestSeedChildProcess is the child runSeedInChild starts. In any other run it returns at
+// once.
+func TestSeedChildProcess(t *testing.T) {
+	name := os.Getenv(seedChildEnv)
+	if name == "" {
+		return
+	}
+
+	scenario, ok := seedScenarios[name]
+	require.True(t, ok, "unknown scenario %q", name)
+
+	viper.Set("databases", map[string]any{"default": scenario.config()})
+	runSeed(t, "default", scenario.seeder)
+}
+
+func runSeedInChild(t *testing.T, scenario string) (int, string) {
+	t.Helper()
+	return runScenarioInChild(t, "TestSeedChildProcess", seedChildEnv, scenario)
+}
+
+// runSeed invokes the real db:seed command with the given --datasource, through the
+// container, as runMigrate does for db:migrate.
+func runSeed(t *testing.T, datasource string, seeders ...core.ISeeder) {
+	t.Helper()
+
+	previousArgs := os.Args
+	os.Args = []string{"cli", "db:seed", "--datasource=" + datasource}
+	t.Cleanup(func() { os.Args = previousArgs })
+
+	c := service.NewContainer()
+	dbProvider := provider.NewDbProvider()
+	dbProvider.Register(c)
+
+	var dataContext core.IDataContext
+	require.NoError(t, c.Make(&dataContext))
+	for _, s := range seeders {
+		dataContext.AddSeeder(s)
+	}
+
+	cmd := &dbCmd.SeedCommand{}
+	require.NoError(t, c.Make(cmd))
+
+	require.NotPanics(t, func() { cmd.Execute(context.Background()) }, "db:seed must succeed")
+}
+
+// prepareSeedScenario leaves the probe and seeders tables empty, with the scenario's
+// constraint added, and drops both when the test ends.
+func prepareSeedScenario(t *testing.T, gormDb *gorm.DB, scenario string) {
+	t.Helper()
+
+	reset := func() {
+		assert.NoError(t, gormDb.Migrator().DropTable(&seedProbe{}))
+		assert.NoError(t, gormDb.Migrator().DropTable(&db.Seeder{}))
+	}
+	reset()
+	t.Cleanup(reset)
+
+	require.NoError(t, gormDb.AutoMigrate(&seedProbe{}, &db.Seeder{}))
+	if prepare := seedScenarios[scenario].prepare; prepare != nil {
+		require.NoError(t, prepare(gormDb))
+	}
+}
+
+func probeLabels(t *testing.T, gormDb *gorm.DB) []string {
+	t.Helper()
+
+	var labels []string
+	require.NoError(t, gormDb.Model(&seedProbe{}).Order("id").Pluck("label", &labels).Error)
+	return labels
+}
+
+func isSeeded(t *testing.T, gormDb *gorm.DB, name string) bool {
+	t.Helper()
+
+	var count int64
+	require.NoError(t, gormDb.Model(&db.Seeder{}).Where("name = ?", name).Count(&count).Error)
+	return count > 0
+}
+
+// assertSeedFailedCleanly runs a failing scenario and asserts that it failed the run and
+// left neither the seeder's rows nor its record behind.
+func assertSeedFailedCleanly(t *testing.T, gormDb *gorm.DB, scenario string) {
+	t.Helper()
+
+	prepareSeedScenario(t, gormDb, scenario)
+
+	code, output := runSeedInChild(t, scenario)
+	assert.Equal(t, 1, code, "a seeder that did not commit must fail the run:\n%s", output)
+	assert.Contains(t, output, seedFailureMarker)
+
+	assert.Empty(t, probeLabels(t, gormDb), "the seeder's rows must have been rolled back")
+	assert.False(t, isSeeded(t, gormDb, seedScenarios[scenario].seeder.name),
+		"and the seeder must not be recorded")
+}
+
+func TestSeedCommitsEachSeederWithItsRecordOnPostgres(t *testing.T) {
+	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
+		return pgv2.NewDataSource(pgConfig())
+	})
+	t.Cleanup(func() { ds.Close() })
+	gormDb := gormOf(t, ds)
+
+	for _, scenario := range []string{"pg-succeeds", "pg-one-connection"} {
+		t.Run(scenario, func(t *testing.T) {
+			prepareSeedScenario(t, gormDb, scenario)
+
+			code, output := runSeedInChild(t, scenario)
+			require.Equal(t, 0, code, "the seeder must succeed:\n%s", output)
+			assert.Equal(t, []string{"one", "two"}, probeLabels(t, gormDb))
+			assert.True(t, isSeeded(t, gormDb, "probe_seeds"))
+
+			// The second run finds the seeder recorded and saves nothing.
+			code, output = runSeedInChild(t, scenario)
+			require.Equal(t, 0, code, "a second run must succeed:\n%s", output)
+			assert.Equal(t, []string{"one", "two"}, probeLabels(t, gormDb))
+		})
+	}
+
+	for _, scenario := range []string{"pg-save-fails", "pg-commit-fails", "pg-record-fails"} {
+		t.Run(scenario, func(t *testing.T) {
+			assertSeedFailedCleanly(t, gormDb, scenario)
+		})
+	}
+}
+
+// TestSeedRollsBackAFailedSeederOnMySQL: a seeder only saves rows, which InnoDB rolls back,
+// so unlike a migration a failed seeder leaves nothing behind on MySQL either.
+func TestSeedRollsBackAFailedSeederOnMySQL(t *testing.T) {
+	requireMySQL(t)
+
+	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
+		return mysqlv2.NewDataSource(mysqlConfig())
+	})
+	t.Cleanup(func() { ds.Close() })
+	gormDb := gormOf(t, ds)
+
+	for _, scenario := range []string{"mysql-save-fails", "mysql-record-fails"} {
+		t.Run(scenario, func(t *testing.T) {
+			assertSeedFailedCleanly(t, gormDb, scenario)
+		})
 	}
 }
 

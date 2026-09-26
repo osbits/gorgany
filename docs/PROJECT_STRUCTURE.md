@@ -604,7 +604,12 @@ func All() []core.IMigration {
 - **`Down()` either reverses the migration or returns an error that says it cannot.** It never
   returns `nil` for a no-op.
 - **Seeders in `All()` are reference data** that every environment needs, production included.
-  Each runs once per `Name()`. They are not atomic, so keep each one small.
+  Each runs once per `Name()`. A seeder's rows and its row in `seeders` commit together, so a
+  failed seeder leaves nothing behind, on MySQL too, and runs in full on the next `db:seed`. The
+  failure exits `1`, and the seeders after it do not run. Up to and including v2.4.1, a seeder
+  that fails part-way keeps the rows it saved before the failure, and one whose row in `seeders`
+  cannot be written exits `0`; either runs again on the next `db:seed`. On those versions
+  `db:seed` also hangs on a datasource with `properties.maxOpenConnections: 1`.
 - **Development and e2e fixtures** live in `db/seeder/fixture` and are registered only when a
   config flag says so. The flag is not `MODE`, because e2e runs with `MODE=prod`. A convention
   that fails closed is `seed.fixtures: ${SEED_FIXTURES}` in `config.yml`, set to `true` in

@@ -7,6 +7,27 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- `db:seed` could leave a seeder half-applied, or applied but unrecorded, and in the second case
+  exit `0`. It opened a transaction for the run, then saved every model, and wrote the `seeders`
+  row, on the connection pool instead. A model that failed to save left the seeder's earlier
+  models committed and the seeder unrecorded, and the run panicked (exit `2`). A row that could
+  not be written was not checked, so the seeder stayed applied but unrecorded and the run exited
+  `0`. Either way the next `db:seed` saved the models again, duplicating them or failing on a
+  unique constraint. A failed read of the `seeders` table counted as "not seeded", and the
+  commit's error was discarded. The idle transaction also held a connection for the whole run,
+  so on a datasource with `properties.maxOpenConnections: 1` the command hung at its first read.
+  Each seeder's models and its `seeders` row are now saved in one transaction, a failed save,
+  insert, commit or read fails the run with exit `1`, and the seeders after it do not run. A
+  seeder only writes rows, which PostgreSQL and InnoDB both roll back, so a failed seeder leaves
+  nothing behind on either engine. `docs/PROJECT_STRUCTURE.md` no longer says seeders are not
+  atomic.
+
+---
+
 ## [2.4.1] - 2026-09-26
 
 ### Added
