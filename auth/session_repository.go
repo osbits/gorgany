@@ -31,10 +31,58 @@ func NewDbSessionRepository() *DbSessionRepository {
 	return &DbSessionRepository{}
 }
 
-func (r *DbSessionRepository) withOrm(operation func(*orm.ORM[*DbSessionEntity]) error) error {
+// sessionAccess is what an operation does to the sessions table, which decides whether the
+// default datasource's policy lets it run at all. See refuseAccess.
+type sessionAccess int
+
+const (
+	readsSessions sessionAccess = iota
+	writesSessions
+)
+
+// refuseAccess reports why dataSource's policy forbids access, or nil when it allows it.
+//
+// It asks core.PolicyOf rather than anything reachable through a session, and is consulted
+// before a session is opened, so a refused operation sends nothing to the database: no
+// statement, and no connection taken from the pool to find out.
+//
+// On an external_schema default even reads are refused. gorgany never creates the sessions
+// table there — db:migrate leaves its migrations out — so a table of that name belongs
+// to whoever owns the schema, and reading its rows as gorgany sessions would let foreign data
+// decide who is logged in. A read_only default refuses only writes: its sessions table, on a
+// replica of a database gorgany owns, is gorgany's own, and looking a session up changes
+// nothing.
+//
+// The provider already stops the boot for auth.session.storage: database on either kind of
+// default. This applies the same rule to a repository an app wires itself, and to a default
+// registered on the DBContext after that check ran.
+//
+// When both flags are set the refusal names external_schema, as every policy refusal does
+// (see core.DataSourcePolicy.Refusal), and reads are refused with it.
+func refuseAccess(dataSource dbCore.IDataSource, access sessionAccess) error {
+	refusal := dbCore.PolicyOf(dataSource).Refusal()
+	if refusal == nil || (refusal == dbCore.ErrReadOnly && access == readsSessions) {
+		return nil
+	}
+	return fmt.Errorf("session storage refuses datasource %q: %w", core.DefaultKeyInRegistrar, refusal)
+}
+
+// defaultDataSource resolves the datasource an operation of the given kind may use.
+func (r *DbSessionRepository) defaultDataSource(access sessionAccess) (dbCore.IDataSource, error) {
 	dataSource := r.dbContext.GetDataSource(core.DefaultKeyInRegistrar)
 	if dataSource == nil {
-		return fmt.Errorf("no data source available")
+		return nil, fmt.Errorf("no data source available")
+	}
+	if err := refuseAccess(dataSource, access); err != nil {
+		return nil, err
+	}
+	return dataSource, nil
+}
+
+func (r *DbSessionRepository) withOrm(access sessionAccess, operation func(*orm.ORM[*DbSessionEntity]) error) error {
+	dataSource, err := r.defaultDataSource(access)
+	if err != nil {
+		return err
 	}
 
 	dbSession, err := dataSource.NewSession()
@@ -49,7 +97,7 @@ func (r *DbSessionRepository) withOrm(operation func(*orm.ORM[*DbSessionEntity])
 
 func (r *DbSessionRepository) FindById(id string) (*DbSessionEntity, error) {
 	var session *DbSessionEntity
-	err := r.withOrm(func(orm *orm.ORM[*DbSessionEntity]) error {
+	err := r.withOrm(readsSessions, func(orm *orm.ORM[*DbSessionEntity]) error {
 		var findErr error
 		session, findErr = orm.Find(id)
 		return findErr
@@ -67,7 +115,7 @@ func (r *DbSessionRepository) FindById(id string) (*DbSessionEntity, error) {
 // UpdateExisting resolves that: it checks the row when the statement matched none, so a
 // no-op update of a live row still succeeds while a write with nowhere to land does not.
 func (r *DbSessionRepository) Save(session *DbSessionEntity) error {
-	return r.withOrm(func(o *orm.ORM[*DbSessionEntity]) error {
+	return r.withOrm(writesSessions, func(o *orm.ORM[*DbSessionEntity]) error {
 		if meta := session.GetMeta(); meta != nil && meta.IsLoaded {
 			return o.UpdateExisting(session)
 		}
@@ -76,7 +124,7 @@ func (r *DbSessionRepository) Save(session *DbSessionEntity) error {
 }
 
 func (r *DbSessionRepository) Delete(session *DbSessionEntity) error {
-	return r.withOrm(func(orm *orm.ORM[*DbSessionEntity]) error {
+	return r.withOrm(writesSessions, func(orm *orm.ORM[*DbSessionEntity]) error {
 		return orm.Delete(session)
 	})
 }
@@ -96,7 +144,7 @@ func (r *DbSessionRepository) DeleteById(id string) (bool, error) {
 	}
 
 	deleted := false
-	err := r.withSession(func(session dbCore.ISession) error {
+	err := r.withSession(writesSessions, func(session dbCore.ISession) error {
 		builder := session.Query().Delete((&DbSessionEntity{}).TableName()).
 			Where(&dbCore.BinaryCondition{Left: "id", Operator: "=", Right: id})
 
@@ -154,7 +202,7 @@ const BatchedExpiredDeleteSQL = `DELETE FROM sessions WHERE id IN ` +
 // enclosing transaction on purpose: the point is that each batch commits on its own, so a
 // sweep interrupted halfway keeps the work it already did.
 func (r *DbSessionRepository) DeleteExpired() error {
-	return r.withSession(func(session dbCore.ISession) error {
+	return r.withSession(writesSessions, func(session dbCore.ISession) error {
 		batch := SessionSweepBatchSize
 		if batch <= 0 {
 			batch = 1000
@@ -183,10 +231,10 @@ func (r *DbSessionRepository) DeleteExpired() error {
 
 // withSession hands over the session itself, for an operation that needs the executor rather
 // than the ORM — here, the RowsAffected that makes batching terminate.
-func (r *DbSessionRepository) withSession(operation func(dbCore.ISession) error) error {
-	dataSource := r.dbContext.GetDataSource(core.DefaultKeyInRegistrar)
-	if dataSource == nil {
-		return fmt.Errorf("no data source available")
+func (r *DbSessionRepository) withSession(access sessionAccess, operation func(dbCore.ISession) error) error {
+	dataSource, err := r.defaultDataSource(access)
+	if err != nil {
+		return err
 	}
 
 	dbSession, err := dataSource.NewSession()

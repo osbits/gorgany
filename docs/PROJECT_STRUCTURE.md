@@ -564,11 +564,16 @@ func All() []core.IMigration {
   integration tier's `TestMain` passes the same list to `testsupport.AddMigration`. A
   migration registered inline in a provider cannot be reused, and that alone keeps an
   application off the test harness.
-- **`cli db:migrate up` also applies two framework migrations**, the sessions table and its
-  version column, which `DbProvider.Boot` adds ahead of the app's list. An integration suite
+- **`cli db:migrate up` also applies two framework migrations** on `default`, the sessions
+  table and its version column, which `DbProvider.Boot` adds ahead of the app's list.
+  `db:migrate` runs them only when `default` is configured without `external_schema` or
+  `read_only`, and otherwise leaves them out and logs why (DEPLOYMENT.md, "More than one
+  datasource"). An integration suite
   that exercises database-backed sessions adds `NewSessionsMigration()` and
   `NewSessionsVersionMigration()` from `github.com/osbits/gorgany/v2/db/migration` ahead of
-  `migration.All()`.
+  `migration.All()`. Up to and including v2.4.3, `db:migrate` never leaves them out, so with
+  no `default` every `db:migrate` fails with `migration "create_sessions_table" targets
+  datasource "default", which is not configured`.
 - **`registry_test.go` fails on a migration file that `All()` does not list, and on a duplicate
   `Name()`.** An unlisted migration never runs, and nothing else notices.
 - **`Name()` is the key in the `migrations` table.** Renaming it runs the migration again. File
@@ -577,12 +582,22 @@ func All() []core.IMigration {
 - **`db:diff`'s output is a draft.** It writes `<timestamp>_migration.go` into `db/migration`,
   gofmt'd, with `DataSourceName()` returning the datasource it diffed. Its `Up()` runs each
   statement on the transaction `db:migrate` opens, and its `Down()` returns an error saying the
-  migration is not reversible. It runs on Postgres datasources only. It finds the differences
-  by running `CREATE TABLE` and `ALTER TABLE` in a transaction and rolling it back, and MySQL
-  commits DDL immediately, so it refuses a MySQL datasource before it runs anything. Write that
-  datasource's migrations by hand. Up to and including v2.4.0 it ran anyway: it created the
-  tables in the MySQL database it was comparing, and the draft then failed there with
-  "Table … already exists". Before committing it:
+  migration is not reversible. It diffs only the domains of the selected datasource: those
+  whose `DbConnectionName()` (or `DataSourceName()`) names it, and for `default` those that
+  name none. In an app with no `default`, those that name none are diffed against whichever
+  datasource is selected, and the run says so. A domain naming a datasource that is not
+  configured fails the run. It drafts no constraint of a relation to another datasource's
+  domain, and no struct column on the table of another datasource's domain that a domain
+  extends, and lists each one it leaves out: write a foreign key between two datasources that
+  share a database by hand. Up to and including v2.4.3, it diffs every registered domain, so
+  another datasource's tables are drafted as new tables for the selected one. It refuses an
+  `external_schema` or `read_only` datasource before anything else, and it runs on Postgres
+  datasources only. It finds the differences by running `CREATE TABLE` and `ALTER TABLE` in a
+  transaction and rolling it back, and MySQL commits DDL immediately, so it refuses a MySQL
+  datasource before it runs anything. Write that datasource's migrations by hand. Up to and
+  including v2.4.0 it ran anyway: it created the tables in the MySQL database it was
+  comparing, and the draft then failed there with "Table … already exists". Before committing
+  it:
   - review every statement: they are what GORM would run to match the domains, not a
     considered migration;
   - rename the file and keep its `Name()`;

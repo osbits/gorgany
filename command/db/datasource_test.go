@@ -13,14 +13,19 @@ import (
 
 // ------------------------------------------------------------------- test doubles
 
+// fakeDataSource reports policy through dbCore.PolicyReporter, as the Postgres and MySQL
+// datasources do. Its zero policy is an owned, writable datasource, which is what every
+// datasource was before the flags existed.
 type fakeDataSource struct {
 	driver any
 	err    error
+	policy dbCore.DataSourcePolicy
 }
 
 func (f *fakeDataSource) NewSession() (dbCore.ISession, error) { return nil, nil }
 func (f *fakeDataSource) GetDriver() (any, error)              { return f.driver, f.err }
 func (f *fakeDataSource) Close() error                         { return nil }
+func (f *fakeDataSource) Policy() dbCore.DataSourcePolicy      { return f.policy }
 
 type fakeDBContext struct {
 	sources map[string]dbCore.IDataSource

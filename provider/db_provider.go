@@ -183,6 +183,15 @@ func (p *DbProvider) Register(c core.IContainer) {
 		return
 	}
 
+	// Refused here rather than on the first request, and as a panic like every other
+	// configuration error in this method, because nothing later can repair it: the sessions
+	// table is never created on such a default (db:migrate leaves its migrations out there),
+	// and the session repository refuses to write there, so the app would boot and then fail
+	// every login.
+	if refusal := databaseSessionStorageRefusal(defaultConn); refusal != nil {
+		panic(refusal)
+	}
+
 	// Register Session as transient
 	c.TransientLazy(func() (dbCore.ISession, error) {
 		return defaultConn.NewSession()
@@ -197,6 +206,36 @@ func (p *DbProvider) Register(c core.IContainer) {
 	c.TransientLazy(func(session dbCore.ISession) dbCore.IQueryBuilder {
 		return session.Query()
 	})
+}
+
+// databaseSessionStorageRefusal reports why auth.session.storage: database cannot keep its
+// sessions on defaultConn, or nil when it can or the sessions are kept elsewhere.
+//
+// Database session storage writes a row on every login, touch and logout, into a table the
+// sessions migrations create — so it needs a default whose schema gorgany owns and which takes
+// writes. The key is read here as well as in AppProvider, which picks the storage, because this
+// is where the default connection has been built and its policy can be asked; AppProvider runs
+// before any connection exists.
+//
+// external_schema is reported ahead of read_only when both are set, as every policy refusal
+// reports it (dbCore.DataSourcePolicy.Refusal): it is the one that also rules out creating
+// the table, and the advice is the same either way.
+func databaseSessionStorageRefusal(defaultConn dbCore.IDataSource) error {
+	if viper.GetString("auth.session.storage") != "database" {
+		return nil
+	}
+
+	reason := dbCore.PolicyOf(defaultConn).Refusal()
+	if reason == nil {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"auth.session.storage: database keeps sessions in datasource %q, which refuses them: %w. "+
+			"Use auth.session.storage: memory, which is only correct for a single instance, or point %q "+
+			"at a database gorgany owns and configure this one under another name; see gorgany's "+
+			"docs/DEPLOYMENT.md, \"More than one instance\"",
+		core.DefaultKeyInRegistrar, reason, core.DefaultKeyInRegistrar)
 }
 
 func sortedNames(connections map[string]dbCore.IDataSource) []string {
@@ -220,10 +259,14 @@ func (p *DbProvider) Boot(c core.IContainer) {
 		db.SetDBContext(dbContext)
 	})
 
-	// Register sessions migrations. Order matters on a fresh install: the version column is
-	// added to a table create_sessions_table has to have made first.
+	// Register sessions migrations. They run only on a `default` configured without
+	// external_schema or read_only, and db:migrate decides that when it runs, with a line saying
+	// why it left them out (see dbCmd.OnOwnedDefault), rather than here: an app may register its
+	// `default` on the DBContext from a provider whose Boot runs after this one. Order matters
+	// on a fresh install: the version column is added to a table create_sessions_table has to
+	// have made first.
 	c.Invoke(func(dataContext core.IDataContext) {
-		dataContext.AddMigration(migration.NewSessionsMigration())
-		dataContext.AddMigration(migration.NewSessionsVersionMigration())
+		dataContext.AddMigration(dbCmd.OnOwnedDefault(migration.NewSessionsMigration()))
+		dataContext.AddMigration(dbCmd.OnOwnedDefault(migration.NewSessionsVersionMigration()))
 	})
 }

@@ -44,17 +44,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     but not enforced reads as a guarantee it is not. Use a read-only database role.
   - `external_schema: true` says another system owns the schema. The datasource reports it in
     its policy, and its connection refuses DDL through the `db/sql/gorm/guard` guard below.
-    That guard is all that enforces it in this change. `db:migrate`, `db:seed` and `db:diff`
-    do not refuse such a datasource up front yet. They fail at the first DDL they send, such as
-    creating their `migrations` or `seeders` table or a migration's own statement, with the
-    guard's `core.ErrExternalSchema` refusal. Where those tables already exist, a migration or
-    seeder that only writes rows still runs and is recorded. The provider still attaches the
-    sessions migrations to such a `default`, and cascading saves are not refused. The command
-    and provider refusals are the next change. DDL the guard cannot see is not refused either:
-    what server code runs on a statement's behalf, such as a `CALL`, or a function or
-    procedure that runs DDL, and a statement sent on the `*sql.DB` that `DB()` returns. Dynamic
-    SQL, whose statement the guard cannot read, is refused instead: a Postgres `DO` block and
-    MySQL's `PREPARE … FROM`. A principal without DDL rights is the guarantee.
+    `db:migrate`, `db:seed` and `db:diff` refuse such a datasource before they send any SQL,
+    `db:migrate` leaves the sessions migrations out on such a `default`, and database session
+    storage refuses one (see Changed). Cascading saves are not refused yet. DDL the guard
+    cannot see is not refused either: what server code runs on a statement's behalf, such as
+    a `CALL`, or a function or procedure that runs DDL, and a statement sent on the `*sql.DB`
+    that `DB()` returns. Dynamic SQL, whose statement the guard cannot read, is refused
+    instead: a Postgres `DO` block and MySQL's `PREPARE … FROM`. A principal without DDL rights
+    is the guarantee.
   - `lazy_connect: true` works on both engines. The constructor opens no connection, so the
     first query opens the first one, and an unreachable server or a bad credential surfaces
     there rather than at boot. On MySQL it also skips gorm.io/driver/mysql's `SELECT VERSION()`.
@@ -72,13 +69,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   flag, and a constructor written before they existed ignores them. A config that sets neither
   boots as before.
 - `core.DataSourcePolicy`, `core.PolicyReporter`, `core.PolicyOf`, `core.IsExternalSchema` and
-  `core.IsReadOnly`: what a datasource's configuration lets gorgany do beyond reading. Any
+  `core.IsReadOnly`: what a datasource's configuration lets gorgany do beyond reading, and
+  `DataSourcePolicy.Refusal()`, the sentinel a refusal under it wraps. Any
   `IDataSource` can be asked. One that does not implement `PolicyReporter`, including one an app
   wrote, reports the zero policy, which is what gorgany assumed of every datasource before, and
   `driver.New` refuses it when its config sets either flag (see above). The Postgres and MySQL
   datasources implement it. Every policy refusal, from whichever layer, wraps
   `core.ErrExternalSchema` or `core.ErrReadOnly`, so `errors.Is` tells a refusal from a database
-  error.
+  error, and names `external_schema` when both flags are set.
 - SQL guards in `db/sql/core`, which never quote the SQL in their errors. A refusal names what
   it refused in the guard's own words, as in `INSERT statement refused`:
   - `GuardReadOnlySQL` checks every word, for SQL written by hand. It refuses the words that
@@ -166,9 +164,97 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `tcp:`, `,1433` or `:1433`, or `\instance`, and a comma-separated host list is recognised
   when any host in it is. `Suggest` is the "did you mean" matcher behind the config's own
   suggestions, exported so an engine can suggest its own vocabulary with the same threshold.
+- `RequireOwnedDatasource`, `ResolveOwnedGorm`, `DomainDatasourceOf` and `OnOwnedDefault` in
+  `command/db`: the ownership check the db commands make (see Changed); the datasource a
+  registered domain belongs to, for an app's own schema-changing command, or the error a
+  domain's naming method panicked with; and the wrapper that has `db:migrate` run a migration
+  only on a `default` that can take it, which `DbProvider.Boot` puts on the sessions
+  migrations. `ResolveGorm` is unchanged and checks no policy.
 
 ### Changed
 
+- `db:migrate`, `db:seed` and `db:diff` refuse a datasource with `external_schema: true` or
+  `read_only: true` before they send any SQL, their own `migrations` or `seeders` table
+  included, and exit 2, as for a datasource that is not configured. The error names the flag
+  and the key to change, and wraps `core.ErrExternalSchema` or `core.ErrReadOnly`;
+  `external_schema` is named when both are set. `db:diff` checks this ahead of its dialect, so
+  an external MySQL datasource is told about its schema, not about DDL that commits. A
+  registered migration aimed at such a datasource makes every `db:migrate` run exit 2, and a
+  registered seeder every `db:seed` run, whichever datasource it selects, rather than being
+  skipped, since it can never run.
+
+  **Upgrade note:** both flags are new in this release, so nothing that booted on 2.4.3 is
+  refused. Delete or retarget any migration or seeder aimed at a datasource you mark
+  `external_schema`.
+
+  **Deployment note:** when you set `external_schema: true` on a datasource that has a
+  `migrate-<name>` or `seed-<name>` service, remove the service in the same release, or the
+  migrate or seed step exits 2 (DEPLOYMENT.md, "More than one datasource").
+- `db:migrate up` and `db:seed` create their `migrations` or `seeders` table only when a
+  migration or seeder targets the selected datasource. Otherwise they log that none does and
+  send nothing. `db:migrate down` never creates the table: when no migration targets the
+  datasource, or it has no `migrations` table, it logs that there is nothing to roll back and
+  exits 0. A lookup of the table that fails, such as on an unreachable server, exits 2, as a
+  failed read of the table does.
+
+  **Upgrade note:** a datasource that nothing targets no longer gets an empty `migrations` or
+  `seeders` table. `db:migrate down` on a datasource that no registered migration targets now
+  exits 0 without reading `migrations`. It used to exit 2 when the newest row there had no
+  registered code, which still happens once any migration targets the datasource; register
+  the migration to roll it back. A run with nothing to do logs different lines, with the same
+  exit status: `db:migrate up` logs `No migrations target datasource "<name>"` instead of
+  `Migrating datasource "<name>"` and `Success`, `db:seed` logs `No seeders target datasource
+  "<name>"` instead of `Seeding datasource "<name>"` and `Seeding finished.`, and `db:migrate
+  down` logs `Nothing to roll back on datasource "<name>"` followed by `: no migrations target
+  it` or ``: it has no `migrations` table``. A pipeline that looks for the old lines has to
+  look for these as well.
+- `db:diff` diffs only the domains of the selected datasource. A domain belongs to the
+  datasource its `DbConnectionName()` (`core.DbConnectionNamer`) names, else its
+  `DataSourceName()`, else `default`, and each one skipped is listed. In an app with no
+  `default`, a domain that names none is diffed against the selected datasource, as before,
+  and the run says how many were. Every registered domain used to be diffed, so a second
+  datasource's tables were drafted as new tables for the first. Nor does it draft a
+  constraint of a relation to another datasource's domain, or the struct column of another
+  datasource's table that a domain extends; it lists each one, and a foreign key between two
+  datasources that share a database is written by hand. Such a constraint sat on, or
+  referenced, the other datasource's table: where that is another database the diff failed
+  with the driver's error, and where it is the same one the draft altered a table whose
+  schema may be another system's. Domains are diffed in the order of their registration keys,
+  so one schema drafts one migration. A domain naming a datasource that is not configured
+  exits 2, and so does one whose `DbConnectionName()` or `DataSourceName()` panics when
+  asked, with an error naming the domain. Every domain in `./pkg/domain` must still be
+  registered, whichever datasource it belongs to.
+
+  **Upgrade note:** give each domain of a datasource other than `default` a
+  `DbConnectionName()` that returns its name. Without one it counts as `default`'s: `db:diff`
+  keeps drafting its table for `default`, and never for the datasource it is on. In an app
+  with no `default`, `db:diff --datasource=<name>` diffs such a domain against `<name>`, as
+  2.4.3 did, whichever `<name>` is selected.
+- `db:migrate` runs the two sessions migrations only on a `default` configured without
+  `external_schema` or `read_only`. Otherwise it leaves them out of the run, whichever
+  datasource it selects, and logs why at info level: their DDL would create a table in
+  another system's schema, or be refused. `DbProvider.Boot` still adds them to every app,
+  wrapped with `OnOwnedDefault`, and `db:migrate` asks when it runs, so a `default` an app
+  registers on the DBContext after `DbProvider.Boot` counts.
+
+  **Upgrade note:** a `default` without either flag gets both migrations, as before. With no
+  `default`, see Fixed. The two entries `DataContext.Migrations()` holds for them are
+  wrappers now, so a type assertion to `*migration.SessionsMigration` no longer matches them;
+  their names are unchanged.
+- `auth.session.storage: database` refuses a `default` with `external_schema` or `read_only`.
+  `DbProvider.Register` panics, so the boot exits 2, with an error that wraps the sentinel and
+  names the alternatives. `auth.DbSessionRepository` refuses the same by itself, before it
+  opens a session: every operation on an `external_schema` default, whose `sessions` table
+  would be the schema owner's, and `Save` and the deletes on a `read_only` one, where
+  `FindById` still reads.
+
+  **Upgrade note:** the flags are new in this release, so nothing that booted on 2.4.3 is
+  refused.
+
+  **Deployment note:** before you mark `default` `external_schema` or `read_only` with
+  database sessions, configure the database gorgany owns as `default` and this one under its
+  own name, or switch to `memory`, which is only correct for a single instance
+  (DEPLOYMENT.md, "More than one instance").
 - An unresolved placeholder in `databases.<name>.auth.client_secret` or
   `databases.<name>.auth.certificate_password` now stops the boot, as one in `auth.jwt.secret`
   does. It is not blanked, and `KeepUnresolvedLiterals()` does not change that. A blank
@@ -231,6 +317,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `createdat`. Pass a column to `OrderBy`, or quote it yourself. Text passed to `OrderByRaw`
   is SQL and is no longer bound, so request-derived input must never reach it, as its
   documentation has always said.
+- `db:migrate --datasource=<name>` failed in an app with no `default` datasource, whichever
+  datasource it named, with `migration "create_sessions_table" targets datasource "default",
+  which is not configured`. `DbProvider.Boot` attaches the sessions migrations, which run on
+  `default`, whatever is configured. `db:migrate` now leaves them out when there is no
+  `default` (see Changed), so an app with only named datasources, and its sessions in memory,
+  can migrate them.
 
 ---
 

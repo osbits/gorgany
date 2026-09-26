@@ -368,8 +368,13 @@ The tag's pipeline builds and tests that image, and offers the manual deploy.
 `db:migrate up` and `db:seed` operate on one datasource: `default`, unless
 `--datasource=<name>` says otherwise. Each skips the migrations or seeders that target another
 datasource, and logs each at info level. Put the flag after `up` or `down`:
-`db:migrate --datasource=<name> up` exits 2. `db:diff --datasource=<name>` diffs one datasource,
-and refuses a MySQL one (PROJECT_STRUCTURE.md, "Migrations and seeders").
+`db:migrate --datasource=<name> up` exits 2. `db:diff --datasource=<name>` diffs the domains of
+one datasource, and refuses a MySQL one (PROJECT_STRUCTURE.md, "Migrations and seeders").
+`db:migrate up` and `db:seed` create their `migrations` or `seeders` table only when something
+targets the datasource. A run with nothing to do logs `No migrations target datasource "<name>"`
+or `No seeders target datasource "<name>"` and exits 0. Up to and including v2.4.3, every run
+creates the table, on a datasource that nothing targets too, and logs `Success` or `Seeding
+finished.`.
 
 Up to and including v2.3.2, `db:seed` cannot select a datasource. `cli db:seed
 --datasource=<name>` exits 2 with `flag provided but not defined: -datasource`, because the
@@ -383,6 +388,16 @@ seeds `default` only, so keep seeders there.
   run each in the migrate step. If that datasource has seeders, add a `seed-<name>` service the
   same way, with `command: ["/app/cli", "db:seed", "--datasource=<name>"]`, and run it in the
   seed step.
+- A datasource with `external_schema: true` is migrated by the system that owns its schema.
+  Give it no `migrate-<name>` or `seed-<name>` service, and no migration or seeder:
+  `db:migrate`, `db:seed` and `db:diff` refuse it before they send any SQL. `db:migrate` also
+  refuses every run, whichever datasource it selects, while a registered migration targets
+  it, and `db:seed` while a registered seeder does. Each refusal exits 2. They refuse
+  `read_only: true` the same way.
+- The sessions table lives on `default`. `db:migrate` runs the sessions migrations only on a
+  `default` without `external_schema` or `read_only`, and `auth.session.storage: database`
+  refuses such a `default` at boot. Configure the database gorgany owns as `default` and the
+  external one under its own name ("More than one instance").
 - Back up each database.
 - Make `/readyz` ping every datasource the application cannot serve without.
 

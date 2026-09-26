@@ -55,6 +55,24 @@ func PolicyOf(ds IDataSource) DataSourcePolicy {
 	return reporter.Policy()
 }
 
+// Refusal returns the sentinel a refusal under p wraps: ErrExternalSchema when the schema is
+// owned outside gorgany, else ErrReadOnly when writes are refused, else nil.
+//
+// external_schema comes first when both flags are set. It is the stronger statement, and the
+// one an operator has to change: removing read_only alone would leave the schema off limits.
+// Every layer that refuses on policy — the db commands, the provider and the session
+// repository — takes the sentinel from here, so they all name the same flag, and a later
+// change to what either flag means changes that choice in one place.
+func (p DataSourcePolicy) Refusal() error {
+	switch {
+	case p.ExternalSchema:
+		return ErrExternalSchema
+	case p.ReadOnly:
+		return ErrReadOnly
+	}
+	return nil
+}
+
 // IsExternalSchema reports whether ds's schema is owned outside gorgany.
 func IsExternalSchema(ds IDataSource) bool { return PolicyOf(ds).ExternalSchema }
 

@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"text/template"
@@ -54,8 +55,12 @@ type DiffCommand struct {
 
 	modelStructAlreadyAdded map[string]bool
 	pivotTables             map[string]bool
-	domainContext           core.IDomainContext `container:"inject"`
-	dbContext               core.IDBContext     `container:"inject"`
+	// otherDomains are the registered domains of the other datasources, by struct type. The
+	// domains being diffed may relate to them, and the DDL gorm derives from such a relation
+	// lands on, or points at, a table of theirs. See migrateModelConstraints.
+	otherDomains  map[reflect.Type]otherDomain
+	domainContext core.IDomainContext `container:"inject"`
+	dbContext     core.IDBContext     `container:"inject"`
 }
 
 func (thiz DiffCommand) GetName() string {
@@ -68,15 +73,26 @@ func (thiz DiffCommand) GetName() string {
 // always diffed against the first database no matter which one the models belonged
 // to. The datasource now comes from --datasource, defaulting to `default`.
 //
-// A datasource whose dialect is not in TransactionalDDLDialects is refused before
-// anything runs against it.
+// An external_schema or read_only datasource is refused first, on its configuration
+// (see RequireOwnedDatasource): the diff runs real CREATE TABLE and ALTER TABLE in a
+// transaction, and the migration it drafts is one gorgany would then be asked to run
+// there. That check comes before the dialect's, so such a datasource is told why it is
+// refused rather than that its dialect commits DDL. A datasource whose dialect is not in
+// TransactionalDDLDialects is refused next, before anything runs against it.
+//
+// Only the domains that belong to the datasource (see domainsFor) are diffed. Every
+// registered domain used to be, so a second datasource's tables were drafted as new
+// tables for the first. Every domain in ./pkg/domain must still be registered, whichever
+// datasource it belongs to. Nor is a constraint drafted that involves another datasource's
+// domain, whether it would sit on that domain's table or reference it (see
+// migrateModelConstraints).
 func (thiz DiffCommand) Execute(ctx context.Context) {
 	thiz.modelStructAlreadyAdded = make(map[string]bool)
 	thiz.pivotTables = make(map[string]bool)
 
 	datasource := SelectedDatasource()
 
-	gormDb, err := ResolveGorm(thiz.dbContext, datasource)
+	gormDb, err := ResolveOwnedGorm(thiz.dbContext, datasource, thiz.GetName())
 	if err != nil {
 		panic(err)
 	}
@@ -87,6 +103,13 @@ func (thiz DiffCommand) Execute(ctx context.Context) {
 
 	fmt.Printf("Diffing against datasource %q\n", datasource)
 
+	modelsMap := thiz.domainContext.GetDomains()
+	domains, otherDomains, err := domainsFor(modelsMap, datasource, thiz.dbContext)
+	if err != nil {
+		panic(err)
+	}
+	thiz.otherDomains = otherDomains
+
 	tx := gormDb.Begin()
 	defer tx.Rollback()
 
@@ -96,7 +119,6 @@ func (thiz DiffCommand) Execute(ctx context.Context) {
 	})
 
 	moduleName := util.ModuleName()
-	modelsMap := thiz.domainContext.GetDomains()
 
 	pkgInfos, err := util.ScanDir("./pkg/domain")
 	if err != nil {
@@ -121,7 +143,7 @@ func (thiz DiffCommand) Execute(ctx context.Context) {
 		}
 	}
 
-	for _, model := range modelsMap {
+	for _, model := range domains {
 		err := thiz.migrateModel(model, tx)
 		if err != nil {
 			rType := reflect.TypeOf(model)
@@ -131,7 +153,7 @@ func (thiz DiffCommand) Execute(ctx context.Context) {
 	}
 
 	migrator := tx.Migrator()
-	for _, model := range modelsMap {
+	for _, model := range domains {
 		rType := reflect.TypeOf(model)
 		err := thiz.migrateModelConstraints(rType, &statements, migrator)
 		if err != nil {
@@ -211,6 +233,17 @@ func (thiz DiffCommand) migratePivatTable(model any, tx *gorm.DB) error {
 	return nil
 }
 
+// migrateModelConstraints drafts the constraints of rModel's relations, and the struct column
+// of the table it extends.
+//
+// A relation to a domain of another datasource drafts neither. gorm puts a has-one or has-many
+// foreign key on the related table and a belongs-to one on this table, referencing the
+// related one, so either way the statement names the other datasource's table. The draft runs
+// on the datasource being diffed. Where the two are separate databases, that table is not
+// there, and the ALTER TABLE failed the diff with the driver's error; where they share one,
+// it was DDL on, or a new dependency of, a table whose datasource may be external_schema.
+// Nor is a table extended that belongs to another datasource. Each one skipped is printed,
+// and a constraint between datasources that share a database is written by hand.
 func (thiz DiffCommand) migrateModelConstraints(rModel reflect.Type, statements *[]string, migrator gorm.Migrator) error {
 	namingStrategyService := schema.NamingStrategy{}
 	alreadyExtends := false
@@ -228,6 +261,16 @@ func (thiz DiffCommand) migrateModelConstraints(rModel reflect.Type, statements 
 		if rField.Anonymous && rField.Type.Kind() == reflect.Struct && orm.IsParamInTagExists(rField.Tag, core.GorganyORMExtends) {
 			if alreadyExtends {
 				return fmt.Errorf("Gorgany ORM only supports one struct extension!")
+			}
+
+			// The parent's table is another datasource's, so neither its struct column nor
+			// its constraints are this diff's to draft: the draft runs on the datasource
+			// being diffed, and the parent's schema may not be gorgany's at all.
+			if other, ok := thiz.otherDomains[rField.Type]; ok {
+				alreadyExtends = true
+				fmt.Printf("Skipping the %s column for %s: the domain it extends, %s, belongs to datasource %q\n",
+					plugin.StructModelColumn(), rModel.Name(), other.key, other.datasource)
+				continue
 			}
 
 			tableName := namingStrategyService.TableName(rField.Type.Name())
@@ -262,6 +305,12 @@ func (thiz DiffCommand) migrateModelConstraints(rModel reflect.Type, statements 
 		rvModel := reflect.New(indirectRModel)
 		model := rvModel.Interface()
 
+		if other, ok := thiz.otherDatasourceConstraint(model, rField.Name); ok {
+			fmt.Printf("Skipping the constraint of %s.%s: it involves domain %s, which belongs to datasource %q\n",
+				rModel.Name(), rField.Name, other.key, other.datasource)
+			continue
+		}
+
 		if migrator.HasConstraint(model, rField.Name) {
 			continue
 		}
@@ -272,6 +321,122 @@ func (thiz DiffCommand) migrateModelConstraints(rModel reflect.Type, statements 
 
 	}
 	return nil
+}
+
+// otherDomain is a registered domain of a datasource other than the one being diffed: its
+// registration key, and that datasource.
+type otherDomain struct {
+	key        string
+	datasource string
+}
+
+// domainsFor returns the registered domains that belong to datasource, in the order of
+// their registration keys, and prints a line for each one it leaves out. It also returns
+// the ones it leaves out, by struct type, for migrateModelConstraints.
+//
+// A domain belongs to the datasource DomainDatasourceOf names, with one exception. A domain
+// that declares none belongs to `default`, but in an app with no `default` it is diffed
+// against the selected datasource, as every domain was before db:diff looked at datasources,
+// and a line says so: such an app kept its domains on named datasources and diffed them with
+// --datasource, and refusing them now would fail every diff until each domain declared one.
+//
+// The order is fixed so that two diffs of the same schema draft the same migration; it
+// used to follow map iteration, which Go randomises. A domain naming a datasource that is
+// not configured is an error rather than a skip, as a migration naming one is (see
+// PartitionByDatasource): it would never be diffed anywhere, and never say so. So is a
+// domain whose naming method panics when asked. A domain of an external_schema or
+// read_only datasource is skipped like any other datasource's: its rows may be read (and,
+// unless read_only, written) through the ORM, and only its schema is off limits.
+func domainsFor(domains map[string]any, datasource string, dbContext core.IDBContext) ([]any, map[reflect.Type]otherDomain, error) {
+	keys := make([]string, 0, len(domains))
+	for key := range domains {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	isConfigured := IsConfigured(dbContext)
+	selected := make([]any, 0, len(keys))
+	others := make(map[reflect.Type]otherDomain)
+	undeclared := 0
+	for _, key := range keys {
+		model := domains[key]
+		target, declared, err := declaredDomainDatasource(model)
+		if err != nil {
+			return nil, nil, fmt.Errorf("domain %s: %w", key, err)
+		}
+		if !declared {
+			target = core.DefaultKeyInRegistrar
+			if !isConfigured(target) {
+				target = datasource
+				undeclared++
+			}
+		}
+
+		if target == datasource {
+			selected = append(selected, model)
+			continue
+		}
+		if !isConfigured(target) {
+			return nil, nil, fmt.Errorf(
+				"domain %s belongs to datasource %q, which is not configured under the `databases` key",
+				key, target)
+		}
+		fmt.Printf("Skipping domain %s: it belongs to datasource %q, not %q\n", key, target, datasource)
+		if model == nil {
+			continue
+		}
+		// A type registered under two keys is named by the first.
+		if rType := util.IndirectType(reflect.TypeOf(model)); others[rType] == (otherDomain{}) {
+			others[rType] = otherDomain{key: key, datasource: target}
+		}
+	}
+
+	if undeclared > 0 {
+		fmt.Printf("No %q datasource is configured, so the %d domain(s) that declare no datasource are "+
+			"diffed against %q; give each a DbConnectionName() to diff it against its own datasource\n",
+			core.DefaultKeyInRegistrar, undeclared, datasource)
+	}
+	return selected, others, nil
+}
+
+// otherDatasourceConstraint reports the domain of another datasource that the constraint of
+// model's field involves, as the table it would sit on or the table it would reference.
+//
+// It finds the constraint as gorm's migrator does for a field's name: the one the
+// relationship declared by that field defines.
+func (thiz DiffCommand) otherDatasourceConstraint(model any, field string) (otherDomain, bool) {
+	if len(thiz.otherDomains) == 0 {
+		return otherDomain{}, false
+	}
+
+	parsed := model2.GetDomainSchemeCache().ParseDomain(model)
+	if parsed == nil {
+		return otherDomain{}, false
+	}
+	relationField := parsed.LookUpField(field)
+	if relationField == nil {
+		return otherDomain{}, false
+	}
+
+	for _, relation := range parsed.Relationships.Relations {
+		if relation.Field != relationField {
+			continue
+		}
+		constraint := relation.ParseConstraint()
+		if constraint == nil {
+			continue
+		}
+		for _, side := range []*schema.Schema{constraint.Schema, constraint.ReferenceSchema} {
+			if side == nil {
+				continue
+			}
+			if other, ok := thiz.otherDomains[side.ModelType]; ok {
+				return other, true
+			}
+		}
+		break
+	}
+	return otherDomain{}, false
 }
 
 // requireTransactionalDDL refuses a datasource whose dialect would commit the DDL that

@@ -54,6 +54,15 @@ func TestPolicyOfReportsTheImplementation(t *testing.T) {
 	})
 }
 
+// TestPolicyRefusalNamesTheSchemaFirst: every layer that refuses on policy takes its sentinel
+// from Refusal, so external_schema is named when both flags are set, whichever layer refuses.
+func TestPolicyRefusalNamesTheSchemaFirst(t *testing.T) {
+	assert.NoError(t, dbCore.DataSourcePolicy{}.Refusal())
+	assert.Same(t, dbCore.ErrExternalSchema, dbCore.DataSourcePolicy{ExternalSchema: true}.Refusal())
+	assert.Same(t, dbCore.ErrReadOnly, dbCore.DataSourcePolicy{ReadOnly: true}.Refusal())
+	assert.Same(t, dbCore.ErrExternalSchema, dbCore.DataSourcePolicy{ExternalSchema: true, ReadOnly: true}.Refusal())
+}
+
 func TestPolicySentinelsSurviveWrapping(t *testing.T) {
 	wrapped := fmt.Errorf("db:migrate --datasource=legacy: %w", dbCore.ErrExternalSchema)
 	assert.ErrorIs(t, wrapped, dbCore.ErrExternalSchema)

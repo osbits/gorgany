@@ -175,8 +175,9 @@ func newNoteService(t *testing.T) *NoteService {
   run that migration's `Up()`, and assert on the result.
 - **The whole chain runs on every integration run.** The harness applies `migration.All()` once,
   in the first test that asks for a database, so a broken migration fails the run.
-  `cli db:migrate up` also applies the framework's two sessions migrations first; add them to
-  `AddMigration` when a test needs the `sessions` table (PROJECT_STRUCTURE.md).
+  `cli db:migrate up` also applies the framework's two sessions migrations first, on an owned
+  `default`; add them to `AddMigration` when a test needs the `sessions` table
+  (PROJECT_STRUCTURE.md).
 
 ## The e2e tier
 

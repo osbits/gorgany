@@ -27,6 +27,7 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -45,6 +46,7 @@ import (
 	_ "github.com/osbits/gorgany/v2/db/sql/driver/builtin"
 	mysqlv2 "github.com/osbits/gorgany/v2/db/sql/gorm/mysql/v2"
 	pgv2 "github.com/osbits/gorgany/v2/db/sql/gorm/postgres/v2"
+	"github.com/osbits/gorgany/v2/model"
 	"github.com/osbits/gorgany/v2/provider"
 	"github.com/osbits/gorgany/v2/service"
 	"github.com/spf13/viper"
@@ -1382,6 +1384,272 @@ func TestSeedRollsBackAFailedSeederOnMySQL(t *testing.T) {
 			assertSeedFailedCleanly(t, gormDb, scenario)
 		})
 	}
+}
+
+// ------------------------------- db:* refuse a datasource whose schema another system owns
+
+// ownershipChildEnv names the scenario TestOwnershipRefusalChildProcess runs.
+//
+// db:migrate, db:seed and db:diff refuse an external_schema datasource as a configuration
+// error, which they report by panicking, so the run exits 2, as it does for a datasource that
+// is not configured, and not 1, as a migration that fails does. That status is what is under
+// test, and it would end this test binary too, so the command runs in a child process.
+const ownershipChildEnv = "GORGANY_E2E_OWNERSHIP_SCENARIO"
+
+// ownershipProbe stands for a table the external schema's owner created. A refused command
+// must leave it as it found it, columns and rows.
+const ownershipProbe = "ownership_probe"
+
+// ownershipCreated is the table the scenarios' migration creates if it is ever run.
+const ownershipCreated = "ownership_created"
+
+// ownershipProbeRow is a row of the owner's table. It is also the domain the db:diff
+// scenarios register, and it belongs to the external datasource.
+type ownershipProbeRow struct {
+	ID    int64  `gorm:"primaryKey;autoIncrement"`
+	Label string `gorm:"size:64"`
+}
+
+func (ownershipProbeRow) TableName() string        { return ownershipProbe }
+func (ownershipProbeRow) DbConnectionName() string { return "legacy" }
+
+// legacySeeder is a seeder aimed at the external datasource.
+type legacySeeder struct{}
+
+func (legacySeeder) Name() string           { return "legacy_probe_rows" }
+func (legacySeeder) DataSourceName() string { return "legacy" }
+func (legacySeeder) CollectInsertModels() []any {
+	return []any{&ownershipProbeRow{Label: "seeded"}}
+}
+
+// ownershipCommand is a db command a child runs, and the refusal it must end with.
+type ownershipCommand struct {
+	args    []string
+	refusal string
+}
+
+// ownershipCommands are the runs a child performs, by name. Every child registers a
+// migration and a seeder aimed at `legacy`, so the runs that select the owned `default` are
+// refused too: an item aimed at an external datasource can never run, and is refused on
+// every run rather than skipped on the others.
+//
+// The commands used to create their `migrations` or `seeders` table first, before they knew
+// whether anything targeted the datasource, or whether it was gorgany's to change.
+var ownershipCommands = map[string]ownershipCommand{
+	"migrate-up": {
+		[]string{"db:migrate", "up", "--datasource=legacy"},
+		`db:migrate refuses datasource "legacy": its schema is owned outside gorgany (external_schema: true)`,
+	},
+	"migrate-down": {
+		[]string{"db:migrate", "down", "--datasource=legacy", "--steps=1"},
+		`db:migrate refuses datasource "legacy": its schema is owned outside gorgany (external_schema: true)`,
+	},
+	"seed": {
+		[]string{"db:seed", "--datasource=legacy"},
+		`db:seed refuses datasource "legacy": its schema is owned outside gorgany (external_schema: true)`,
+	},
+	// On MySQL this is refused for its schema, not for a dialect that commits DDL.
+	"diff": {
+		[]string{"db:diff", "--datasource=legacy"},
+		`db:diff refuses datasource "legacy": its schema is owned outside gorgany (external_schema: true)`,
+	},
+	"migrate-up-default": {
+		[]string{"db:migrate", "up", "--datasource=default"},
+		`migration "legacy_table" targets datasource "legacy", which is external_schema: true`,
+	},
+	"seed-default": {
+		[]string{"db:seed", "--datasource=default"},
+		`seeder "legacy_probe_rows" targets datasource "legacy", which is external_schema: true`,
+	},
+}
+
+// logControl is the scenario that shows the statement log the refusals are checked against
+// is on: it sends one statement on `legacy` and exits 0.
+const logControl = "log-control"
+
+var ownershipEngines = map[string]func() map[string]any{"pg": pgConfig, "mysql": mysqlConfig}
+
+// loggedConfig is config() with every statement the datasource sends written to the child's
+// output, so a child that sent one shows it.
+func loggedConfig(config func() map[string]any) map[string]any {
+	cfg := config()
+	cfg["log"] = true
+	return cfg
+}
+
+// TestOwnershipRefusalChildProcess is the child runOwnershipScenario starts. In any other run
+// it returns at once.
+//
+// `default` and `legacy` are one database, `legacy` with external_schema: true, so that "no
+// bookkeeping table was created" covers both.
+func TestOwnershipRefusalChildProcess(t *testing.T) {
+	name := os.Getenv(ownershipChildEnv)
+	if name == "" {
+		return
+	}
+
+	engine, commandName, _ := strings.Cut(name, ":")
+	config, ok := ownershipEngines[engine]
+	require.True(t, ok, "unknown engine in scenario %q", name)
+
+	legacy := loggedConfig(config)
+	legacy["external_schema"] = true
+	viper.Set("databases", map[string]any{"default": loggedConfig(config), "legacy": legacy})
+
+	c := service.NewContainer()
+	provider.NewDbProvider().Register(c)
+	require.NoError(t, c.SingletonLazy(func() core.IDomainContext { return &model.DomainContext{} }))
+
+	if commandName == logControl {
+		var dbContext core.IDBContext
+		require.NoError(t, c.Make(&dbContext))
+		legacyGorm, err := dbCmd.ResolveGorm(dbContext, "legacy")
+		require.NoError(t, err)
+		require.NoError(t, legacyGorm.Exec(`SELECT 1`).Error)
+		return
+	}
+
+	command, ok := ownershipCommands[commandName]
+	require.True(t, ok, "unknown command in scenario %q", name)
+
+	previousArgs := os.Args
+	os.Args = append([]string{"cli"}, command.args...)
+	t.Cleanup(func() { os.Args = previousArgs })
+
+	var dataContext core.IDataContext
+	require.NoError(t, c.Make(&dataContext))
+	dataContext.AddMigration(scopedMigration{name: "legacy_table", target: "legacy", table: ownershipCreated})
+	dataContext.AddSeeder(legacySeeder{})
+
+	var domainContext core.IDomainContext
+	require.NoError(t, c.Make(&domainContext))
+	domainContext.RegisterDomain("tests.ownershipProbeRow", ownershipProbeRow{})
+
+	var cmd interface{ Execute(context.Context) }
+	switch command.args[0] {
+	case "db:migrate":
+		cmd = &dbCmd.MigrateCommand{}
+	case "db:seed":
+		cmd = &dbCmd.SeedCommand{}
+	case "db:diff":
+		cmd = &dbCmd.DiffCommand{}
+	}
+	require.NoError(t, c.Make(cmd))
+
+	// Not under require.NotPanics: the refusal is the panic, and the exit 2 it ends this
+	// child with is what the parent asserts.
+	cmd.Execute(context.Background())
+	t.Fatalf("%v returned instead of refusing", command.args)
+}
+
+// runOwnershipScenario runs one command of ownershipCommands, or logControl, on engine in a
+// child process and returns its exit status and output.
+func runOwnershipScenario(t *testing.T, engine, command string) (int, string) {
+	t.Helper()
+	return runScenarioInChild(t, "TestOwnershipRefusalChildProcess", ownershipChildEnv, engine+":"+command)
+}
+
+// resetOwnershipProbe leaves the owner's table with one row, and no table the commands
+// create, and drops them all when the test ends.
+func resetOwnershipProbe(t *testing.T, owner *gorm.DB) {
+	t.Helper()
+
+	reset := func() {
+		assert.NoError(t, owner.Migrator().DropTable(ownershipProbe, ownershipCreated, &db.Migration{}, &db.Seeder{}))
+	}
+	reset()
+	t.Cleanup(reset)
+
+	require.NoError(t, owner.AutoMigrate(&ownershipProbeRow{}))
+	require.NoError(t, owner.Create(&ownershipProbeRow{Label: "owner"}).Error)
+}
+
+// tableInInformationSchema reports whether the connected database has the table, asking
+// information_schema rather than gorm's Migrator, which the commands under test use.
+func tableInInformationSchema(t *testing.T, g *gorm.DB, table string) bool {
+	t.Helper()
+
+	schema := "current_schema()"
+	if g.Dialector.Name() == "mysql" {
+		schema = "DATABASE()"
+	}
+
+	var count int64
+	require.NoError(t, g.Raw(
+		`SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = `+schema+` AND table_name = ?`,
+		table,
+	).Scan(&count).Error)
+	return count > 0
+}
+
+func ownershipProbeLabels(t *testing.T, g *gorm.DB) []string {
+	t.Helper()
+
+	var labels []string
+	require.NoError(t, g.Model(&ownershipProbeRow{}).Order("id").Pluck("label", &labels).Error)
+	return labels
+}
+
+// assertDbCommandsRefuseAnExternalSchema runs every command of ownershipCommands on engine
+// and asserts that each exits 2 with its refusal, having sent no statement: no bookkeeping
+// table, no table of the migration's, and the owner's table as it was.
+func assertDbCommandsRefuseAnExternalSchema(t *testing.T, engine string, owner *gorm.DB) {
+	t.Helper()
+
+	// Without it, "no statement was logged" below would pass for a log that is off.
+	t.Run(logControl, func(t *testing.T) {
+		code, output := runOwnershipScenario(t, engine, logControl)
+		require.Equal(t, 0, code, "the control must succeed:\n%s", output)
+		require.Contains(t, output, "[rows:", "the child's datasources must log the statements they send")
+	})
+
+	names := make([]string, 0, len(ownershipCommands))
+	for name := range ownershipCommands {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		t.Run(name, func(t *testing.T) {
+			resetOwnershipProbe(t, owner)
+			columns := describeTable(t, owner, ownershipProbe)
+
+			code, output := runOwnershipScenario(t, engine, name)
+
+			assert.Equal(t, 2, code, "a refusal is a configuration error, which exits 2:\n%s", output)
+			assert.Contains(t, output, ownershipCommands[name].refusal)
+			assert.NotContains(t, output, "statement refused",
+				"the command must refuse before the connection's DDL guard has a statement to refuse")
+			assert.NotContains(t, output, "commits DDL immediately")
+			assert.NotContains(t, output, "[rows:", "no statement may be sent, on either datasource")
+
+			for _, table := range []string{"migrations", "seeders", ownershipCreated} {
+				assert.Falsef(t, tableInInformationSchema(t, owner, table), "no %s table may be created", table)
+			}
+			assert.Equal(t, columns, describeTable(t, owner, ownershipProbe), "the owner's table keeps its columns")
+			assert.Equal(t, []string{"owner"}, ownershipProbeLabels(t, owner), "and its rows")
+		})
+	}
+}
+
+func TestDbCommandsRefuseAnExternalSchemaOnPostgres(t *testing.T) {
+	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
+		return pgv2.NewDataSource(pgConfig())
+	})
+	t.Cleanup(func() { assert.NoError(t, ds.Close()) })
+
+	assertDbCommandsRefuseAnExternalSchema(t, "pg", gormOf(t, ds))
+}
+
+func TestDbCommandsRefuseAnExternalSchemaOnMySQL(t *testing.T) {
+	requireMySQL(t)
+
+	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
+		return mysqlv2.NewDataSource(mysqlConfig())
+	})
+	t.Cleanup(func() { assert.NoError(t, ds.Close()) })
+
+	assertDbCommandsRefuseAnExternalSchema(t, "mysql", gormOf(t, ds))
 }
 
 // ============================================================ A1: ORM on MySQL

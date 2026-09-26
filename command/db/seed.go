@@ -38,23 +38,24 @@ func (thiz SeedCommand) GetName() string {
 //
 // Each seeder commits with its row in `seeders` or not at all (see applySeeder). The
 // first failure stops the run with exit 1, and the seeders before it stay applied.
+//
+// An external_schema or read_only datasource, and a seeder aimed at one, are refused
+// before any SQL, as a configuration error (exit 2). The `seeders` table used to be
+// created before the seeders were even partitioned, so every run left one behind, in a
+// database gorgany does not own too; it is now created only when a seeder targets the
+// datasource.
 func (thiz SeedCommand) Execute(ctx context.Context) {
 	datasource := SelectedDatasource()
 
-	gormInstance, err := ResolveGorm(thiz.dbContext, datasource)
+	gormInstance, err := ResolveOwnedGorm(thiz.dbContext, datasource, thiz.GetName())
 	if err != nil {
 		panic(err)
 	}
 
-	err = gormInstance.AutoMigrate(&db.Seeder{})
-	if err != nil {
-		panic(fmt.Errorf("unable to migrate table `seeders` on datasource %q: %w", datasource, err))
-	}
-
-	seeders, skipped, err := PartitionByDatasource(
+	seeders, skipped, err := partitionOwned(
 		thiz.dataContext.Seeders(),
 		datasource,
-		IsConfigured(thiz.dbContext),
+		thiz.dbContext,
 		func(s core.ISeeder) string { return fmt.Sprintf("seeder %q", s.Name()) },
 	)
 	if err != nil {
@@ -63,6 +64,16 @@ func (thiz SeedCommand) Execute(ctx context.Context) {
 	for _, s := range skipped {
 		log.Log().Infof("Skipping seeder %s: it targets datasource %q, not %q",
 			s.Name(), TargetDatasourceOf(s), datasource)
+	}
+
+	if len(seeders) == 0 {
+		log.Log().Infof("No seeders target datasource %q", datasource)
+		return
+	}
+
+	err = gormInstance.AutoMigrate(&db.Seeder{})
+	if err != nil {
+		panic(fmt.Errorf("unable to migrate table `seeders` on datasource %q: %w", datasource, err))
 	}
 
 	log.Log().Infof("Seeding datasource %q", datasource)
