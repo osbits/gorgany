@@ -361,17 +361,23 @@ The tag's pipeline builds and tests that image, and offers the manual deploy.
 
 ## More than one datasource
 
-`db:migrate up` operates on one datasource: `default`, unless `--datasource=<name>` says
-otherwise. It skips migrations that target another datasource, and logs each at info level.
-`db:seed` cannot select a datasource in v2.2.1. `cli db:seed --datasource=<name>` exits 2
-with `flag provided but not defined: -datasource`, because the console's flag parser sees the
-flag before the command reads it. So `db:seed` seeds `default` only; keep seeders there.
+`db:migrate up` and `db:seed` operate on one datasource: `default`, unless
+`--datasource=<name>` says otherwise. Each skips the migrations or seeders that target another
+datasource, and logs each at info level. Put the flag after `up` or `down`:
+`db:migrate --datasource=<name> up` exits 2.
 
-- A migration for a second database implements `DataSourceName() string` and stays in the same
-  `All()`.
+Up to and including v2.3.2, `db:seed` cannot select a datasource. `cli db:seed
+--datasource=<name>` exits 2 with `flag provided but not defined: -datasource`, because the
+console's flag parser rejects a flag the command does not declare. On those versions `db:seed`
+seeds `default` only, so keep seeders there.
+
+- A migration or seeder for a second database implements `DataSourceName() string` and stays in
+  the same `All()`.
 - Add one `migrate-<name>` service per extra datasource to `compose.prod.yml`, with
   `command: ["/app/cli", "db:migrate", "up", "--datasource=<name>"]` and the `ops` profile, and
-  run each in the migrate step.
+  run each in the migrate step. If that datasource has seeders, add a `seed-<name>` service the
+  same way, with `command: ["/app/cli", "db:seed", "--datasource=<name>"]`, and run it in the
+  seed step.
 - Back up each database.
 - Make `/readyz` ping every datasource the application cannot serve without.
 

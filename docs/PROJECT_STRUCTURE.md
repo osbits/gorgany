@@ -570,19 +570,32 @@ func All() []core.IMigration {
 - **`Name()` is the key in the `migrations` table.** Renaming it runs the migration again. File
   names are free: name new files `YYYYMMDDHHMMSS_<what>.go`, and the struct
   `Migration<14 digits>`.
-- **`db:diff`'s output is a draft.** It writes `<timestamp>_migration.go` into `db/migration`.
-  Before committing it:
+- **`db:diff`'s output is a draft.** It writes `<timestamp>_migration.go` into `db/migration`,
+  gofmt'd, with `DataSourceName()` returning the datasource it diffed. Its `Up()` runs each
+  statement on the transaction `db:migrate` opens, and its `Down()` returns an error saying the
+  migration is not reversible. Before committing it:
+  - review every statement: they are what GORM would run to match the domains, not a
+    considered migration;
   - rename the file and keep its `Name()`;
-  - run `gofmt -w` on it;
-  - replace each `sql.Exec("…")` with `dbGorm.Exec("…").Error`. As generated, the statements
-    run on the connection pool, outside the transaction `db:migrate` opened, so a failure
-    leaves the earlier statements applied and unrecorded;
-  - write a real `Down()`: the generated one returns `nil`;
+  - write a real `Down()`, or keep the error when the change cannot be undone;
   - append the struct to `All()`.
+
+  Up to and including v2.3.2, the draft is unformatted, is created with mode `0777` before the
+  umask, runs its statements through `dbGorm.DB()` (the connection pool, outside the
+  transaction, so a failure leaves the earlier statements applied and unrecorded), has every `"`
+  stripped from them, and has a `Down()` that returns `nil`. On those versions, also run
+  `gofmt -w` and `chmod 644` on it, replace each `sql.Exec("…")` with
+  `dbGorm.Exec("…").Error`, re-quote identifiers that need it (reserved words, mixed case), and
+  make `Down()` return an error.
 - **Migrations import nothing from the module.** A migration that calls into `pkg/service`
   changes meaning whenever the service does. Copy what it needs into the file.
 - **A failing migration exits non-zero, and later migrations do not run.** That is what lets a
-  deploy stop at the migrate step (DEPLOYMENT.md).
+  deploy stop at the migrate step (DEPLOYMENT.md). A migration and its row in `migrations`
+  commit together, so on PostgreSQL a failed migration leaves nothing behind. MySQL commits each
+  DDL statement implicitly, so there a migration that fails part-way keeps the statements before
+  the failure: give each MySQL migration one DDL statement. Up to and including v2.3.2, a
+  migration whose COMMIT fails is recorded as applied anyway, one whose row cannot be written
+  runs again on the next deploy, and both runs exit `0`.
 - **`Down()` either reverses the migration or returns an error that says it cannot.** It never
   returns `nil` for a no-op.
 - **Seeders in `All()` are reference data** that every environment needs, production included.

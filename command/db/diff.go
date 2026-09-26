@@ -3,7 +3,6 @@ package db
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"github.com/osbits/gorgany/v2"
 	"github.com/osbits/gorgany/v2/app/core"
@@ -12,6 +11,7 @@ import (
 	"github.com/osbits/gorgany/v2/db/sql/gorm/plugin"
 	model2 "github.com/osbits/gorgany/v2/service/cache"
 	"github.com/osbits/gorgany/v2/util"
+	"go/format"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 	"os"
@@ -19,7 +19,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
-	"strings"
+	"strconv"
 	"text/template"
 	"time"
 )
@@ -29,6 +29,12 @@ const MigrationDir = "db/migration"
 var AllowedTypesToMigrate = []string{"gorm.io/gorm.DeletedAt", gorgany.FrameworkGit + "/model.File", "time.Time"}
 
 type DiffCommand struct {
+	// Datasource declares --datasource to command.Resolver, whose flag parser rejects
+	// every flag a command does not declare: without it `cli db:diff --datasource=x`
+	// exited 2 before Execute ran. Execute reads the value through SelectedDatasource,
+	// as db:migrate does.
+	Datasource string `command:"flag,name=datasource,default=default,description=datasource to diff against (a key under databases)"`
+
 	modelStructAlreadyAdded map[string]bool
 	pivotTables             map[string]bool
 	domainContext           core.IDomainContext `container:"inject"`
@@ -110,7 +116,7 @@ func (thiz DiffCommand) Execute(ctx context.Context) {
 		}
 	}
 
-	thiz.generateMigration(statements)
+	thiz.generateMigration(statements, datasource)
 }
 
 func (thiz DiffCommand) migrateModel(model any, tx *gorm.DB) error {
@@ -247,53 +253,85 @@ func (thiz DiffCommand) isColumnExists(tableName string, columnName string) bool
 	return count > 0
 }
 
-func (thiz DiffCommand) generateMigration(statements []string) {
+func (thiz DiffCommand) generateMigration(statements []string, datasource string) {
 	if len(statements) == 0 {
 		fmt.Println("DB has actual state")
 		return
 	}
 
-	ddls := make([]string, 0)
-	for _, statement := range statements {
-		ddls = append(ddls, strings.ReplaceAll(statement, "\"", ""))
+	fileName, source, err := renderMigration(statements, datasource, time.Now())
+	if err != nil {
+		panic(err)
 	}
 
+	// 0755 and 0644, not os.ModePerm: a source file has no business being executable or
+	// world-writable.
+	if err := os.MkdirAll(MigrationDir, 0o755); err != nil {
+		panic(err)
+	}
+	if err := os.WriteFile(path.Join(MigrationDir, fileName), source, 0o644); err != nil {
+		panic(err)
+	}
+
+	fmt.Printf("File %s/%s successfully generated\n", MigrationDir, fileName)
+}
+
+// renderMigration returns the file name and the gofmt'd source of a migration that runs
+// statements, in order, on datasource.
+//
+// The template used to run the statements through dbGorm.DB(), which on the transaction
+// db:migrate passes in returns the underlying pool, so they ran outside the transaction:
+// a failure left the earlier statements applied and the migration unrecorded. Its Down()
+// returned nil, so `db:migrate down` recorded a rollback that changed nothing. And every
+// `"` was stripped from the statements so they could be pasted between quotes, which
+// broke identifiers that need quoting, such as reserved words and mixed-case names.
+func renderMigration(statements []string, datasource string, now time.Time) (string, []byte, error) {
 	_, callerFilename, _, _ := runtime.Caller(0)
 	dir := filepath.Dir(callerFilename)
 
 	content, err := os.ReadFile(filepath.Join(dir, "../../resource/template/command/db_diff.html"))
 	if err != nil {
-		panic(err)
+		return "", nil, err
 	}
 
-	tpl, err := template.New("db_diff").Parse(string(content))
+	tpl, err := template.New("db_diff").
+		Funcs(template.FuncMap{"goString": goStringLiteral}).
+		Parse(string(content))
 	if err != nil {
-		panic(err)
+		return "", nil, err
 	}
 
-	writer := new(bytes.Buffer)
-
-	now := time.Now()
 	name := now.Format("20060102_150405.000")
-	structName := "Migration" + now.Format("20060102150405")
-	fileName := now.Format("20060102150405") + "_migration.go"
-
-	err = tpl.Execute(writer, map[string]any{"Name": name, "StructName": structName, "Statements": ddls, "FrameworkModuleName": gorgany.FrameworkGit})
+	writer := new(bytes.Buffer)
+	err = tpl.Execute(writer, map[string]any{
+		"Name":                name,
+		"StructName":          "Migration" + now.Format("20060102150405"),
+		"Datasource":          datasource,
+		"Statements":          statements,
+		"NotReversible":       fmt.Sprintf("migration %s is not reversible: db:diff does not generate Down()", name),
+		"FrameworkModuleName": gorgany.FrameworkGit,
+	})
 	if err != nil {
-		panic(err)
+		return "", nil, err
 	}
 
-	if _, err := os.Stat(MigrationDir); errors.Is(err, os.ErrNotExist) {
-		err := os.Mkdir(MigrationDir, os.ModePerm)
-		if err != nil {
-			panic(err)
-		}
-	}
-
-	err = os.WriteFile(path.Join(MigrationDir, fileName), writer.Bytes(), os.ModePerm)
+	// gofmt the output. The template's indentation is not gofmt's, and a generated file
+	// that fails `gofmt -l` fails every CI format gate the moment it is committed.
+	source, err := format.Source(writer.Bytes())
 	if err != nil {
-		panic(err)
+		return "", nil, fmt.Errorf("db:diff: the generated migration does not parse: %w", err)
 	}
 
-	fmt.Printf("File %s/%s successfully generated\n", MigrationDir, fileName)
+	return now.Format("20060102150405") + "_migration.go", source, nil
+}
+
+// goStringLiteral renders s as a Go string literal: plainly quoted when nothing in it
+// needs escaping, backquoted when it can be, so DDL with quoted identifiers stays
+// readable, and quoted with escapes otherwise.
+func goStringLiteral(s string) string {
+	quoted := strconv.Quote(s)
+	if quoted == `"`+s+`"` || !strconv.CanBackquote(s) {
+		return quoted
+	}
+	return "`" + s + "`"
 }

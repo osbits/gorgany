@@ -26,7 +26,9 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"os/exec"
 	"strconv"
+	"strings"
 
 	"github.com/osbits/gorgany/v2/auth"
 	"os"
@@ -938,6 +940,197 @@ func isApplied(t *testing.T, gormDb *gorm.DB, name string) bool {
 	var count int64
 	require.NoError(t, gormDb.Model(&db.Migration{}).Where("name = ?", name).Count(&count).Error)
 	return count > 0
+}
+
+// ------------------------------------ db:migrate up records only what it commits
+
+// migrateUpChildEnv names the scenario TestMigrateUpChildProcess runs.
+//
+// `db:migrate up` ends a failed run with os.Exit(1). That exit status is what is under
+// test, and it would end this test binary too, so the command runs in a re-executed copy
+// of the binary and the parent reads the child's exit status and then the database.
+const migrateUpChildEnv = "GORGANY_E2E_MIGRATE_UP_SCENARIO"
+
+// migrateUpProbe is the table every scenario's migration creates, so whether the schema
+// change survived is directly observable.
+const migrateUpProbe = "migrate_up_probe"
+
+type migrateUpScenario struct {
+	config    func() map[string]any
+	migration closureMigration
+}
+
+// migrateUpScenarios are the runs a child performs, by name.
+//
+// The command used to commit the migration's transaction without checking the error and
+// then write the bookkeeping row on the pool, outside the transaction, without checking
+// that error either. So a migration whose COMMIT failed was recorded as applied although
+// its schema change had been rolled back, and one whose row could not be written stayed
+// applied but unrecorded, to run again on the next deploy. Both runs exited 0.
+var migrateUpScenarios = map[string]migrateUpScenario{
+	// The control: without it, a child that failed for an unrelated reason would pass every
+	// assertion below that expects a failure.
+	"pg-succeeds": {pgConfig, closureMigration{name: "probe_succeeds", up: createProbe}},
+
+	// The duplicate passes the INSERT and fails the deferred check at COMMIT, which is a
+	// commit failure a real server produces rather than one a fake driver pretends to.
+	"pg-commit-fails": {pgConfig, closureMigration{name: "probe_commit_fails", up: func(g *gorm.DB) error {
+		if err := g.Exec(`CREATE TABLE ` + migrateUpProbe + ` (id INT UNIQUE DEFERRABLE INITIALLY DEFERRED)`).Error; err != nil {
+			return err
+		}
+		return g.Exec(`INSERT INTO ` + migrateUpProbe + ` VALUES (1), (1)`).Error
+	}}},
+
+	// A migration that swallows a statement's error leaves PostgreSQL's transaction
+	// aborted, so nothing after it can commit, however the closure returns.
+	"pg-transaction-aborted": {pgConfig, closureMigration{name: "probe_transaction_aborted", up: func(g *gorm.DB) error {
+		if err := createProbe(g); err != nil {
+			return err
+		}
+		_ = g.Exec(`SELECT * FROM table_that_does_not_exist_anywhere`).Error
+		return nil
+	}}},
+
+	// The bookkeeping row is refused by a constraint the migration itself adds.
+	"pg-record-fails": {pgConfig, closureMigration{name: "probe_record_fails", up: refuseBookkeepingRows}},
+
+	"mysql-record-fails": {mysqlConfig, closureMigration{name: "probe_record_fails", up: refuseBookkeepingRows}},
+}
+
+func createProbe(g *gorm.DB) error {
+	return g.Exec(`CREATE TABLE ` + migrateUpProbe + ` (id INT)`).Error
+}
+
+func refuseBookkeepingRows(g *gorm.DB) error {
+	if err := createProbe(g); err != nil {
+		return err
+	}
+	return g.Exec(`ALTER TABLE migrations ADD CONSTRAINT migrations_refuse_rows CHECK (name = '')`).Error
+}
+
+// TestMigrateUpChildProcess is the child runMigrateUpInChild starts. In any other run it
+// returns at once.
+func TestMigrateUpChildProcess(t *testing.T) {
+	name := os.Getenv(migrateUpChildEnv)
+	if name == "" {
+		return
+	}
+
+	scenario, ok := migrateUpScenarios[name]
+	require.True(t, ok, "unknown scenario %q", name)
+
+	viper.Set("databases", map[string]any{"default": scenario.config()})
+	runMigrateUp(t, "default", scenario.migration)
+}
+
+// runMigrateUpInChild runs the named scenario's `db:migrate up` in a child process and
+// returns its exit status and output.
+func runMigrateUpInChild(t *testing.T, scenario string) (int, string) {
+	t.Helper()
+
+	child := exec.Command(os.Args[0], "-test.run=^TestMigrateUpChildProcess$", "-test.count=1")
+
+	// The child is not a verification run, so it must not demand live cases of itself.
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, requireLiveEnvVar+"=") {
+			child.Env = append(child.Env, entry)
+		}
+	}
+	child.Env = append(child.Env, migrateUpChildEnv+"="+scenario)
+
+	output, err := child.CombinedOutput()
+	if err == nil {
+		return 0, string(output)
+	}
+
+	var exitErr *exec.ExitError
+	require.ErrorAs(t, err, &exitErr, "the child did not run: %s", output)
+	return exitErr.ExitCode(), string(output)
+}
+
+// migrateUpFailureMarker is what the command logs on its failure path. Asserting it tells
+// the command's exit 1 apart from a child whose own test setup failed, which exits 1 too.
+const migrateUpFailureMarker = "Migration has finished with error"
+
+func resetMigrateUpProbe(t *testing.T, gormDb *gorm.DB) {
+	t.Helper()
+
+	reset := func() {
+		gormDb.Exec(`DROP TABLE IF EXISTS ` + migrateUpProbe)
+		gormDb.Migrator().DropTable(&db.Migration{})
+	}
+	reset()
+	t.Cleanup(reset)
+}
+
+func TestMigrateUpRecordsOnlyWhatCommitsOnPostgres(t *testing.T) {
+	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
+		return pgv2.NewDataSource(pgConfig())
+	})
+	// t.Cleanup rather than defer: a deferred Close runs before the cleanups, which would
+	// then reset the probe through a closed handle and leave it behind.
+	t.Cleanup(func() { ds.Close() })
+	gormDb := gormOf(t, ds)
+
+	t.Run("pg-succeeds", func(t *testing.T) {
+		resetMigrateUpProbe(t, gormDb)
+
+		code, output := runMigrateUpInChild(t, "pg-succeeds")
+		require.Equal(t, 0, code, "the control scenario must succeed:\n%s", output)
+		assert.True(t, gormDb.Migrator().HasTable(migrateUpProbe))
+		assert.True(t, isApplied(t, gormDb, "probe_succeeds"))
+	})
+
+	for _, scenario := range []string{"pg-commit-fails", "pg-transaction-aborted", "pg-record-fails"} {
+		t.Run(scenario, func(t *testing.T) {
+			resetMigrateUpProbe(t, gormDb)
+
+			code, output := runMigrateUpInChild(t, scenario)
+			assert.Equal(t, 1, code, "a migration that did not commit must fail the run:\n%s", output)
+			assert.Contains(t, output, migrateUpFailureMarker)
+
+			assert.False(t, gormDb.Migrator().HasTable(migrateUpProbe),
+				"the schema change must have been rolled back")
+			assert.False(t, isApplied(t, gormDb, migrateUpScenarios[scenario].migration.name),
+				"and the migration must not be recorded as applied")
+		})
+	}
+}
+
+// TestMigrateUpFailsWhenTheRecordCannotBeWrittenOnMySQL covers the bookkeeping write on
+// the engine that cannot roll DDL back.
+func TestMigrateUpFailsWhenTheRecordCannotBeWrittenOnMySQL(t *testing.T) {
+	requireMySQL(t)
+
+	ds := waitForDatasource(t, func() (dbCore.IDataSource, error) {
+		return mysqlv2.NewDataSource(mysqlConfig())
+	})
+	t.Cleanup(func() { ds.Close() })
+	gormDb := gormOf(t, ds)
+	resetMigrateUpProbe(t, gormDb)
+
+	code, output := runMigrateUpInChild(t, "mysql-record-fails")
+	assert.Equal(t, 1, code, "an unrecorded migration must fail the run:\n%s", output)
+	assert.Contains(t, output, migrateUpFailureMarker)
+	assert.False(t, isApplied(t, gormDb, "probe_record_fails"))
+
+	// MySQL commits every DDL statement implicitly, so the table stays although the run
+	// failed. That is the documented limitation, pinned so a change in it is noticed.
+	assert.True(t, gormDb.Migrator().HasTable(migrateUpProbe))
+}
+
+// closureMigration is a test migration whose Up is the given closure.
+type closureMigration struct {
+	name string
+	up   func(*gorm.DB) error
+}
+
+func (m closureMigration) Name() string              { return m.name }
+func (m closureMigration) Up() core.MigrationClosure { return m.up }
+func (m closureMigration) Down() core.MigrationClosure {
+	return func(g *gorm.DB) error {
+		return g.Exec(`DROP TABLE IF EXISTS ` + migrateUpProbe).Error
+	}
 }
 
 // ============================================================ A1: ORM on MySQL

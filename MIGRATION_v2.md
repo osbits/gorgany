@@ -783,6 +783,10 @@ go run cmd/cli.go db:seed --datasource=reports
 go run cmd/cli.go db:diff --datasource=reports
 ```
 
+Up to and including v2.3.2, the `db:seed` and `db:diff` lines exit 2 with `flag provided but
+not defined: -datasource`: the console's flag parser rejected the flag before either command
+could read it. `db:migrate` accepts it on every 2.x version, after `up` or `down` only.
+
 Declare a migration's target so it can never run against the wrong engine:
 
 ```go

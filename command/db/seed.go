@@ -11,6 +11,12 @@ import (
 )
 
 type SeedCommand struct {
+	// Datasource declares --datasource to command.Resolver, whose flag parser rejects
+	// every flag a command does not declare: without it `cli db:seed --datasource=x`
+	// exited 2 before Execute ran. Execute reads the value through SelectedDatasource,
+	// as db:migrate does.
+	Datasource string `command:"flag,name=datasource,default=default,description=datasource to seed (a key under databases)"`
+
 	dataContext core.IDataContext `container:"inject"`
 	dbContext   core.IDBContext   `container:"inject"`
 }

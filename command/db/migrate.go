@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -90,41 +91,70 @@ func (thiz MigrateCommand) up(ctx context.Context) {
 
 	log.Log().Infof("Migrating datasource %q", datasource)
 
-	isError := false
+	if err := thiz.applyPending(gormInstance, migrations); err != nil {
+		log.Log().Errorf("Error while migration is executing: %v", err)
+		log.Log().Warn("Migration has finished with error")
+		os.Exit(1)
+	}
+	log.Log().Infof("Success")
+}
+
+// applyPending applies, in order, each migration that is not yet recorded, and stops at
+// the first failure.
+func (thiz MigrateCommand) applyPending(gormInstance *gorm.DB, migrations []core.IMigration) error {
 	for _, migration := range migrations {
+		// A failed read used to count as "not applied", so the migration ran again.
 		var migrationDomain db.Migration
-		gormInstance.First(&migrationDomain, "name = ?", migration.Name())
+		err := gormInstance.First(&migrationDomain, "name = ?", migration.Name()).Error
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("cannot read whether migration %s is applied: %w", migration.Name(), err)
+		}
 		if thiz.isMigrationExists(migrationDomain) {
 			continue
 		}
 
 		log.Log().Infof("Migration %s is executing\n", migration.Name())
-		tx := gormInstance.Begin()
-
-		closure := migration.Up()
-		err = closure(tx)
-		if err != nil {
-			log.Log().Errorf("Error while migration is executing: %v", err)
-			tx.Rollback()
-			isError = true
-			break
+		if err := applyMigration(gormInstance, migration); err != nil {
+			return err
 		}
-
-		tx.Commit()
-
-		gormInstance.Create(&db.Migration{
-			Name: migration.Name(),
-			Date: time.Now(),
-		})
 		log.Log().Infof("Migration %s finished\n", migration.Name())
 	}
+	return nil
+}
 
-	if !isError {
-		log.Log().Infof("Success")
-		return
+// applyMigration runs one migration's Up() and records it in the same transaction.
+//
+// The row used to be written after the commit, on the pool rather than the transaction,
+// and neither the commit's error nor the insert's was checked. A migration whose COMMIT
+// failed (a deferred constraint, or a transaction a swallowed error had aborted) was
+// recorded as applied and the run exited 0; one whose row could not be written stayed
+// applied but unrecorded, and ran again on the next deploy. Now the row commits with the
+// schema change or not at all, and either failure fails the run.
+//
+// MySQL commits every DDL statement implicitly, so there the transaction cannot hold a
+// schema change back: a migration that fails part-way leaves its earlier DDL applied, and
+// the row, written after that implicit commit, commits on its own. A failure still fails
+// the run, and the migration is recorded only if everything before the row succeeded.
+func applyMigration(gormInstance *gorm.DB, migration core.IMigration) error {
+	tx := gormInstance.Begin()
+	if tx.Error != nil {
+		return fmt.Errorf("cannot begin a transaction for migration %s: %w", migration.Name(), tx.Error)
 	}
-	log.Log().Warn("Migration has finished with error")
-	os.Exit(1)
+
+	if err := migration.Up()(tx); err != nil {
+		tx.Rollback()
+		return fmt.Errorf("migration %s failed: %w", migration.Name(), err)
+	}
+
+	if err := tx.Create(&db.Migration{Name: migration.Name(), Date: time.Now()}).Error; err != nil {
+		tx.Rollback()
+		return fmt.Errorf("migration %s ran but could not be recorded: %w", migration.Name(), err)
+	}
+
+	if err := tx.Commit().Error; err != nil {
+		return fmt.Errorf("cannot commit migration %s: %w", migration.Name(), err)
+	}
+	return nil
 }
 
 // down rolls back the most recently applied migrations, newest first.

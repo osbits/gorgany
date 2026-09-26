@@ -22,6 +22,12 @@ type FlagConfig struct { //`command:"flag,default=value,name=name"`
 
 type Flags map[string]*FlagConfig //[fieldName]FlagConfig
 
+// flagErrorHandling is how a command's flag set treats a flag the command does not
+// declare. ExitOnError prints the usage and exits 2, which is right for a console binary;
+// the resolver's tests switch it to ContinueOnError so a rejected flag fails the test
+// instead of ending the test binary.
+var flagErrorHandling = flag.ExitOnError
+
 type Resolver struct {
 	consoleContext core.IConsoleContext `container:"inject"`
 	validator      core.IValidator      `container:"inject"`
@@ -38,7 +44,7 @@ func (thiz Resolver) ResolveCommand(commandName string) core.ICommand {
 	}
 
 	rtCommand := rvCommand.Type()
-	commandFlags := flag.NewFlagSet(commandName, flag.ExitOnError)
+	commandFlags := flag.NewFlagSet(commandName, flagErrorHandling)
 
 	flags := thiz.parseDefinedFlags(rtCommand)
 	flags = thiz.parseInputFlags(flags, commandFlags)

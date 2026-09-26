@@ -7,6 +7,44 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [2.4.0] - 2026-09-26
+
+### Fixed
+
+- `cli db:seed --datasource=<name>` and `cli db:diff --datasource=<name>` exited 2 with
+  `flag provided but not defined: -datasource`, although 2.0.0 listed `--datasource` for both.
+  A seeder that declares `DataSourceName()` for a datasource other than `default` could
+  therefore never run. The console's flag parser rejects every flag a command does not declare,
+  and neither command declared it; `db:migrate` escaped only because the parser stops at its
+  positional `up`. `SeedCommand` and `DiffCommand` now declare `--datasource`, and a
+  resolver-level test covers the db commands. `db:migrate` still takes the flag only after `up`
+  or `down`.
+- `db:migrate up` could record a migration that had not committed, and exit 0. It discarded the
+  commit's error, then wrote the `migrations` row on the connection pool, outside the
+  transaction, without checking that error either. A migration whose COMMIT failed (a deferred
+  constraint, or a transaction that a swallowed error had aborted) was recorded as applied with
+  its schema change rolled back. One whose row could not be written stayed applied but
+  unrecorded, and ran again on the next deploy. The row is now written in the migration's own
+  transaction, a failed commit or insert fails the run with exit `1`, and a failed read of the
+  `migrations` table no longer counts as "not applied". MySQL commits DDL implicitly, so there a
+  migration that fails part-way still keeps the statements before the failure.
+- `db:diff` generated migrations that did not run in `db:migrate`'s transaction. `Up()` called
+  `dbGorm.DB()`, which on that transaction returns the underlying pool, so a failing statement
+  left the earlier ones applied and the migration unrecorded. `Down()` returned `nil`, so
+  `db:migrate down` recorded a rollback that changed nothing. Every `"` was stripped from the
+  statements, which broke identifiers that need quoting. The draft now:
+  - runs each statement with `dbGorm.Exec(…).Error` on the transaction, verbatim;
+  - returns a "not reversible" error from `Down()`;
+  - declares `DataSourceName()` for the datasource it diffed, so a `--datasource=<name>` draft
+    is not applied to `default`;
+  - is gofmt'd and written `0644`, not `os.ModePerm`. `db/migration` is created with its parents
+    when missing.
+
+  Drafts generated earlier keep their old shape. `docs/PROJECT_STRUCTURE.md` lists what to
+  change in them.
+
+---
+
 ## [2.3.2] — 2026-09-26
 
 ### Added
