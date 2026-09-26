@@ -364,7 +364,8 @@ The tag's pipeline builds and tests that image, and offers the manual deploy.
 `db:migrate up` and `db:seed` operate on one datasource: `default`, unless
 `--datasource=<name>` says otherwise. Each skips the migrations or seeders that target another
 datasource, and logs each at info level. Put the flag after `up` or `down`:
-`db:migrate --datasource=<name> up` exits 2.
+`db:migrate --datasource=<name> up` exits 2. `db:diff --datasource=<name>` diffs one datasource,
+and refuses a MySQL one (PROJECT_STRUCTURE.md, "Migrations and seeders").
 
 Up to and including v2.3.2, `db:seed` cannot select a datasource. `cli db:seed
 --datasource=<name>` exits 2 with `flag provided but not defined: -datasource`, because the

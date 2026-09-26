@@ -573,7 +573,12 @@ func All() []core.IMigration {
 - **`db:diff`'s output is a draft.** It writes `<timestamp>_migration.go` into `db/migration`,
   gofmt'd, with `DataSourceName()` returning the datasource it diffed. Its `Up()` runs each
   statement on the transaction `db:migrate` opens, and its `Down()` returns an error saying the
-  migration is not reversible. Before committing it:
+  migration is not reversible. It runs on Postgres datasources only. It finds the differences
+  by running `CREATE TABLE` and `ALTER TABLE` in a transaction and rolling it back, and MySQL
+  commits DDL immediately, so it refuses a MySQL datasource before it runs anything. Write that
+  datasource's migrations by hand. Up to and including v2.4.0 it ran anyway: it created the
+  tables in the MySQL database it was comparing, and the draft then failed there with
+  "Table … already exists". Before committing it:
   - review every statement: they are what GORM would run to match the domains, not a
     considered migration;
   - rename the file and keep its `Name()`;

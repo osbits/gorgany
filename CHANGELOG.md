@@ -7,6 +7,40 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [2.4.1] - 2026-09-26
+
+### Added
+
+- `TransactionalDDLDialects` in `command/db`: the GORM dialects `db:diff` runs on, `postgres`
+  by default.
+
+### Fixed
+
+- `db:diff` on a MySQL datasource applied the schema changes it was meant to report. It finds
+  differences by running the migrator's `CREATE TABLE` and `ALTER TABLE` inside a transaction
+  and rolling back. MySQL commits DDL implicitly, so the rollback discarded nothing. The tables
+  and columns were created in the database being compared, and the migration `db:diff` wrote
+  then failed there with `Error 1050: Table '…' already exists`. When a domain failed partway,
+  the earlier tables stayed and no migration was written. Verified against MySQL 8.4.
+  - `db:diff` now refuses any datasource whose dialect is not in `TransactionalDDLDialects`,
+    before it runs anything, and says to write that datasource's migrations by hand.
+  - A GORM `DryRun` session is not a substitute. The diff's later steps read back what its
+    earlier ones created, so a dry run emits UNIQUE and CHECK constraints that the
+    `CREATE TABLE` before them already declares, and that migration fails too.
+
+  **Upgrade note:** if `db:diff` ever ran against a MySQL database, the tables it created are
+  there with no migration recorded. Compare `SHOW TABLES` with your migrations before
+  deploying one that creates them.
+- `db:diff`'s check for the struct-model column of an `extends` table queried
+  `information_schema` through `db.Builder()`, which is always `default`, and did not filter
+  by schema. A diff of another datasource checked the wrong database, and on Postgres a table
+  of the same name in another schema could satisfy the check. It now asks the selected
+  datasource's migrator, which looks in the current schema. It also checked for the configured
+  column (`gorm.model.embed.structColumn`) and then added `model_struct`, so a configured name
+  was never added. It now adds the configured name.
+
+---
+
 ## [2.4.0] - 2026-09-26
 
 ### Fixed

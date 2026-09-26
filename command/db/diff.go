@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"github.com/osbits/gorgany/v2"
 	"github.com/osbits/gorgany/v2/app/core"
-	"github.com/osbits/gorgany/v2/db"
 	"github.com/osbits/gorgany/v2/db/orm"
 	"github.com/osbits/gorgany/v2/db/sql/gorm/plugin"
 	model2 "github.com/osbits/gorgany/v2/service/cache"
@@ -20,6 +19,7 @@ import (
 	"reflect"
 	"runtime"
 	"strconv"
+	"strings"
 	"text/template"
 	"time"
 )
@@ -27,6 +27,23 @@ import (
 const MigrationDir = "db/migration"
 
 var AllowedTypesToMigrate = []string{"gorm.io/gorm.DeletedAt", gorgany.FrameworkGit + "/model.File", "time.Time"}
+
+// TransactionalDDLDialects lists the GORM dialects (gorm.Dialector.Name()) whose DDL a
+// transaction rolls back. db:diff runs on no others.
+//
+// db:diff finds differences by running the migrator's CREATE TABLE and ALTER TABLE
+// statements inside a transaction, recording them, and rolling back. MySQL commits each
+// DDL statement implicitly, so there the rollback discarded nothing: the diff applied the
+// schema changes to the database it was only meant to compare, and the migration it wrote
+// then failed on that same database with "Table ... already exists".
+//
+// Computing the statements without executing them (a gorm DryRun session) is not a
+// substitute. The diff's later steps read back what its earlier ones created, so a dry run
+// emits, for example, a UNIQUE or CHECK constraint that the CREATE TABLE above it already
+// declares, and that migration fails too.
+//
+// Add a dialect here only if its DDL rolls back.
+var TransactionalDDLDialects = []string{"postgres"}
 
 type DiffCommand struct {
 	// Datasource declares --datasource to command.Resolver, whose flag parser rejects
@@ -50,6 +67,9 @@ func (thiz DiffCommand) GetName() string {
 // It used to hard-code core.DefaultKeyInRegistrar, so in a two-datasource app it
 // always diffed against the first database no matter which one the models belonged
 // to. The datasource now comes from --datasource, defaulting to `default`.
+//
+// A datasource whose dialect is not in TransactionalDDLDialects is refused before
+// anything runs against it.
 func (thiz DiffCommand) Execute(ctx context.Context) {
 	thiz.modelStructAlreadyAdded = make(map[string]bool)
 	thiz.pivotTables = make(map[string]bool)
@@ -58,6 +78,10 @@ func (thiz DiffCommand) Execute(ctx context.Context) {
 
 	gormDb, err := ResolveGorm(thiz.dbContext, datasource)
 	if err != nil {
+		panic(err)
+	}
+
+	if err := requireTransactionalDDL(gormDb, datasource); err != nil {
 		panic(err)
 	}
 
@@ -212,8 +236,14 @@ func (thiz DiffCommand) migrateModelConstraints(rModel reflect.Type, statements 
 				continue
 			}
 
-			if !thiz.isColumnExists(tableName, plugin.StructModelColumn()) {
-				*statements = append(*statements, fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s varchar(255)", tableName, plugin.StructDefaultColumn))
+			// Through the migrator, so the check runs on the selected datasource and in
+			// its current schema. It used to query information_schema through
+			// db.Builder(), which is always `default`, with no schema filter. It also
+			// checked for StructModelColumn() and then added StructDefaultColumn, so a
+			// configured column name was never the one added.
+			structColumn := plugin.StructModelColumn()
+			if !migrator.HasColumn(tableName, structColumn) {
+				*statements = append(*statements, fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s varchar(255)", tableName, structColumn))
 			}
 
 			alreadyExtends = true
@@ -244,13 +274,24 @@ func (thiz DiffCommand) migrateModelConstraints(rModel reflect.Type, statements 
 	return nil
 }
 
-func (thiz DiffCommand) isColumnExists(tableName string, columnName string) bool {
-	var count int64
-	err := db.Builder().Raw("SELECT COUNT(*) FROM information_schema.columns WHERE table_name = ? AND column_name = ?", &count, tableName, columnName)
-	if err != nil {
-		return false
+// requireTransactionalDDL refuses a datasource whose dialect would commit the DDL that
+// db:diff runs to find differences. See TransactionalDDLDialects.
+func requireTransactionalDDL(gormDb *gorm.DB, datasource string) error {
+	dialect := "unknown"
+	if gormDb != nil && gormDb.Config != nil && gormDb.Dialector != nil {
+		dialect = gormDb.Dialector.Name()
 	}
-	return count > 0
+
+	if util.InArray(dialect, TransactionalDDLDialects) {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"db:diff cannot run against datasource %q: its dialect (%s) commits DDL immediately, "+
+			"so the CREATE TABLE and ALTER TABLE statements db:diff runs to find differences "+
+			"would change that database instead of being rolled back. db:diff supports %s; "+
+			"write migrations for this datasource by hand",
+		datasource, dialect, strings.Join(TransactionalDDLDialects, ", "))
 }
 
 func (thiz DiffCommand) generateMigration(statements []string, datasource string) {
