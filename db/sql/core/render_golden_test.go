@@ -6,9 +6,9 @@ package core_test
 // framework ships renders a WHERE, a HAVING, a JOIN ON and an IN-subquery through exactly
 // this code, so its output *is* the Postgres and MySQL output for those positions.
 //
-// A seam is about to be added — a context that lets an engine quote identifiers and route
-// subqueries through its own dialect — and the promise that goes with it is that without a
-// context the conditions render byte for byte what ToSQL renders at v2.4.3. A promise like that is only
+// render.go gives it a seam — a RenderContext that lets an engine quote identifiers and route
+// subqueries through its own dialect — and the promise that goes with it is that a nil
+// context renders byte for byte what ToSQL rendered at v2.4.3. A promise like that is only
 // as good as the thing that checks it. TestConditionToSQLMatchesGolden is that thing: it
 // renders one entry per condition type and operand kind and compares the lot with
 // testdata/conditions.golden, which was generated at v2.4.3 (whose db/sql renders
@@ -18,8 +18,8 @@ package core_test
 // have made the fix look like a regression: a RawCondition whose "?." placeholders lack the
 // args they need, which fell back to its original SQL with args it had already half
 // consumed, and a second render of one RawCondition, which found its Args consumed by the
-// first. Both are to be fixed, and the fixed behaviour gets tests of its own rather than a
-// golden entry that would have to change. Every RawCondition below
+// first. Both are fixed, and TestRawConditionMalformedFallsBackToOriginalArgs and
+// TestRawConditionToSQLIsIdempotent pin the fixed behaviour instead. Every RawCondition below
 // is still built for the one render it gets here.
 
 import (
@@ -54,7 +54,7 @@ type goldenEntry struct {
 	name string
 	body string
 	// source is what rendered body, for an entry sqlEntry made, so another test can render
-	// the same corpus another way and compare.
+	// the same corpus another way and compare (see TestRenderConditionWithNilContextEqualsToSQL).
 	source interface{ ToSQL() (string, []any) }
 }
 

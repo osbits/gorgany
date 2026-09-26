@@ -98,16 +98,18 @@ func (b *Builder) cloneQuery() *dbCore.Query {
 	}
 
 	// Clone OrderBy
+	//
+	// The fields are copied whole. They used to be rebuilt field by field, which left Raw
+	// behind: every clause method clones, so OrderByRaw(expr, dir).Limit(n) became an ORDER BY
+	// that treats expr as untrusted data — quoted if it happens to look like a column, bound
+	// as a value otherwise — and the same happened to an OrderByRaw inside any subquery an
+	// outer builder copied. OrderByField holds only values, so a copy is a deep copy, and one
+	// cannot leave a field added later behind either.
 	if b.query.OrderBy != nil {
 		newOrderBy := &dbCore.OrderByClause{}
 		if len(b.query.OrderBy.Fields) > 0 {
 			newOrderBy.Fields = make([]dbCore.OrderByField, len(b.query.OrderBy.Fields))
-			for i, field := range b.query.OrderBy.Fields {
-				newOrderBy.Fields[i] = dbCore.OrderByField{
-					Field:     field.Field,
-					Direction: field.Direction,
-				}
-			}
+			copy(newOrderBy.Fields, b.query.OrderBy.Fields)
 		}
 		newQuery.OrderBy = newOrderBy
 	}
@@ -187,13 +189,12 @@ func (b *Builder) cloneQuery() *dbCore.Query {
 					PartitionBy: append([]string{}, window.Definition.PartitionBy...),
 				}
 				if len(window.Definition.OrderBy) > 0 {
+					// Copied whole, as ORDER BY above is, so Raw comes along. Neither shipped
+					// dialect reads it here — both render a window through
+					// WindowDefinition.ToSQL, which ignores it — but a dialect that honours it
+					// in a window sees what the caller set.
 					newDef.OrderBy = make([]dbCore.OrderByField, len(window.Definition.OrderBy))
-					for j, field := range window.Definition.OrderBy {
-						newDef.OrderBy[j] = dbCore.OrderByField{
-							Field:     field.Field,
-							Direction: field.Direction,
-						}
-					}
+					copy(newDef.OrderBy, window.Definition.OrderBy)
 				}
 				if window.Definition.Frame != nil {
 					newFrame := &dbCore.WindowFrame{

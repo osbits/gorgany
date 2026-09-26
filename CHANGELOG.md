@@ -7,6 +7,63 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- A rendering seam for the condition family in `db/sql/core`: `RenderContext`,
+  `ContextRenderer`, and `RenderCondition`, `RenderWhere` and `RenderHaving`. Conditions render
+  themselves and `Condition.ToSQL` takes no dialect, so an engine could not quote the
+  identifiers in a WHERE, HAVING or JOIN ON, or render the subqueries nested in one. Under a
+  context it can: the context says what an identifier is and how it is quoted, how a subquery,
+  an operator and an empty `IN` are rendered, and, with `Strict`, refuses what would otherwise
+  degrade quietly. Every built-in condition gains `ToSQLContext`, and its `ToSQL` is
+  `ToSQLContext(nil)`. `Condition` is unchanged, so app-defined conditions keep compiling and
+  render through their `ToSQL`; one that embeds a built-in condition is rendered through its
+  own `ToSQL` too, not the built-in's promoted `ToSQLContext`. Postgres and MySQL do not use
+  the seam and render what 2.4.3 did, apart from the two fixes below;
+  `db/sql/core/testdata/conditions.golden` and `db/sql/builder/testdata/pg_mysql.golden` now
+  pin that.
+- `core.BindParameterLimiter` / `core.BindParameterLimit(d)` and
+  `core.TriggerSensitiveReturning` / `core.ReturningBlockedByTriggers(d)`: optional dialect
+  capabilities, probed the way `SupportsReturning` is. Neither shipped dialect declares them,
+  so both probes answer on Postgres and MySQL what callers assumed before they existed.
+
+### Fixed
+
+- `core.RawCondition` consumed its own `Args` while expanding `"?."` placeholders, so it
+  rendered correctly once. Rendering it again — a builder rendered twice, or a builder and its
+  `Clone()`, which share their conditions — found the identifier args gone and sent the SQL
+  with `"?."` as written, or substituted whatever args were left. A placeholder that ran short
+  of args fell back to the SQL as written with only the args not yet consumed, and the path
+  for SQL without `"?."` returned the condition's own `Args` slice, so appending to the result
+  could write into the condition. A render now leaves the condition alone and returns args of
+  its own: every render is the same, and the fallback returns every arg as given.
+
+  **Upgrade note:** Postgres and MySQL output changes in two cases. A `"?."` RawCondition
+  rendered more than once now expands on every render. One whose placeholders run short of
+  args now falls back with all of its args: `? = ?.id` with `[5]` was sent with no args and is
+  now sent with `[5]`. In both, 2.4.3 left the `"?."` in the SQL it sent, where the server
+  reads it as a value placeholder followed by `.<column>`. A second render that failed that
+  way now runs. A placeholder that is short of args still fails, now with every arg bound, so
+  supply the one it is missing.
+- `Builder.Clone()` dropped `OrderByField.Raw` from ORDER BY and from a window's ORDER BY. Every
+  clause method clones, so `OrderByRaw(expr, dir)` followed by any other builder call rendered
+  `expr` as untrusted data: quoted when it looked like a column, bound as a value otherwise.
+  `OrderByRaw("RANDOM()", "desc").Limit(5)` ordered by a bound constant, `ORDER BY ? DESC`. The
+  same happened to an `OrderByRaw` inside a subquery an outer builder copied. `OrderByRaw` is
+  now emitted verbatim wherever it sits in the chain, as it always was when called last.
+
+  **Upgrade note:** on Postgres and MySQL an `OrderByRaw` followed by another call now reaches
+  the server as written. A mixed-case column name passed to it loses the quoting 2.4.3 added
+  by accident: `OrderByRaw("CreatedAt", …)` rendered ``"CreatedAt"`` on Postgres and
+  `` `CreatedAt` `` on MySQL, and now renders `CreatedAt`, which Postgres folds to
+  `createdat`. Pass a column to `OrderBy`, or quote it yourself. Text passed to `OrderByRaw`
+  is SQL and is no longer bound, so request-derived input must never reach it, as its
+  documentation has always said.
+
+---
+
 ## [2.4.3] - 2026-09-26
 
 ### Fixed

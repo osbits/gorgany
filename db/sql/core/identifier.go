@@ -64,44 +64,81 @@ func IsSimpleIdentifier(s string) bool {
 // types have no way to report an error, so the safe rendering is a bound value. The dialects
 // additionally refuse outright — see ValidatingCondition — so a caller on the normal path gets
 // told rather than silently getting a comparison against a string.
-func identifierOperandSQL(operand any, args []any) (string, []any) {
+//
+// That table is what a nil ctx renders, and ToSQL discards the error, so nothing on that path
+// may produce one. Under a RenderContext the same rows go through the engine instead. What
+// counts as an identifier is ctx.IsIdentifier, an identifier is emitted through
+// ctx.QuoteIdentifier, and a subquery through ctx.Subquery. Under ctx.Strict anything that
+// would be bound is refused by validateIdentifierSlot, the very check Validate runs, given the
+// context's predicate, so the two refusals name slot and value in the same words and cannot
+// come to disagree about what passes. slot is the name the refusal uses; it is not read on the
+// nil path.
+//
+// The two paths share one switch and differ only in the rule, the quoter and where a subquery
+// goes, so a change to what an operand renders as cannot reach one path and miss the other.
+func identifierOperandSQL(operand any, args []any, ctx *RenderContext, slot string) (string, []any, error) {
+	isIdentifier, quote := IsSimpleIdentifier, verbatimIdentifier
+	if ctx != nil {
+		if ctx.Strict {
+			if err := validateIdentifierSlot(slot, operand, ctx.isIdentifier, true); err != nil {
+				return "", nil, err
+			}
+		}
+		isIdentifier, quote = ctx.isIdentifier, ctx.quoteIdentifier
+	}
+
 	switch v := operand.(type) {
 	case Raw:
-		return string(v), args
+		return string(v), args, nil
 	case Identifier:
-		if IsSimpleIdentifier(string(v)) {
-			return string(v), args
+		if isIdentifier(string(v)) {
+			return quote(string(v)), args, nil
 		}
-		return "?", append(args, string(v))
+		return "?", append(args, string(v)), nil
 	case *Query:
-		sql, subArgs := buildSubquerySQL(v)
-		return "(" + sql + ")", append(args, subArgs...)
-	case string:
-		if IsSimpleIdentifier(v) {
-			return v, args
+		if ctx == nil {
+			sql, subArgs := buildSubquerySQL(v)
+			return "(" + sql + ")", append(args, subArgs...), nil
 		}
-		return "?", append(args, v)
+		return subqueryOperandSQL(v, args, ctx)
+	case string:
+		if isIdentifier(v) {
+			return quote(v), args, nil
+		}
+		return "?", append(args, v), nil
 	default:
-		return "?", append(args, operand)
+		return "?", append(args, operand), nil
 	}
 }
 
+// verbatimIdentifier is the quoter of the nil path, which emits an identifier as written.
+func verbatimIdentifier(identifier string) string { return identifier }
+
 // isIdentifierOperand reports whether this operand is safe in an identifier position without
-// being demoted to a bound value. ValidatingCondition uses it to refuse rather than degrade.
-func isIdentifierOperand(operand any) bool {
+// being demoted to a bound value. ValidatingCondition uses it to refuse rather than degrade, with
+// IsSimpleIdentifier as the rule; a Strict RenderContext uses it with its own.
+//
+// strict decides the one case the two disagree on: an operand that is not a string, an
+// Identifier, a Raw or a *Query — nil, a number, a named string type such as an app's own
+// column-name type. It is bound as a value either way. Validate lets it through, because it
+// was being bound before Validate existed and refusing it now would fail queries that build
+// today. A Strict context refuses it, because a value where a column belongs compares a
+// constant — nil IS NULL, 'DeletedAt' IS NOT NULL — and so matches every row or none, which an
+// UPDATE or DELETE filter must not do quietly.
+func isIdentifierOperand(operand any, isIdentifier func(string) bool, strict bool) bool {
 	switch v := operand.(type) {
 	case Raw:
 		return true
 	case Identifier:
-		return IsSimpleIdentifier(string(v))
+		return isIdentifier(string(v))
 	case *Query:
 		return true
 	case string:
-		return IsSimpleIdentifier(v)
+		return isIdentifier(v)
 	default:
-		// A non-string operand was already being bound before this change, so it is not an
-		// identifier and never claimed to be.
-		return true
+		// A non-string operand was already being bound before Validate existed, so it is not
+		// an identifier and never claimed to be; whether that is refused is strict's call.
+		return !strict
 	}
 }
 
@@ -129,29 +166,46 @@ func ValidateCondition(condition Condition) error {
 // Each names the slot and the offending value, because the fix is always the same and the
 // caller has to be told which of the two it is: a column reference belongs in the slot as it
 // is, and an expression — COUNT(*), lower(email) — belongs in a Raw.
+//
+// The slot names are shared with the Strict render path (identifierOperandSQL), so a refusal
+// reads the same whichever of the two raised it.
+
+const (
+	slotComparisonLeft  = "the left side of a comparison"
+	slotComparisonRight = "the right side of a comparison"
+	slotInField         = "the field of an IN"
+	slotBetweenField    = "the field of a BETWEEN"
+	slotLikeField       = "the field of a LIKE"
+	slotIsNullField     = "the field of an IS NULL"
+	slotRawPlaceholder  = `a "?." placeholder in a RawCondition`
+)
+
+func unaryOperandSlot(operator string) string {
+	return "the operand of " + operator
+}
 
 func (c *BinaryCondition) Validate() error {
-	return validateIdentifierSlot("the left side of a comparison", c.Left)
+	return validateIdentifierSlot(slotComparisonLeft, c.Left, IsSimpleIdentifier, false)
 }
 
 func (c *UnaryCondition) Validate() error {
-	return validateIdentifierSlot("the operand of "+c.Operator, c.Operand)
+	return validateIdentifierSlot(unaryOperandSlot(c.Operator), c.Operand, IsSimpleIdentifier, false)
 }
 
 func (c *InCondition) Validate() error {
-	return validateIdentifierSlot("the field of an IN", c.Field)
+	return validateIdentifierSlot(slotInField, c.Field, IsSimpleIdentifier, false)
 }
 
 func (c *BetweenCondition) Validate() error {
-	return validateIdentifierSlot("the field of a BETWEEN", c.Field)
+	return validateIdentifierSlot(slotBetweenField, c.Field, IsSimpleIdentifier, false)
 }
 
 func (c *LikeCondition) Validate() error {
-	return validateIdentifierSlot("the field of a LIKE", c.Field)
+	return validateIdentifierSlot(slotLikeField, c.Field, IsSimpleIdentifier, false)
 }
 
 func (c *IsNullCondition) Validate() error {
-	return validateIdentifierSlot("the field of an IS NULL", c.Field)
+	return validateIdentifierSlot(slotIsNullField, c.Field, IsSimpleIdentifier, false)
 }
 
 // Validate walks the operands so a nested condition cannot smuggle one past the check.
@@ -167,12 +221,30 @@ func (c *CompositeCondition) Validate() error {
 	return nil
 }
 
-func validateIdentifierSlot(slot string, operand any) error {
-	if isIdentifierOperand(operand) {
+// validateIdentifierSlot refuses an operand that isIdentifier would demote to a bound value.
+// Validate passes IsSimpleIdentifier; a Strict RenderContext passes its own predicate, so an
+// engine that accepts more names than Postgres and MySQL do still refuses in these words.
+// strict is isIdentifierOperand's: only a Strict context refuses an operand that is not a
+// string of the framework's own types, and only it can raise the second message below.
+func validateIdentifierSlot(slot string, operand any, isIdentifier func(string) bool, strict bool) error {
+	if isIdentifierOperand(operand, isIdentifier, strict) {
 		return nil
 	}
+	switch operand.(type) {
+	case string, Identifier:
+		return fmt.Errorf(
+			"%s is %#v, which is not a column reference. A column goes in as-is; an expression "+
+				"such as COUNT(*) or lower(email) must be wrapped in core.Raw so it is clear the "+
+				"caller vouches for it as SQL", slot, operand)
+	}
+	// %#v alone would print an app's named string type as a plain quoted string, which reads
+	// like a column the refusal has no reason to refuse; the type says why it is refused.
+	value := "nil"
+	if operand != nil {
+		value = fmt.Sprintf("%T(%#v)", operand, operand)
+	}
 	return fmt.Errorf(
-		"%s is %#v, which is not a column reference. A column goes in as-is; an expression "+
-			"such as COUNT(*) or lower(email) must be wrapped in core.Raw so it is clear the "+
-			"caller vouches for it as SQL", slot, operand)
+		"%s is %s, which is not a column reference and would be compared as a value. A column "+
+			"goes in as a string or a core.Identifier; an expression must be wrapped in core.Raw "+
+			"so it is clear the caller vouches for it as SQL", slot, value)
 }

@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // BinaryCondition represents a condition with two operands and an operator
@@ -12,14 +13,25 @@ type BinaryCondition struct {
 	Right    interface{}
 }
 
-// ToSQL returns the SQL representation of the binary condition
+// ToSQL returns the SQL representation of the binary condition. It is ToSQLContext(nil).
 func (c *BinaryCondition) ToSQL() (string, []interface{}) {
+	sql, args, _ := c.ToSQLContext(nil)
+	return sql, args
+}
+
+// ToSQLContext renders the binary condition under ctx (see RenderContext). A nil ctx runs the
+// code below the dispatch, which is what ToSQL has always run.
+func (c *BinaryCondition) ToSQLContext(ctx *RenderContext) (string, []any, error) {
+	if ctx != nil {
+		return c.contextSQL(ctx)
+	}
+
 	var args []interface{}
 	var leftSQL, rightSQL string
 
 	// The left operand sits in an identifier position: a column name is emitted, anything
 	// else is bound. See identifierOperandSQL.
-	leftSQL, args = identifierOperandSQL(c.Left, args)
+	leftSQL, args, _ = identifierOperandSQL(c.Left, args, nil, slotComparisonLeft)
 
 	// The right operand sits in a value position, so a bare string is a value — which is
 	// correct and is what every caller wants. Raw and Identifier are how a caller says it
@@ -29,7 +41,7 @@ func (c *BinaryCondition) ToSQL() (string, []interface{}) {
 	case Raw:
 		rightSQL = string(v)
 	case Identifier:
-		rightSQL, args = identifierOperandSQL(v, args)
+		rightSQL, args, _ = identifierOperandSQL(v, args, nil, slotComparisonRight)
 	case *Query:
 		sql, subArgs := buildSubquerySQL(v)
 		rightSQL = fmt.Sprintf("(%s)", sql)
@@ -39,7 +51,42 @@ func (c *BinaryCondition) ToSQL() (string, []interface{}) {
 		args = append(args, v)
 	}
 
-	return fmt.Sprintf("%s %s %s", leftSQL, c.Operator, rightSQL), args
+	return fmt.Sprintf("%s %s %s", leftSQL, c.Operator, rightSQL), args, nil
+}
+
+// contextSQL is ToSQLContext under a non-nil ctx. The operator goes through ctx.Operator (see
+// RenderContext.operator), and an Identifier on the right is an identifier slot like the left:
+// under Strict a demoted one is refused rather than compared against as text.
+func (c *BinaryCondition) contextSQL(ctx *RenderContext) (string, []any, error) {
+	if c == nil {
+		return "", nil, errNilCondition
+	}
+
+	leftSQL, args, err := identifierOperandSQL(c.Left, nil, ctx, slotComparisonLeft)
+	if err != nil {
+		return "", nil, err
+	}
+	operator, err := ctx.operator(c.Operator, portableComparisons)
+	if err != nil {
+		return "", nil, err
+	}
+
+	var rightSQL string
+	switch v := c.Right.(type) {
+	case Raw:
+		rightSQL = string(v)
+	case Identifier:
+		rightSQL, args, err = identifierOperandSQL(v, args, ctx, slotComparisonRight)
+	case *Query:
+		rightSQL, args, err = subqueryOperandSQL(v, args, ctx)
+	default:
+		rightSQL, args = "?", append(args, v)
+	}
+	if err != nil {
+		return "", nil, err
+	}
+
+	return fmt.Sprintf("%s %s %s", leftSQL, operator, rightSQL), args, nil
 }
 
 // UnaryCondition represents a condition with one operand and an operator
@@ -48,14 +95,44 @@ type UnaryCondition struct {
 	Operand  interface{}
 }
 
-// ToSQL returns the SQL representation of the unary condition
+// ToSQL returns the SQL representation of the unary condition. It is ToSQLContext(nil).
 func (c *UnaryCondition) ToSQL() (string, []interface{}) {
+	sql, args, _ := c.ToSQLContext(nil)
+	return sql, args
+}
+
+// ToSQLContext renders the unary condition under ctx (see RenderContext). A nil ctx runs the
+// code below the dispatch, which is what ToSQL has always run.
+func (c *UnaryCondition) ToSQLContext(ctx *RenderContext) (string, []any, error) {
+	if ctx != nil {
+		return c.contextSQL(ctx)
+	}
+
 	var args []interface{}
 	var operandSQL string
 
-	operandSQL, args = identifierOperandSQL(c.Operand, args)
+	operandSQL, args, _ = identifierOperandSQL(c.Operand, args, nil, unaryOperandSlot(c.Operator))
 
-	return fmt.Sprintf("%s %s", c.Operator, operandSQL), args
+	return fmt.Sprintf("%s %s", c.Operator, operandSQL), args, nil
+}
+
+// contextSQL is ToSQLContext under a non-nil ctx; the operator goes through ctx.Operator (see
+// RenderContext.operator).
+func (c *UnaryCondition) contextSQL(ctx *RenderContext) (string, []any, error) {
+	if c == nil {
+		return "", nil, errNilCondition
+	}
+
+	operandSQL, args, err := identifierOperandSQL(c.Operand, nil, ctx, unaryOperandSlot(c.Operator))
+	if err != nil {
+		return "", nil, err
+	}
+	operator, err := ctx.operator(c.Operator, portableUnaryOperators)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return fmt.Sprintf("%s %s", operator, operandSQL), args, nil
 }
 
 // InCondition represents an IN condition
@@ -67,13 +144,24 @@ type InCondition struct {
 	Subquery   *Query
 }
 
-// ToSQL returns the SQL representation of the IN condition
+// ToSQL returns the SQL representation of the IN condition. It is ToSQLContext(nil).
 func (c *InCondition) ToSQL() (string, []interface{}) {
+	sql, args, _ := c.ToSQLContext(nil)
+	return sql, args
+}
+
+// ToSQLContext renders the IN condition under ctx (see RenderContext). A nil ctx runs the code
+// below the dispatch, which is what ToSQL has always run.
+func (c *InCondition) ToSQLContext(ctx *RenderContext) (string, []any, error) {
+	if ctx != nil {
+		return c.contextSQL(ctx)
+	}
+
 	var args []interface{}
 	var fieldSQL string
 
 	// The field sits in an identifier position. See identifierOperandSQL.
-	fieldSQL, args = identifierOperandSQL(c.Field, args)
+	fieldSQL, args, _ = identifierOperandSQL(c.Field, args, nil, slotInField)
 
 	operator := "IN"
 	if c.Not {
@@ -82,7 +170,7 @@ func (c *InCondition) ToSQL() (string, []interface{}) {
 
 	if c.IsSubquery {
 		sql, subArgs := buildSubquerySQL(c.Subquery)
-		return fmt.Sprintf("%s %s (%s)", fieldSQL, operator, sql), append(args, subArgs...)
+		return fmt.Sprintf("%s %s (%s)", fieldSQL, operator, sql), append(args, subArgs...), nil
 	}
 
 	placeholders := make([]string, len(c.Values))
@@ -91,7 +179,48 @@ func (c *InCondition) ToSQL() (string, []interface{}) {
 		args = append(args, c.Values[i])
 	}
 
-	return fmt.Sprintf("%s %s (%s)", fieldSQL, operator, strings.Join(placeholders, ", ")), args
+	return fmt.Sprintf("%s %s (%s)", fieldSQL, operator, strings.Join(placeholders, ", ")), args, nil
+}
+
+// contextSQL is ToSQLContext under a non-nil ctx.
+func (c *InCondition) contextSQL(ctx *RenderContext) (string, []any, error) {
+	if c == nil {
+		return "", nil, errNilCondition
+	}
+
+	fieldSQL, args, err := identifierOperandSQL(c.Field, nil, ctx, slotInField)
+	if err != nil {
+		return "", nil, err
+	}
+
+	operator := "IN"
+	if c.Not {
+		operator = "NOT IN"
+	}
+
+	if c.IsSubquery {
+		sql, subArgs, err := ctx.subquery(c.Subquery)
+		if err != nil {
+			return "", nil, err
+		}
+		return fmt.Sprintf("%s %s (%s)", fieldSQL, operator, sql), append(args, subArgs...), nil
+	}
+
+	// An empty list renders as "f IN ()", a syntax error on Postgres, MySQL and SQL Server
+	// alike. The context says what it means instead, and the field goes with it: it was
+	// rendered above all the same, so a Strict context still refuses one that is not an
+	// identifier.
+	if len(c.Values) == 0 && ctx.EmptyIn != nil {
+		return ctx.EmptyIn(c.Not), nil, nil
+	}
+
+	placeholders := make([]string, len(c.Values))
+	for i := range c.Values {
+		placeholders[i] = "?"
+		args = append(args, c.Values[i])
+	}
+
+	return fmt.Sprintf("%s %s (%s)", fieldSQL, operator, strings.Join(placeholders, ", ")), args, nil
 }
 
 // BetweenCondition represents a BETWEEN condition
@@ -102,13 +231,24 @@ type BetweenCondition struct {
 	Not   bool
 }
 
-// ToSQL returns the SQL representation of the BETWEEN condition
+// ToSQL returns the SQL representation of the BETWEEN condition. It is ToSQLContext(nil).
 func (c *BetweenCondition) ToSQL() (string, []interface{}) {
+	sql, args, _ := c.ToSQLContext(nil)
+	return sql, args
+}
+
+// ToSQLContext renders the BETWEEN condition under ctx (see RenderContext). A nil ctx runs
+// the code below the dispatch, which is what ToSQL has always run.
+func (c *BetweenCondition) ToSQLContext(ctx *RenderContext) (string, []any, error) {
+	if ctx != nil {
+		return c.contextSQL(ctx)
+	}
+
 	var args []interface{}
 	var fieldSQL string
 
 	// The field sits in an identifier position. See identifierOperandSQL.
-	fieldSQL, args = identifierOperandSQL(c.Field, args)
+	fieldSQL, args, _ = identifierOperandSQL(c.Field, args, nil, slotBetweenField)
 
 	operator := "BETWEEN"
 	if c.Not {
@@ -118,7 +258,36 @@ func (c *BetweenCondition) ToSQL() (string, []interface{}) {
 	lowerSQL, args := betweenBoundSQL(c.Lower, args)
 	upperSQL, args := betweenBoundSQL(c.Upper, args)
 
-	return fmt.Sprintf("%s %s %s AND %s", fieldSQL, operator, lowerSQL, upperSQL), args
+	return fmt.Sprintf("%s %s %s AND %s", fieldSQL, operator, lowerSQL, upperSQL), args, nil
+}
+
+// contextSQL is ToSQLContext under a non-nil ctx. The bounds follow betweenBoundSQL's rule —
+// a subquery renders, anything else binds — with the subquery going through the context.
+func (c *BetweenCondition) contextSQL(ctx *RenderContext) (string, []any, error) {
+	if c == nil {
+		return "", nil, errNilCondition
+	}
+
+	fieldSQL, args, err := identifierOperandSQL(c.Field, nil, ctx, slotBetweenField)
+	if err != nil {
+		return "", nil, err
+	}
+
+	operator := "BETWEEN"
+	if c.Not {
+		operator = "NOT BETWEEN"
+	}
+
+	lowerSQL, args, err := valueOperandSQL(c.Lower, args, ctx)
+	if err != nil {
+		return "", nil, err
+	}
+	upperSQL, args, err := valueOperandSQL(c.Upper, args, ctx)
+	if err != nil {
+		return "", nil, err
+	}
+
+	return fmt.Sprintf("%s %s %s AND %s", fieldSQL, operator, lowerSQL, upperSQL), args, nil
 }
 
 // betweenBoundSQL renders one BETWEEN bound, binding it as a parameter.
@@ -156,14 +325,42 @@ type ExistsCondition struct {
 	Not   bool
 }
 
-// ToSQL returns the SQL representation of the EXISTS condition
+// ToSQL returns the SQL representation of the EXISTS condition. It is ToSQLContext(nil).
 func (c *ExistsCondition) ToSQL() (string, []interface{}) {
+	sql, args, _ := c.ToSQLContext(nil)
+	return sql, args
+}
+
+// ToSQLContext renders the EXISTS condition under ctx (see RenderContext). A nil ctx runs the
+// code below the dispatch, which is what ToSQL has always run.
+func (c *ExistsCondition) ToSQLContext(ctx *RenderContext) (string, []any, error) {
+	if ctx != nil {
+		return c.contextSQL(ctx)
+	}
+
 	sql, args := buildSubquerySQL(c.Query)
 	operator := "EXISTS"
 	if c.Not {
 		operator = "NOT EXISTS"
 	}
-	return fmt.Sprintf("%s (%s)", operator, sql), args
+	return fmt.Sprintf("%s (%s)", operator, sql), args, nil
+}
+
+// contextSQL is ToSQLContext under a non-nil ctx; the subquery goes through the context.
+func (c *ExistsCondition) contextSQL(ctx *RenderContext) (string, []any, error) {
+	if c == nil {
+		return "", nil, errNilCondition
+	}
+
+	sql, args, err := ctx.subquery(c.Query)
+	if err != nil {
+		return "", nil, err
+	}
+	operator := "EXISTS"
+	if c.Not {
+		operator = "NOT EXISTS"
+	}
+	return fmt.Sprintf("%s (%s)", operator, sql), args, nil
 }
 
 // LikeCondition represents a LIKE condition
@@ -174,13 +371,24 @@ type LikeCondition struct {
 	Escape  string
 }
 
-// ToSQL returns the SQL representation of the LIKE condition
+// ToSQL returns the SQL representation of the LIKE condition. It is ToSQLContext(nil).
 func (c *LikeCondition) ToSQL() (string, []interface{}) {
+	sql, args, _ := c.ToSQLContext(nil)
+	return sql, args
+}
+
+// ToSQLContext renders the LIKE condition under ctx (see RenderContext). A nil ctx runs the
+// code below the dispatch, which is what ToSQL has always run.
+func (c *LikeCondition) ToSQLContext(ctx *RenderContext) (string, []any, error) {
+	if ctx != nil {
+		return c.contextSQL(ctx)
+	}
+
 	var args []interface{}
 	var fieldSQL string
 
 	// The field sits in an identifier position. See identifierOperandSQL.
-	fieldSQL, args = identifierOperandSQL(c.Field, args)
+	fieldSQL, args, _ = identifierOperandSQL(c.Field, args, nil, slotLikeField)
 
 	operator := "LIKE"
 	if c.Not {
@@ -203,9 +411,58 @@ func (c *LikeCondition) ToSQL() (string, []interface{}) {
 	}
 
 	if c.Escape != "" {
-		return fmt.Sprintf("%s %s %s ESCAPE '%s'", fieldSQL, operator, patternSQL, c.Escape), args
+		return fmt.Sprintf("%s %s %s ESCAPE '%s'", fieldSQL, operator, patternSQL, c.Escape), args, nil
 	}
-	return fmt.Sprintf("%s %s %s", fieldSQL, operator, patternSQL), args
+	return fmt.Sprintf("%s %s %s", fieldSQL, operator, patternSQL), args, nil
+}
+
+// contextSQL is ToSQLContext under a non-nil ctx. It refuses an Escape that cannot be written
+// as ESCAPE '<escape>' (see isLikeEscape) rather than emitting it.
+func (c *LikeCondition) contextSQL(ctx *RenderContext) (string, []any, error) {
+	if c == nil {
+		return "", nil, errNilCondition
+	}
+	if c.Escape != "" && !isLikeEscape(c.Escape) {
+		return "", nil, Unsupported(ctx.dialectName(), fmt.Sprintf("LIKE ESCAPE %q", c.Escape),
+			"the escape must be exactly one character other than a single quote")
+	}
+
+	fieldSQL, args, err := identifierOperandSQL(c.Field, nil, ctx, slotLikeField)
+	if err != nil {
+		return "", nil, err
+	}
+
+	operator := "LIKE"
+	if c.Not {
+		operator = "NOT LIKE"
+	}
+
+	patternSQL, args, err := valueOperandSQL(c.Pattern, args, ctx)
+	if err != nil {
+		return "", nil, err
+	}
+
+	if c.Escape != "" {
+		return fmt.Sprintf("%s %s %s ESCAPE '%s'", fieldSQL, operator, patternSQL, c.Escape), args, nil
+	}
+	return fmt.Sprintf("%s %s %s", fieldSQL, operator, patternSQL), args, nil
+}
+
+// isLikeEscape reports whether escape is exactly one valid character and not a single quote,
+// which is what every engine asks of ESCAPE '<escape>'.
+//
+// ToSQL interpolates Escape into a string literal as it stands, so a single quote closes the
+// literal early and whatever follows it is SQL; and an escape of more than one character is
+// refused by every engine, but only once the statement reaches the server. Under a context
+// both are caught while the query is being built instead.
+//
+// It is not the whole of what makes an escape safe on every engine. Where a string literal
+// treats a backslash as an escape of its own — MySQL, unless sql_mode has
+// NO_BACKSLASH_ESCAPES — ESCAPE '\' escapes the closing quote and leaves the literal open, so
+// an engine like that needs more than this check before it renders LIKE under a context.
+// T-SQL and standard SQL take '\' as the one-character literal it looks like.
+func isLikeEscape(escape string) bool {
+	return utf8.ValidString(escape) && utf8.RuneCountInString(escape) == 1 && escape != "'"
 }
 
 // IsNullCondition represents an IS NULL condition
@@ -214,20 +471,50 @@ type IsNullCondition struct {
 	Not   bool
 }
 
-// ToSQL returns the SQL representation of the IS NULL condition
+// ToSQL returns the SQL representation of the IS NULL condition. It is ToSQLContext(nil).
 func (c *IsNullCondition) ToSQL() (string, []interface{}) {
+	sql, args, _ := c.ToSQLContext(nil)
+	return sql, args
+}
+
+// ToSQLContext renders the IS NULL condition under ctx (see RenderContext). A nil ctx runs the
+// code below the dispatch, which is what ToSQL has always run.
+func (c *IsNullCondition) ToSQLContext(ctx *RenderContext) (string, []any, error) {
+	if ctx != nil {
+		return c.contextSQL(ctx)
+	}
+
 	var args []interface{}
 	var fieldSQL string
 
 	// The field sits in an identifier position. See identifierOperandSQL.
-	fieldSQL, args = identifierOperandSQL(c.Field, args)
+	fieldSQL, args, _ = identifierOperandSQL(c.Field, args, nil, slotIsNullField)
 
 	operator := "IS NULL"
 	if c.Not {
 		operator = "IS NOT NULL"
 	}
 
-	return fmt.Sprintf("%s %s", fieldSQL, operator), args
+	return fmt.Sprintf("%s %s", fieldSQL, operator), args, nil
+}
+
+// contextSQL is ToSQLContext under a non-nil ctx.
+func (c *IsNullCondition) contextSQL(ctx *RenderContext) (string, []any, error) {
+	if c == nil {
+		return "", nil, errNilCondition
+	}
+
+	fieldSQL, args, err := identifierOperandSQL(c.Field, nil, ctx, slotIsNullField)
+	if err != nil {
+		return "", nil, err
+	}
+
+	operator := "IS NULL"
+	if c.Not {
+		operator = "IS NOT NULL"
+	}
+
+	return fmt.Sprintf("%s %s", fieldSQL, operator), args, nil
 }
 
 // RawCondition represents a raw SQL condition
@@ -243,18 +530,74 @@ type RawCondition struct {
 //   - "?.?"   -> consumes 2 args (table/alias, column), renders as <arg0>.<arg1>
 //
 // Remaining "?" placeholders are treated as value parameters and returned in args.
+//
+// It is ToSQLContext(nil), and like every render it leaves the receiver alone, so one
+// RawCondition renders the same however many times it is rendered. It did not always:
+// expansion consumed the receiver's Args as it went (c.Args = c.Args[1:]), which made a
+// RawCondition single-use. Rendering a builder twice, or rendering two builders cloned from
+// one another — clones share their conditions — found the identifier args already gone
+// and substituted the next ones in their place; and a placeholder that ran short of args
+// fell back to the original SQL with args that were already half consumed. The fast path
+// handed out the receiver's own Args slice, so a caller appending to what it got back could
+// write into the condition.
 func (c *RawCondition) ToSQL() (string, []interface{}) {
+	sql, args, _ := c.ToSQLContext(nil)
+	return sql, args
+}
+
+// ToSQLContext renders the raw condition under ctx (see RenderContext). ctx.Raw rewrites the
+// SQL first; each identifier a "?." placeholder substitutes then goes through
+// ctx.QuoteIdentifier (a core.Raw arg is emitted as it is), and so does the literal column
+// after "?." when the context accepts it as an identifier (see placeholderColumn). Under
+// Strict a substituted identifier or literal column the context does not accept, and a
+// placeholder with no arg left for it, are errors. A nil ctx renders what ToSQL always has,
+// less the defects described there.
+func (c *RawCondition) ToSQLContext(ctx *RenderContext) (string, []any, error) {
 	if c == nil {
-		return "", nil
+		return "", nil, nil
 	}
 
 	sql := c.SQL
-	args := make([]interface{}, 0, len(c.Args))
-
-	// Fast path: if there is no "?." pattern, keep legacy behavior
-	if !strings.Contains(sql, "?.") {
-		return sql, c.Args
+	identifier := func(arg any) (string, error) { return fmt.Sprint(arg), nil }
+	column := func(literal string) (string, error) { return literal, nil }
+	if ctx != nil {
+		sql = ctx.rawSQL(sql)
+		identifier = ctx.placeholderIdentifier
+		column = ctx.placeholderColumn
 	}
+
+	// Fast path: if there is no "?." pattern, keep legacy behavior — with a copy of Args, not
+	// the receiver's own slice.
+	if !strings.Contains(sql, "?.") {
+		return sql, cloneArgs(c.Args), nil
+	}
+
+	expanded, args, ok, err := expandIdentifierPlaceholders(sql, c.Args, identifier, column)
+	if err != nil {
+		return "", nil, err
+	}
+	if !ok {
+		// Not enough args; fall back to legacy behavior: the SQL as written, every arg as
+		// given. A Strict context refuses instead, since the "?." left in the SQL would be
+		// sent to the server as a value placeholder followed by ".<column>".
+		if ctx != nil && ctx.Strict {
+			return "", nil, fmt.Errorf("RawCondition %q runs out of args at a \"?.\" placeholder: "+
+				"\"?.<column>\" takes one arg for the table or alias and \"?.?\" takes two, in order "+
+				"with the args of the \"?\" value placeholders", c.SQL)
+		}
+		return sql, cloneArgs(c.Args), nil
+	}
+	return expanded, args, nil
+}
+
+// expandIdentifierPlaceholders replaces the "?." identifier placeholders in sql, rendering
+// each substituted identifier with identifier and each literal column after "?." with column,
+// and collects the args left for the "?" value placeholders. It reads args through a local
+// cursor and never writes to it. ok is false when a placeholder finds too few args left, and
+// the caller decides what that means.
+func expandIdentifierPlaceholders(sql string, args []any, identifier func(arg any) (string, error), column func(literal string) (string, error)) (string, []any, bool, error) {
+	rest := args
+	values := make([]interface{}, 0, len(args))
 
 	// We'll build the final SQL by replacing identifier placeholders and
 	// collecting remaining args for value placeholders.
@@ -270,13 +613,18 @@ func (c *RawCondition) ToSQL() (string, []interface{}) {
 				// 2) "?.<word>" -> table/alias dynamic, column literal (consume 1 arg)
 				if i+2 < len(runes) && runes[i+2] == '?' { // pattern "?.?"
 					// Consume two args for identifiers
-					if len(c.Args) < 2 {
-						// Not enough args; fall back to legacy behavior
-						return c.SQL, c.Args
+					if len(rest) < 2 {
+						return "", nil, false, nil
 					}
-					tbl := fmt.Sprint(c.Args[0])
-					col := fmt.Sprint(c.Args[1])
-					c.Args = c.Args[2:]
+					tbl, err := identifier(rest[0])
+					if err != nil {
+						return "", nil, false, err
+					}
+					col, err := identifier(rest[1])
+					if err != nil {
+						return "", nil, false, err
+					}
+					rest = rest[2:]
 					sb.WriteString(tbl)
 					sb.WriteRune('.')
 					sb.WriteString(col)
@@ -296,23 +644,30 @@ func (c *RawCondition) ToSQL() (string, []interface{}) {
 					}
 					break
 				}
-				if len(c.Args) < 1 {
-					return c.SQL, c.Args
+				if len(rest) < 1 {
+					return "", nil, false, nil
 				}
-				tbl := fmt.Sprint(c.Args[0])
-				c.Args = c.Args[1:]
+				tbl, err := identifier(rest[0])
+				if err != nil {
+					return "", nil, false, err
+				}
+				col, err := column(string(runes[i+2 : j]))
+				if err != nil {
+					return "", nil, false, err
+				}
+				rest = rest[1:]
 				sb.WriteString(tbl)
 				sb.WriteRune('.')
-				sb.WriteString(string(runes[i+2 : j]))
+				sb.WriteString(col)
 				i = j
 				continue
 			}
 
 			// Value placeholder "?" -> keep as placeholder and collect next arg
 			sb.WriteRune('?')
-			if len(c.Args) > 0 {
-				args = append(args, c.Args[0])
-				c.Args = c.Args[1:]
+			if len(rest) > 0 {
+				values = append(values, rest[0])
+				rest = rest[1:]
 			}
 			i++
 			continue
@@ -325,11 +680,20 @@ func (c *RawCondition) ToSQL() (string, []interface{}) {
 
 	// Append any leftover args (shouldn't normally happen unless there were more
 	// args than placeholders). Keep them to avoid silent loss.
-	if len(c.Args) > 0 {
-		args = append(args, c.Args...)
+	if len(rest) > 0 {
+		values = append(values, rest...)
 	}
 
-	return sb.String(), args
+	return sb.String(), values, true, nil
+}
+
+// cloneArgs copies args, keeping a nil slice nil and an empty one empty: a caller can tell the
+// two apart, and the goldens do.
+func cloneArgs(args []any) []any {
+	if args == nil {
+		return nil
+	}
+	return append(make([]any, 0, len(args)), args...)
 }
 
 // buildSubquerySQL builds SQL for a subquery and returns its SQL and arguments
@@ -458,10 +822,21 @@ type CompositeCondition struct {
 	Conditions []Condition
 }
 
-// ToSQL returns the SQL representation of the composite condition.
+// ToSQL returns the SQL representation of the composite condition. It is ToSQLContext(nil).
 func (c *CompositeCondition) ToSQL() (string, []interface{}) {
+	sql, args, _ := c.ToSQLContext(nil)
+	return sql, args
+}
+
+// ToSQLContext renders the composite condition under ctx (see RenderContext). A nil ctx runs
+// the code below the dispatch, which is what ToSQL has always run.
+func (c *CompositeCondition) ToSQLContext(ctx *RenderContext) (string, []any, error) {
+	if ctx != nil {
+		return c.contextSQL(ctx)
+	}
+
 	if c == nil || len(c.Conditions) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
 
 	var args []interface{}
@@ -478,8 +853,35 @@ func (c *CompositeCondition) ToSQL() (string, []interface{}) {
 	// A single condition needs no parentheses, and adding them would change nothing but
 	// the SQL a test has to match.
 	if len(c.Conditions) == 1 {
-		return joined, args
+		return joined, args, nil
 	}
 
-	return "(" + joined + ")", args
+	return "(" + joined + ")", args, nil
+}
+
+// contextSQL is ToSQLContext under a non-nil ctx. Each operand goes through RenderCondition,
+// so an app-defined one is validated under Strict, and one that renders empty is skipped
+// rather than leaving "(a = ? AND )" behind; the parentheses follow the operands that are
+// left. The operator is resolved as RenderWhere resolves a WHERE clause's.
+func (c *CompositeCondition) contextSQL(ctx *RenderContext) (string, []any, error) {
+	if c == nil {
+		return "", nil, nil
+	}
+
+	operator, err := ctx.booleanOperator(c.Operator)
+	if err != nil {
+		return "", nil, err
+	}
+	parts, args, err := renderConditionParts(c.Conditions, ctx)
+	if err != nil {
+		return "", nil, err
+	}
+
+	switch len(parts) {
+	case 0:
+		return "", nil, nil
+	case 1:
+		return parts[0], args, nil
+	}
+	return "(" + strings.Join(parts, " "+operator+" ") + ")", args, nil
 }

@@ -515,6 +515,60 @@ func TestCloneDeepCopiesEveryClause(t *testing.T) {
 	assert.Equal(t, []string{"id"}, cq.Returning)
 }
 
+// TestCloneKeepsOrderByRaw: every clause method clones, so a clone that dropped
+// OrderByField.Raw turned OrderByRaw(expr, dir).Limit(n) into an ORDER BY that bound or quoted
+// expr instead of emitting it. TestOrderByRawIsEmittedVerbatim calls OrderByRaw last, which is
+// why it never saw this.
+func TestCloneKeepsOrderByRaw(t *testing.T) {
+	const expression = "first_name || ' ' || last_name"
+
+	for name, b := range map[string]*builder.Builder{"postgres": pg(), "mysql": mysqlB()} {
+		t.Run(name, func(t *testing.T) {
+			sql, args, err := b.Select("id").From("users").
+				OrderByRaw(expression, "desc").
+				Limit(5).
+				ToSQL()
+			require.NoError(t, err)
+			assert.Contains(t, sql, "ORDER BY "+expression+" DESC")
+			assert.Empty(t, args, "a raw expression is emitted, not bound")
+		})
+	}
+
+	// The flag itself, on both ORDER BY lists a clone copies.
+	original := pg().Select("id").From("users").
+		OrderByRaw(expression, "desc").
+		OrderBy("id", "asc").
+		Window("w", &dbCore.WindowDefinition{OrderBy: []dbCore.OrderByField{
+			{Field: "LENGTH(name)", Direction: "DESC", Raw: true},
+			{Field: "id", Direction: "ASC"},
+		}}).(*builder.Builder)
+	cq := original.Clone().Build()
+	require.Len(t, cq.OrderBy.Fields, 2)
+	assert.True(t, cq.OrderBy.Fields[0].Raw)
+	assert.False(t, cq.OrderBy.Fields[1].Raw)
+	require.Len(t, cq.Windows, 1)
+	require.Len(t, cq.Windows[0].Definition.OrderBy, 2)
+	assert.True(t, cq.Windows[0].Definition.OrderBy[0].Raw)
+	assert.False(t, cq.Windows[0].Definition.OrderBy[1].Raw)
+
+	// Both lists are copied whole, into slices of the clone's own: writing to the clone
+	// leaves the original alone.
+	cq.OrderBy.Fields[0].Field = "mutated"
+	cq.Windows[0].Definition.OrderBy[0].Field = "mutated"
+	oq := original.Build()
+	assert.Equal(t, expression, oq.OrderBy.Fields[0].Field)
+	assert.Equal(t, "LENGTH(name)", oq.Windows[0].Definition.OrderBy[0].Field)
+
+	// And inside a subquery that an outer builder copies on every clause call.
+	inner := pg().Select("user_id").From("orders").OrderByRaw("SUM(total)", "desc").Limit(1).Build()
+	outer := pg().Subquery(inner, "top").Select("user_id").(*builder.Builder)
+	assert.True(t, outer.Build().From.Subquery.OrderBy.Fields[0].Raw)
+	sql, args, err := outer.ToSQL()
+	require.NoError(t, err)
+	assert.Contains(t, sql, "ORDER BY SUM(total) DESC")
+	assert.Empty(t, args)
+}
+
 func TestCloneCopiesInsertUpdateAndDelete(t *testing.T) {
 	insert := pg().Insert("users").Columns("a").Values(1).
 		OnConflict("a").DoUpdate(map[string]interface{}{"a": 2}).(*builder.Builder)
@@ -662,4 +716,18 @@ func TestSupportsReturningPerDialect(t *testing.T) {
 	assert.False(t, dbCore.SupportsReturning(&mysql.MySQLDialect{}),
 		"MySQL has no RETURNING, which is why orm.Create needs a second path")
 	assert.False(t, dbCore.SupportsReturning(nil))
+}
+
+// TestCapabilityProbesPerDialect pins that neither shipped dialect declares a bind-parameter
+// limit or a trigger-sensitive RETURNING, so code that branches on either probe behaves on
+// Postgres and MySQL exactly as it did before the probes existed.
+func TestCapabilityProbesPerDialect(t *testing.T) {
+	for name, d := range map[string]dbCore.SQLDialect{
+		"postgres": &postgres.PostgresDialect{},
+		"mysql":    &mysql.MySQLDialect{},
+		"nil":      nil,
+	} {
+		assert.Zerof(t, dbCore.BindParameterLimit(d), "%s declares no bind-parameter limit", name)
+		assert.Falsef(t, dbCore.ReturningBlockedByTriggers(d), "%s RETURNING is not trigger-sensitive", name)
+	}
 }

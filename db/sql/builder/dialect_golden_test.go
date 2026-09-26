@@ -18,7 +18,8 @@ package builder_test
 // OrderByRaw is only ever the last clause call. At v2.4.3 a RawCondition with "?."
 // placeholders consumed its Args when rendered, and the builder's clone — which every clause
 // call makes — dropped the Raw flag; pinning either would have pinned the defect. Both are
-// to be fixed, and the fixes get tests of their own rather than entries here.
+// fixed, and are covered by TestRawConditionToSQLIsIdempotent (db/sql/core) and
+// TestCloneKeepsOrderByRaw (builder_coverage_test.go) rather than here.
 
 import (
 	"flag"
@@ -517,7 +518,8 @@ func groupByHavingCases() []dialectCase {
 }
 
 // orderByLimitCases keeps OrderByRaw as the last clause call of any builder chain, because at
-// v2.4.3 every clause call cloned and the clone lost the Raw flag.
+// v2.4.3 every clause call cloned and the clone lost the Raw flag. TestCloneKeepsOrderByRaw
+// covers the fix.
 func orderByLimitCases() []dialectCase {
 	return []dialectCase{
 		{name: "orderby/identifier", build: func(b dbCore.IQueryBuilder) dbCore.IQueryBuilder {

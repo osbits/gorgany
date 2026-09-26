@@ -232,8 +232,9 @@ func TestBetweenStillSupportsSubqueryBounds(t *testing.T) {
 // RawCondition did not have: it returned SQL and args untouched, so "?.id" bound the
 // table name as a value and produced SQL the server rejects.
 //
-// Note that ToSQL consumes the receiver's Args, so a RawCondition is single-use; each
-// case below therefore builds its own.
+// Each case builds its own RawCondition. Up to and including v2.4.3 that was required — ToSQL
+// consumed the receiver's Args, so a RawCondition was single-use — and it no longer is;
+// TestRawConditionToSQLIsIdempotent pins that.
 func TestRawConditionIdentifierPlaceholders(t *testing.T) {
 	// "?.<column>" consumes one arg as the table or alias.
 	one := &dbCore.RawCondition{SQL: "?.id = ?", Args: []interface{}{"users", 5}}
