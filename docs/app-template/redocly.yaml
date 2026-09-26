@@ -1,0 +1,7 @@
+# Spec lint rules for `make lint-api`. Start from the recommended set and switch a rule
+# off only with a reason next to it.
+extends:
+  - recommended
+rules:
+  # A list operation with no parameters and no body has no client error to document.
+  operation-4xx-response: off

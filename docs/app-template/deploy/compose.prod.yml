@@ -1,0 +1,49 @@
+# Production stack, at /srv/myapp/compose.prod.yml on the host; CI copies it there on
+# every deploy. Its env file is /etc/myapp/app.env: mode 0600, owned by the deploy
+# user, written by hand from docs/configuration.md, and never in git.
+#
+# Every command needs IMAGE, the tag being deployed. The ops-profile services are
+# one-offs, never started by `up`:
+#   IMAGE=<tag> docker compose -f compose.prod.yml run --rm backup | migrate | seed
+x-app: &app
+  image: ${IMAGE:?set IMAGE to the tag being deployed}
+  env_file: /etc/myapp/app.env
+  restart: unless-stopped
+
+services:
+  app:
+    <<: *app
+    ports: ["127.0.0.1:8080:8080"]
+    volumes: [uploads:/app/resource/public/storage]
+
+  migrate:
+    <<: *app
+    command: ["/app/cli", "db:migrate", "up"]
+    restart: "no"
+    profiles: [ops]
+
+  seed:
+    <<: *app
+    command: ["/app/cli", "db:seed"]
+    restart: "no"
+    profiles: [ops]
+
+  # A custom-format dump into /var/backups/myapp (mode 0700, owned by the deploy user)
+  # before every migration. Copy it off the host, or use your provider's snapshots.
+  # DB_SSL=verify-full checks the server against the image's system CA bundle.
+  backup:
+    image: postgres:17-alpine          # the server's major version
+    env_file: /etc/myapp/app.env
+    volumes: ["/var/backups/myapp:/backups"]
+    entrypoint: ["sh", "-c"]
+    command:
+      - >-
+        case "$$DB_SSL" in verify-full) export PGSSLROOTCERT=system;; esac;
+        PGPASSWORD="$$DB_PASSWORD" PGSSLMODE="$$DB_SSL"
+        pg_dump -Fc -h "$$DB_HOST" -p "$$DB_PORT" -U "$$DB_USER" -d "$$DB_NAME"
+        -f "/backups/$$(date -u +%Y%m%dT%H%M%SZ).dump"
+    restart: "no"
+    profiles: [ops]
+
+volumes:
+  uploads: {}

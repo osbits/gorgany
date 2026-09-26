@@ -1,0 +1,18 @@
+# The files that decide security, the contract and releases need an approval from
+# their owners. On GitLab Premium, turn on "require code owner approval" for the
+# default branch; on GitLab Free this file only suggests reviewers, so let only
+# Maintainers merge. Replace the example groups with yours.
+
+/pkg/provider/                    @backend-leads
+/pkg/auth/                        @security
+/pkg/middleware/                  @security
+/db/migration/                    @backend-leads
+/api/                             @api-owners
+/test/arch/known_violations.txt   @backend-leads
+/Dockerfile                       @platform
+/.gitlab-ci.yml                   @platform
+/deploy/                          @platform
+/.gitlab/CODEOWNERS               @security
+/config/                          @security
+/.dockerignore                    @platform
+/test/e2e/runner.Dockerfile*      @platform

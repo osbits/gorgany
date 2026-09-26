@@ -1,0 +1,24 @@
+app:
+  gorgany:
+    validate: false
+  server:
+    port: ${SERVER_PORT}
+    url: ${APP_URL}
+
+auth:
+  session:
+    storage: database
+    lifeTime: 3600
+    rotationInterval: 24h
+    activityTimeout: 30m
+
+databases:
+  default:
+    driver: postgres_gorm
+    host: ${DB_HOST}
+    port: ${DB_PORT}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+    db: ${DB_NAME}
+    ssl: ${DB_SSL}
+    log: false

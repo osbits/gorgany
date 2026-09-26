@@ -4,7 +4,7 @@
 
 Gorgany is a modular Go web framework for building scalable HTTP servers and CLI applications. It provides a complete, opinionated architecture with authentication, authorization, ORM, validation, events, and more.
 
-**Go version:** 1.24+
+**Go version:** the `go` directive in `go.mod`
 
 ## Build & Test Commands
 
@@ -59,6 +59,10 @@ Providers live in `provider/` and are orchestrated by `provider/bootstrap.go`.
 - Supports Singleton and Transient scopes
 - Lazy initialization
 
+## Applications Built on the Framework
+
+The recommended application layout is `docs/PROJECT_STRUCTURE.md`: `cmd/app` (server) and `cmd/cli` (console), one composition root in `pkg/provider` with a server and a console bootstrapper, `db/migration.All()`, and the test, API-contract and deployment practices in `docs/APP_TESTING.md`, `docs/API_CONTRACT.md` and `docs/DEPLOYMENT.md`. `docs/app-template/` is a working copy of it. Anything the framework prints or generates for applications (command hints, templates) should use that layout.
+
 ## Directory Structure
 
 ```
@@ -71,6 +75,8 @@ db/            # Database layer
 db/orm/        # Custom ORM wrapper around GORM
 db/sql/gorm/postgres/v2/  # PostgreSQL dialect (query builder, executor)
 decoder/       # Query string and multipart form decoders
+docs/          # Guides; docs/app-template is a separate Go module, outside ./...
+e2e/           # Dockerised e2e harness and its fixture app (cmd/app, cmd/cli)
 err/           # Custom error types
 event/         # Event bus (pub/sub, sync/async)
 http/          # HTTP context, middleware, controllers, router (Chi)
@@ -82,6 +88,7 @@ model/         # Base domain class, binder, pagination, access control, DTOs
 other/         # Request/response/session/view scopes
 provider/      # Service providers
 service/       # IoC container, pagination service, cache
+testsupport/   # Database harness for tests (docs/TESTING.md)
 util/          # String, reflect, slice, map utilities
 validator/     # Validation (wraps go-playground/validator with custom validators)
 view/          # Template rendering (Amber, native Go templates)
@@ -142,7 +149,7 @@ Built-in middleware: `http/middleware/auth_middleware.go`, `http/middleware/jwt_
 ## Database & Migrations
 
 - Migrations implement `core.IMigration` (`app/core/command.go`) with `Up()` / `Down()` methods
-- Run via CLI: `go run . db:migrate up`, `go run . db:migrate down`, `go run . db:diff`, `go run . db:seed`
+- Run via the application's console binary: `go run ./cmd/cli db:migrate up`, `go run ./cmd/cli db:migrate down`, `go run ./cmd/cli db:diff`, `go run ./cmd/cli db:seed`
 - Seeders implement `core.ISeeder` (`app/core/command.go`)
 - `db.Migration` and `db.Seeder` are ORM models that track executed migrations/seeds in the database, not the extension-point interfaces
 

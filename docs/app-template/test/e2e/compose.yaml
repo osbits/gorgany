@@ -1,0 +1,45 @@
+# The e2e stack: the production image against a throwaway database. run.sh starts
+# it with --env-file .env.e2e, so the database identity below and the app's
+# environment come from that one file. Run it through run.sh, which also tears it down.
+x-app: &app
+  image: ${APP_IMAGE:-myapp:e2e}
+  env_file: .env.e2e
+  depends_on:
+    db: { condition: service_healthy }
+
+services:
+  db:
+    image: postgres:17-alpine          # the production major version
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 2s
+      retries: 30
+
+  migrate:
+    <<: *app
+    command: ["/app/cli", "db:migrate", "up"]
+    restart: "no"
+
+  seed:
+    <<: *app
+    command: ["/app/cli", "db:seed"]
+    restart: "no"
+
+  app:
+    <<: *app                           # its healthcheck is the image's HEALTHCHECK
+
+  runner:
+    build:
+      context: ../..
+      dockerfile: test/e2e/runner.Dockerfile
+    environment:
+      E2E_BASE_URL: http://app:8080
+      E2E_DB_DSN: postgres://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}?sslmode=disable
+      E2E_REQUIRE_LIVE: "1"
+    depends_on:
+      app: { condition: service_healthy }

@@ -20,7 +20,7 @@ import (
 // core.JobSchedule pushes wall-clock work towards — has nowhere to hang the sweep. This gives
 // it one:
 //
-//	go run . session:gc
+//	go run ./cmd/cli session:gc
 //
 // The job and this command call the same ISessionStorage.ClearExpiredSessions, so the two
 // cannot drift.

@@ -1,0 +1,6 @@
+# Allowlist, like the application image's: the runner needs the module files and
+# the suite, nothing else.
+*
+!go.mod
+!go.sum
+!test/e2e/

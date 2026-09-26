@@ -84,8 +84,8 @@ func (thiz DiffCommand) Execute(ctx context.Context) {
 			if !ok {
 				fmt.Println("New domain detected, please register it.")
 				fmt.Println("Please complete one of the following steps:")
-				fmt.Println("- Register it manually, just add it to models registrar(registrar/models.go)")
-				fmt.Println("- Run `go run cmd/cli.go domains:register`")
+				fmt.Println("- Run `go run ./cmd/cli domains:register`, which rewrites pkg/provider/domains.go")
+				fmt.Println("- Or register it yourself with IDomainContext.RegisterDomain in a provider's Boot")
 				return
 			}
 		}

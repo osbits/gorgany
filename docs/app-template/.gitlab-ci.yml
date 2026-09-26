@@ -1,0 +1,122 @@
+# Jobs that build or test Go code call make targets, so CI runs what a developer
+# runs. The image jobs, e2e and deploy drive docker directly.
+# Build, e2e and deploy all use one image per pipeline, never overwritten.
+#
+# Needs, before the first deploy:
+# - a privileged runner for docker-in-docker, whose config.toml shares /certs/client;
+# - a separate, unprivileged runner, marked protected and tagged `deploy`;
+# - protected `v*` tags as well as the protected default branch: GitLab passes
+#   protected variables only to protected refs;
+# - the protected variables DEPLOY_HOST, SSH_KNOWN_HOSTS (the host's pinned key
+#   line) and SSH_PRIVATE_KEY (the deploy key, `base64 -w0` encoded so it can be
+#   masked; a Variable, not a File);
+# - a daily pipeline schedule (Build > Pipeline schedules), so `vuln` also runs
+#   when nothing is pushed.
+stages: [verify, test, build, e2e, deploy]
+
+include:
+  - template: Jobs/Secret-Detection.gitlab-ci.yml
+  - template: Jobs/Container-Scanning.gitlab-ci.yml
+
+default:
+  image: golang:1.26.5            # the go.mod toolchain; test/arch checks it
+
+variables:
+  # Per pipeline: a tag pipeline and a branch pipeline on the same commit, or a
+  # scheduled rebuild, never overwrite the image another pipeline tested.
+  IMAGE: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA-$CI_PIPELINE_IID
+
+.docker:
+  image: docker:29
+  services: [docker:29-dind]
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_CERTDIR: /certs
+    DOCKER_TLS_VERIFY: "1"
+    DOCKER_CERT_PATH: /certs/client
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+
+verify:
+  stage: verify
+  script: [make verify, make lint]
+
+lint-api:
+  stage: verify
+  image: node:24-alpine
+  before_script: [apk add --no-cache make bash]
+  script: [make lint-api]
+
+unit:
+  stage: test
+  script: [make test]
+
+integration:
+  stage: test
+  services:
+    - name: postgres:17-alpine
+      alias: pg
+  variables:
+    POSTGRES_PASSWORD: test
+    POSTGRES_DB: gorgany_test
+    GORGANY_TEST_HOST: pg
+    GORGANY_TEST_PORT: "5432"
+  script: [make test-integration-ci]
+
+vuln:
+  stage: test
+  script: [make vuln]
+
+secret_detection:
+  stage: test
+
+build:
+  extends: .docker
+  stage: build
+  script:
+    - docker build --build-arg VERSION=${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA} -t $IMAGE .
+    - docker push $IMAGE
+
+e2e:
+  extends: .docker
+  stage: e2e
+  variables:
+    APP_IMAGE: $IMAGE
+    COMPOSE_PROJECT_NAME: e2e-$CI_JOB_ID
+  script: [test/e2e/run.sh]
+
+# GitLab's own job reports findings (allow_failure) and does not stop a deploy; add
+# a failing scanner job if findings must gate. Its template skips tag pipelines, so
+# the rules below add them: a tag release deploys an image of its own.
+container_scanning:
+  stage: e2e
+  variables:
+    CS_IMAGE: $IMAGE
+  rules:
+    - if: $CONTAINER_SCANNING_DISABLED == 'true' || $CONTAINER_SCANNING_DISABLED == '1'
+      when: never
+    - if: $CI_COMMIT_BRANCH || $CI_COMMIT_TAG
+
+deploy:
+  stage: deploy
+  tags: [deploy]                   # the protected, unprivileged runner, never the dind one
+  environment: production          # protect it on GitLab Premium; on Free, protected refs are the gate
+  resource_group: production       # one deploy at a time: migrate takes no lock
+  rules:
+    - if: $CI_COMMIT_REF_PROTECTED == "true" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+    - if: $CI_COMMIT_REF_PROTECTED == "true" && $CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/
+      when: manual
+  before_script:
+    - install -d -m 700 ~/.ssh
+    - printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+    - eval "$(ssh-agent -s)"
+    - printf '%s' "$SSH_PRIVATE_KEY" | base64 -d | ssh-add -
+  # docs/runbooks/deploy.md steps 2 to 6: copy, pull, back up, migrate, seed, roll.
+  script:
+    - scp deploy/compose.prod.yml deploy@$DEPLOY_HOST:/srv/myapp/compose.prod.yml
+    - ssh deploy@$DEPLOY_HOST "cd /srv/myapp && IMAGE=$IMAGE docker compose -f compose.prod.yml pull app"
+    - ssh deploy@$DEPLOY_HOST "cd /srv/myapp && IMAGE=$IMAGE docker compose -f compose.prod.yml run --rm backup"
+    - ssh deploy@$DEPLOY_HOST "cd /srv/myapp && IMAGE=$IMAGE docker compose -f compose.prod.yml run --rm migrate"
+    - ssh deploy@$DEPLOY_HOST "cd /srv/myapp && IMAGE=$IMAGE docker compose -f compose.prod.yml run --rm seed"
+    - ssh deploy@$DEPLOY_HOST "cd /srv/myapp && IMAGE=$IMAGE docker compose -f compose.prod.yml up -d --wait app"

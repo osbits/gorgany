@@ -7,6 +7,54 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- `docs/PROJECT_STRUCTURE.md`: the recommended application layout, which until now was
+  written down nowhere. It covers:
+  - one directory per binary, `cmd/app` and `cmd/cli`;
+  - a composition root in `pkg/provider` with separate server and console bootstrappers,
+    so `cli db:migrate` no longer starts the job scheduler;
+  - a `deferred` bootstrapper, so provider constructors run after `.env` and the config
+    are loaded;
+  - what goes where, the import policy, generated-code ownership, and the ordered
+    `db/migration.All()` list shared by the provider and the tests;
+  - the event bus's constraints, CSRF and same-origin wiring, and the documentation an
+    application keeps.
+- `docs/APP_TESTING.md`: test tiers selected by build tags; route-contract tests (a golden
+  route inventory, handler resolvability, sign-in coverage, spec parity); the integration
+  tier on `testsupport`; and an e2e harness that runs the production image, not `go run`.
+- `docs/API_CONTRACT.md`: `api/openapi.yaml` and `api/routes.txt`, the tests and the spec
+  linter that keep them true, the envelope and what each status means, and versioning.
+- `docs/DEPLOYMENT.md`: the image (scratch, non-root, `MODE=prod`, `CMD` rather than
+  `ENTRYPOINT`, a HEALTHCHECK that boots nothing), allowlist ignore files, configuration
+  rules, the Makefile, the pipeline, and releasing with a backup, migrations and seeders
+  before the roll. It also covers several datasources and several replicas, upgrades, and
+  observability.
+- `docs/app-template/`: a working application in that layout, as its own Go module outside
+  `./...`. It builds, lints clean, passes its unit and integration tiers, and its e2e suite
+  passes against its own production image.
+
+### Changed
+
+- The e2e fixture app's server entry point moved from `e2e/fixture-app/cmd/server` to
+  `e2e/fixture-app/cmd/app`. Its entry points now follow the recommended layout (`cmd/app`,
+  `cmd/cli`).
+- `db:diff`'s "new domain detected" hint named a v1 registrar path (`registrar/models.go`)
+  and a single-file command (`go run cmd/cli.go`). It now names
+  `go run ./cmd/cli domains:register`, which rewrites `pkg/provider/domains.go`, and
+  `IDomainContext.RegisterDomain`. The comment in the `domains:register` template matches.
+
+### Fixed
+
+- `domains:register` wrote `pkg/provider/domains.go` unformatted, which failed any `gofmt -l`
+  gate the moment it ran, and created it with `os.ModePerm` (0777 before the umask, usually
+  0755). It now gofmts the output and creates the file `0644`. An existing file keeps its
+  mode: run `chmod 644 pkg/provider/domains.go` once.
+
+---
+
 ## [2.2.0] — 2026-08-02
 
 > **This supersedes 2.0.0, which is burned.** A second security audit of the tree that

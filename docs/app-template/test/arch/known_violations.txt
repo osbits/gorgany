@@ -1,0 +1,3 @@
+# Import edges this app has not fixed yet, one "from -> to" per line.
+# TestLayering fails on any edge not listed here, and on any listed edge that is
+# gone, so this file can only shrink. A new app starts with it empty.

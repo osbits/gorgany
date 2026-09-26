@@ -1,0 +1,146 @@
+openapi: 3.1.0
+info:
+  title: myapp API
+  version: 1.0.0
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+  description: |
+    Every JSON response is the framework's envelope (`Envelope`). A mutating request
+    needs the session cookie and the `X-CSRF-Token` header, both obtained from
+    `GET /csrf` (served by the framework, outside this spec's `/api` operations).
+servers:
+  - url: /
+paths:
+  /api/v1/notes:
+    get:
+      operationId: listNotes
+      summary: List notes
+      security: []
+      responses:
+        "200":
+          description: Every note.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      body:
+                        type: array
+                        items: { $ref: "#/components/schemas/Note" }
+    post:
+      operationId: createNote
+      summary: Create a note
+      security: [{ session: [] }]
+      parameters:
+        - $ref: "#/components/parameters/CsrfToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [title]
+              properties:
+                title: { type: string, minLength: 3 }
+      responses:
+        "201":
+          description: The note that was created.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      body: { $ref: "#/components/schemas/Note" }
+        "401": { $ref: "#/components/responses/NotAuthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "422": { $ref: "#/components/responses/Validation" }
+  /api/v1/notes/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: showNote
+      summary: Show one note
+      security: []
+      responses:
+        "200":
+          description: One note.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - properties:
+                      body: { $ref: "#/components/schemas/Note" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: __Host-GRG_SESSION_ID
+  parameters:
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: The token from `GET /csrf`, refreshed from any response that carries this header.
+      schema: { type: string }
+  schemas:
+    # The framework wraps every JSON response in this envelope (model/dto_api_wrapper.go).
+    Envelope:
+      type: object
+      required: [status, status_code, body, errors]
+      properties:
+        status: { type: integer, description: "The HTTP status, repeated." }
+        status_code: { type: string, examples: [SUCCESS, CREATED, NOT_FOUND, VALIDATION] }
+        body: {}
+        errors:
+          type: [array, "null"]
+          items: {}
+    ValidationError:
+      type: object
+      required: [field, err]
+      properties:
+        field: { type: string }
+        err: { type: string }
+        rule: { type: string }
+        param: { type: string }
+        path: { type: string }
+    Note:
+      type: object
+      required: [id, title, createdAt]
+      properties:
+        id: { type: string }
+        title: { type: string }
+        createdAt: { type: string, format: date-time }
+  responses:
+    NotAuthorized:
+      description: No valid session.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Envelope" }
+    Forbidden:
+      description: The CSRF token is missing or wrong, or the request came from another origin.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Envelope" }
+    NotFound:
+      description: No such entity.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Envelope" }
+    Validation:
+      description: The body failed validation.
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Envelope"
+              - properties:
+                  errors:
+                    type: array
+                    items: { $ref: "#/components/schemas/ValidationError" }

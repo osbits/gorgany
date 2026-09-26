@@ -1,0 +1,21 @@
+package domain
+
+import (
+	"github.com/osbits/gorgany/v2/app/core"
+	"github.com/osbits/gorgany/v2/db/orm"
+)
+
+type User struct {
+	orm.BaseEntity `json:"-"`
+	ID             string        `json:"id" gorm:"primaryKey;column:id"`
+	Username       string        `json:"username" gorm:"column:username;uniqueIndex;not null"`
+	PasswordHash   string        `json:"-" gorm:"column:password_hash;not null"`
+	Role           core.UserRole `json:"role" gorm:"column:role;not null"`
+}
+
+func (User) TableName() string { return "users" }
+
+func (u *User) GetId() string          { return u.ID }
+func (u *User) GetUsername() string    { return u.Username }
+func (u *User) GetPassword() string    { return u.PasswordHash }
+func (u *User) GetRole() core.UserRole { return u.Role }

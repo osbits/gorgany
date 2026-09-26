@@ -1,0 +1,31 @@
+# Local dependencies only. The app itself runs on the host with `make run`.
+# Compose reads .env for the ${…} below, so the database here is the one .env
+# points the app at, on the port .env names.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER:-myapp}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change-me}
+      POSTGRES_DB: ${DB_NAME:-myapp_dev}
+    ports: ["127.0.0.1:${DB_PORT:-5432}:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 2s
+      retries: 30
+
+  # The integration tier's database, on testsupport's default address
+  # (127.0.0.1:5433, postgres/test, gorgany_test). tmpfs: every recreate is empty.
+  postgres-test:
+    image: postgres:17-alpine
+    environment: { POSTGRES_PASSWORD: test, POSTGRES_DB: gorgany_test }
+    ports: ["127.0.0.1:5433:5432"]
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d gorgany_test"]
+      interval: 2s
+      retries: 30
+
+volumes:
+  pgdata: {}

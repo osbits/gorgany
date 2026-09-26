@@ -93,7 +93,7 @@ services:
       retries: 45
       # `go run` compiles the framework before it listens on anything.
       start_period: 180s
-    command: ["go", "run", "./cmd/server"]
+    command: ["go", "run", "./cmd/app"]
 
   runner:
     build:

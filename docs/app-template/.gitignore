@@ -1,0 +1,32 @@
+# Build output. Anchored to the root: an unanchored `app` or `cli` would also
+# ignore the cmd/app and cmd/cli source directories.
+/bin/
+/app
+/cli
+coverage.*
+*.test
+
+# Local environment and key material
+.env
+.env.*
+!.env.sample
+!/test/e2e/.env.e2e
+*.pem
+*.key
+id_rsa
+id_ecdsa
+id_ed25519
+
+# Runtime state
+/logs/
+/tmp/
+resource/temp/
+resource/public/storage/
+
+# Fixes land as commits, never as patch files
+*.patch
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store

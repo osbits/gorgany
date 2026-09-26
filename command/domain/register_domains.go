@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"github.com/osbits/gorgany/v2/app/core"
 	"github.com/osbits/gorgany/v2/util"
+	"go/format"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -82,9 +83,14 @@ func (thiz RegisterDomainsCommand) generateRegistrar(imports []string, registers
 		panic(err)
 	}
 
-	err = os.WriteFile("pkg/provider/domains.go", writer.Bytes(), os.ModePerm)
+	// gofmt the output. The template's indentation is not gofmt's, and a generated file
+	// that fails `gofmt -l` fails every CI format gate the moment it is regenerated.
+	source, err := format.Source(writer.Bytes())
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("domains:register: generated pkg/provider/domains.go does not parse: %w", err)
 	}
-	return err
+
+	// 0644, not os.ModePerm: a source file has no business being executable or
+	// world-writable.
+	return os.WriteFile("pkg/provider/domains.go", source, 0o644)
 }

@@ -1,0 +1,6 @@
+GET /api/v1/notes                api.note.index
+GET /api/v1/notes/{id}           api.note.show
+GET /csrf                        gorgany.csrf.token   *middleware.RateLimitMiddleware
+GET /healthz                     health.live
+GET /readyz                      health.ready
+POST /api/v1/notes               api.note.store       *middleware.AuthMiddleware

@@ -1,0 +1,14 @@
+# Allowlist: the build context is exactly what the image is built from. Anything
+# else (.git, .env, keys, binaries, IDE state) never reaches the daemon.
+*
+!go.mod
+!go.sum
+!cmd/
+!pkg/
+!db/
+!config/
+!resource/
+resource/temp/
+resource/public/storage/
+**/*_test.go
+**/testdata/
