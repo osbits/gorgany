@@ -35,7 +35,7 @@ The template's short name and its module path are both `myapp`. Replace both bef
 first commit.
 
 1. Copy it out of the framework repository:
-   `git clone --depth 1 https://github.com/osbits/gorgany.git /tmp/gorgany`, then
+   `git clone --depth 1 https://github.com/osbits/gorgany /tmp/gorgany`, then
    `cp -R /tmp/gorgany/docs/app-template billing && cd billing && git init`.
 2. Set the module path; slashes are fine:
    `go mod edit -module example.com/acme/billing`, then rewrite the imports with
