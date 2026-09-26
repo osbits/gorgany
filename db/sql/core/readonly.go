@@ -5,6 +5,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 // SQLLexicon says how an engine's SQL splits into tokens, as far as the guards below need to
@@ -21,11 +23,11 @@ type SQLLexicon struct {
 	// BracketIdentifiers: [name] is an identifier, with ]] for a ] inside it (SQL Server).
 	// It also switches on the guards' SQL Server rules, since SQL Server is the engine whose
 	// statements need no ";" between them, that changes a schema through stored procedures
-	// such as sp_rename, and that runs SQL text through EXEC (…) and sp_executesql:
-	// GuardReadOnlySQL refuses the words that begin its statements and its lock-taking table
-	// hints, GuardReadOnlyShape reads every word as GuardReadOnlySQL does, and
-	// GuardExternalSchemaSQL refuses its schema-changing words and procedures, and its
-	// dynamic SQL, anywhere.
+	// such as sp_rename, that runs SQL text through EXEC (…) and sp_executesql, and that hands
+	// it to a linked server through OPENQUERY: GuardReadOnlySQL refuses the words that begin
+	// its statements and its lock-taking table hints, GuardReadOnlyShape reads every word as
+	// GuardReadOnlySQL does, and GuardExternalSchemaSQL refuses its schema-changing words and
+	// procedures, its dynamic SQL and its linked-server functions, anywhere.
 	BracketIdentifiers bool
 
 	// BacktickIdentifiers: `name` is an identifier, with `` for a ` inside it (MySQL).
@@ -226,6 +228,16 @@ func GuardReadOnlyShape(sql string, lex SQLLexicon) error {
 // and a call, with or without EXEC and named as the procedures above are, of a system
 // procedure that runs the SQL text it is handed — sp_executesql, sp_prepare, sp_prepexec,
 // sp_cursoropen, sp_cursorprepare, sp_cursorprepexec, sp_MSforeachtable and sp_MSforeachdb.
+// Another is OPENQUERY, OPENROWSET and OPENDATASOURCE, at any depth, through each of which
+// another server, which may be this one, runs SQL the guard cannot read: OPENQUERY the query
+// text it hands a linked server, OPENROWSET the query text it hands an OLE DB provider, and
+// OPENDATASOURCE whatever is called through the provider it names, as in
+// EXEC OPENDATASOURCE(…).reports.sys.sp_executesql N'…'. OPENROWSET(BULK …) reads a file
+// rather than a query, and is refused with them all the same. Their refusal says what it
+// cannot check and to reach that data another way: a four-part name lets an app query a
+// linked server's tables in a statement the guard reads. It is reported only when nothing
+// else in the same statement is refused, so SELECT … FROM OPENQUERY(…) DROP TABLE t names the
+// DROP, and an operator who replaces the function is not met by a second refusal.
 // Another is CREATE, ALTER, DROP, TRUNCATE, GRANT, REVOKE or DENY anywhere outside
 // parentheses, since SQL Server needs no ";" before the next statement: IF … DROP TABLE t is
 // a DROP, and so is SELECT 1 DROP TABLE t. (An ALTER COLUMN, DROP COLUMN or DROP CONSTRAINT
@@ -234,6 +246,17 @@ func GuardReadOnlyShape(sql string, lex SQLLexicon) error {
 // off. An EXEC of any other procedure by name, EXEC dbo.usp_archive 1, passes: what a
 // procedure does is server code, as what a function does is, and the principal's rights are
 // what stand between it and the schema.
+//
+// A procedure's name is compared as a width-, accent- and case-insensitive collation would
+// compare it, since the server looks the name up under the database's collation, and under
+// such a collation [ｓｐ＿ｒｅｎａｍｅ] and [sp_rénamé] are sp_rename: the guard folds the name
+// to its compatibility decomposition, without combining marks or format characters, in lower
+// case (see foldName). (SQL Server's regular identifiers take no combining mark, so an accent
+// written as one needs a bracketed or quoted name, which the guard reads whole.) The folding
+// only ever refuses. The keywords the guards look for, and the SELECT or WITH that
+// GuardReadOnlySQL lets a statement begin with, are matched in ASCII, since that is how the
+// server's parser reads them whatever the collation: ſelect is a name to it, and reading it as
+// SELECT would let a statement through, not stop one.
 //
 // A temporary table belongs to the session that creates it, not to the schema's owner, so
 // SQL Server's #temp tables are exempt: CREATE TABLE #t, ALTER TABLE #t, TRUNCATE TABLE #t,
@@ -252,11 +275,9 @@ func GuardReadOnlyShape(sql string, lex SQLLexicon) error {
 // it cannot finish reading, never quotes the SQL in its error, and is a safety net: DDL that
 // server code runs — a procedure, called with CALL or EXEC, a function or a trigger — is out
 // of its sight, and so is a setting changed through a function, such as Postgres's
-// set_config. So, on SQL Server, is the query OPENQUERY, OPENROWSET or OPENDATASOURCE hands
-// to a linked server, which is text the guard does not parse and which the linked server —
-// possibly this one — runs; and a procedure whose name the server's collation folds to one
-// the guard refuses, as a width- or accent-insensitive collation may, since the guard compares
-// names by case alone. Only a principal without DDL rights is a guarantee.
+// set_config. So, on SQL Server, is a spelling that a collation equates with a refused
+// procedure's name by some rule of its own beyond width, accents and case. Only a principal
+// without DDL rights is a guarantee.
 func GuardExternalSchemaSQL(sql string, lex SQLLexicon) error {
 	refused := guardTokens(sql, lex, externalSchemaRefusal)
 	switch {
@@ -264,6 +285,8 @@ func GuardExternalSchemaSQL(sql string, lex SQLLexicon) error {
 		return nil
 	case isDynamicSQL(refused):
 		return fmt.Errorf("%w: %s statement refused; dynamic SQL cannot be checked, so send the statement itself (a safety net — use a principal without DDL rights for a guarantee)", ErrExternalSchema, refused)
+	case sqlServerLinkedServerFunctions[refused]:
+		return fmt.Errorf("%w: %s statement refused; the SQL it hands to a linked server or an OLE DB provider, or the file it reads, cannot be checked, so reach that data another way, such as a linked server's four-part name (a safety net — use a principal without DDL rights for a guarantee)", ErrExternalSchema, refused)
 	}
 	return fmt.Errorf("%w: %s statement refused; rows may be read and written on this datasource, but its schema is changed only by its owner (a safety net — use a principal without DDL rights for a guarantee)", ErrExternalSchema, refused)
 }
@@ -395,7 +418,7 @@ func schemaStatementName(statement []sqlToken) string {
 
 // sqlServerSchemaProcedures are the system procedures through which SQL Server renames
 // objects and changes their types, rules, defaults, owners and extended properties, in the
-// lower case refusedProcedure compares in.
+// lower-case ASCII that foldName leaves as it is.
 var sqlServerSchemaProcedures = wordSet(
 	"sp_rename", "sp_addextendedproperty", "sp_updateextendedproperty", "sp_dropextendedproperty",
 	"sp_addtype", "sp_droptype", "sp_bindrule", "sp_unbindrule", "sp_bindefault",
@@ -403,8 +426,9 @@ var sqlServerSchemaProcedures = wordSet(
 )
 
 // sqlServerDynamicProcedures are the system procedures that run, or prepare to run, the SQL
-// text they are handed, in the lower case refusedProcedure compares in. sp_MSforeachtable and
-// sp_MSforeachdb run theirs once per table or database, with the name put in for a ?.
+// text they are handed, in the lower-case ASCII that foldName leaves as it is.
+// sp_MSforeachtable and sp_MSforeachdb run theirs once per table or database, with the name
+// put in for a ?.
 var sqlServerDynamicProcedures = wordSet(
 	"sp_executesql", "sp_prepare", "sp_prepexec", "sp_cursoropen", "sp_cursorprepare",
 	"sp_cursorprepexec", "sp_msforeachtable", "sp_msforeachdb",
@@ -419,6 +443,11 @@ const (
 	prepareFrom       = "PREPARE … FROM" // MySQL's
 	doBlock           = "DO"             // Postgres's
 )
+
+// sqlServerLinkedServerFunctions are the rowset functions through which SQL Server has a linked
+// server run SQL (see GuardExternalSchemaSQL), as the words that name them. They are reserved
+// words, so an unquoted one is the function wherever it stands; [openquery] is a name.
+var sqlServerLinkedServerFunctions = wordSet("OPENQUERY", "OPENROWSET", "OPENDATASOURCE")
 
 // isDynamicSQL reports whether refused, a GuardExternalSchemaSQL refusal, is of dynamic SQL,
 // whose error says to send the statement itself rather than that the schema is the owner's.
@@ -733,6 +762,9 @@ func schemaStatementRefusal(statement []sqlToken, lex SQLLexicon) string {
 	if statement[0].isWord("DO") && !lex.HashComments { // MySQL's DO runs no code block
 		return doBlock
 	}
+	// linkedServer is the first linked-server function in the statement, which is refused
+	// only if nothing else in it is (see GuardExternalSchemaSQL).
+	linkedServer := ""
 	if lex.BracketIdentifiers {
 		// SQL Server runs a procedure named as a batch's first statement without EXEC.
 		if procedure := refusedProcedure(statement, 0); procedure != "" {
@@ -743,6 +775,11 @@ func schemaStatementRefusal(statement []sqlToken, lex SQLLexicon) string {
 			case token.isWord("EXEC") || token.isWord("EXECUTE"):
 				if refused := execRefusal(statement, i+1); refused != "" {
 					return refused
+				}
+			case token.kind == sqlWord && sqlServerLinkedServerFunctions[token.upper]:
+				// At any depth: FROM OPENQUERY(…) is where it stands in a query.
+				if linkedServer == "" {
+					linkedServer = token.upper
 				}
 			case i > 0 && token.depth == 0 && sqlServerSchemaWords[token.upper] &&
 				!isTableClause(statement, i) && !onlyTemporaryObjects(statement, i):
@@ -778,9 +815,11 @@ func schemaStatementRefusal(statement []sqlToken, lex SQLLexicon) string {
 	// EXPLAIN ANALYZE runs the statement it explains, so that statement is checked again as if
 	// it stood alone, which is what gives its first word the rules above.
 	if explained := explainedStatement(statement, lex); explained > 0 {
-		return schemaStatementRefusal(statement[explained:], lex)
+		if refused := schemaStatementRefusal(statement[explained:], lex); refused != "" {
+			return refused
+		}
 	}
-	return ""
+	return linkedServer
 }
 
 // vacuumFull names a VACUUM FULL in a refusal.
@@ -938,16 +977,38 @@ func isTemporaryName(parts []string) bool {
 
 // refusedProcedure returns the system procedure named at tokens[i] when it is one that
 // changes a schema or runs SQL text, or "". Only the name's last part counts, so
-// [sys].[sp_rename], dbo.sp_rename and master..sp_rename are all sp_rename.
+// [sys].[sp_rename], dbo.sp_rename and master..sp_rename are all sp_rename, and it is compared
+// folded, so SP_RENAME, sp_ｒｅｎａｍｅ and [sp_rénamé] are too (see GuardExternalSchemaSQL).
+// What it returns is the list's spelling, never the SQL's.
 func refusedProcedure(tokens []sqlToken, i int) string {
 	parts, _ := objectName(tokens, i)
 	if len(parts) == 0 {
 		return ""
 	}
-	if name := strings.ToLower(parts[len(parts)-1]); sqlServerSchemaProcedures[name] || sqlServerDynamicProcedures[name] {
+	if name := foldName(parts[len(parts)-1]); sqlServerSchemaProcedures[name] || sqlServerDynamicProcedures[name] {
 		return name
 	}
 	return ""
+}
+
+// foldName returns name as a width-, accent- and case-insensitive collation compares it, as
+// near as the guard can tell: in lower case, in its compatibility decomposition (NFKD) — which
+// takes a fullwidth ｓ, a long ſ and a ligature ﬁ to s, s and fi, and splits an accented
+// letter into its letter and combining marks — and without those marks, nor the format
+// characters, such as a soft hyphen or a zero-width space, that a collation gives no weight.
+//
+// It is for names the server looks up under the database's collation, and only for refusing
+// them. It starts from strings.ToLower, which is what the guard compared before it folded,
+// and leaves ASCII as it is, so every name that compared equal to a refused one still does:
+// folding adds refusals and takes none away. Keywords are not folded (see sqlToken.upper).
+func foldName(name string) string {
+	var folded strings.Builder
+	for _, r := range norm.NFKD.String(strings.ToLower(name)) {
+		if !unicode.In(r, unicode.M, unicode.Cf) {
+			folded.WriteRune(unicode.ToLower(r))
+		}
+	}
+	return folded.String()
 }
 
 // execRefusal returns what GuardExternalSchemaSQL refuses of the EXEC whose target — what
@@ -1055,7 +1116,9 @@ type sqlToken struct {
 	text string
 	// upper is a word's upper case, and "" for anything else, including a word with a
 	// character outside ASCII. Keywords are ASCII on every engine, and Unicode case folding
-	// would make ſelect (long s) a SELECT that the server reads as a name.
+	// would make ſelect (long s) a SELECT that the server reads as a name. The names of
+	// procedures, which the server looks up under a collation, are folded instead, and only
+	// to refuse them (see foldName).
 	upper string
 	// depth is how many parentheses are open around the token. A "(" and the ")" that closes
 	// it share the depth outside them.

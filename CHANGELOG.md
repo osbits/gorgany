@@ -114,11 +114,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     refusal says to send the statement itself. A procedure called by name, such as
     `EXEC dbo.usp_archive 1`, passes: what it runs is server code, like a function. On SQL
     Server it also refuses the procedures that change a schema, such as `sp_rename`, and
-    `ENABLE TRIGGER` / `DISABLE TRIGGER`. `#temp` objects are exempt. Two gaps remain on SQL
-    Server. The guard does not read the query that `OPENQUERY`, `OPENROWSET` or
-    `OPENDATASOURCE` sends to a linked server, which may be this server. And it compares
-    procedure names by case alone, so it misses a name that a width- or accent-insensitive
-    collation folds to `sp_rename` or `sp_executesql`.
+    `ENABLE TRIGGER` / `DISABLE TRIGGER`. `#temp` objects are exempt. There it also refuses
+    `OPENQUERY`, `OPENROWSET` and `OPENDATASOURCE` at any depth, since the linked server or
+    OLE DB provider they reach, which may be this server, runs SQL the guard cannot read, and
+    `OPENROWSET(BULK …)` reads a file. That refusal is reported only when nothing else in the
+    statement is refused, and says to reach the data another way, such as a linked server's
+    four-part name. It compares procedure names folded for width, accents and case, as the
+    database's collation may, so `[sp_rénamé]` and a fullwidth `sp_rename` are refused.
 
   The lexicon presets `core.LexiconTSQL`, `core.LexiconPostgres` and `core.LexiconMySQL` tell
   the guards how each engine reads literals, quoted identifiers and comments. Text the lexicon

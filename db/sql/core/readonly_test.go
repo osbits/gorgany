@@ -8,7 +8,10 @@ package core_test
 // comment, a literal, a CTE or a second statement.
 
 import (
+	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 
 	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
 	"github.com/stretchr/testify/assert"
@@ -159,6 +162,9 @@ func TestGuardReadOnlySQLRefusesWrites(t *testing.T) {
 				"SELECT 1 /* outer /* nested */ still open",
 				`SELECT 'it\'s'`,
 				"SELECT * FROM OPENROWSET('x', 'y', 'z')",
+				"SELECT * FROM OPENQUERY([loopback], 'SELECT 1 AS x')",
+				"SELECT * FROM OPENDATASOURCE('MSOLEDBSQL', 'Data Source=(local)').reports.dbo.legacy",
+				"SELECT Id FROM legacy WHERE Id IN (SELECT Id FROM OPENQUERY([loopback], 'SELECT 1 AS Id'))",
 				"SELECT * FROM legacy; DBCC CHECKDB",
 			},
 			"postgres": {
@@ -473,6 +479,8 @@ func TestGuardReadOnlySQLErrorOmitsSQLText(t *testing.T) {
 		{dbCore.GuardExternalSchemaSQL, "EXEC('DROP TABLE [dbo].[2024Orders] -- do-not-echo')"},
 		{dbCore.GuardExternalSchemaSQL, "EXEC sp_executesql N'DELETE FROM [dbo].[2024Orders] WHERE Note = @n', N'@n nvarchar(20)', @n = N'do-not-echo'"},
 		{dbCore.GuardExternalSchemaSQL, "EXEC @usp_2024Orders 'do-not-echo'"},
+		{dbCore.GuardExternalSchemaSQL, "SELECT * FROM OPENQUERY([loopback], 'SELECT Note FROM [dbo].[2024Orders] WHERE Note = ''do-not-echo''')"},
+		{dbCore.GuardExternalSchemaSQL, "EXEC [ｓｐ＿ｒｅｎａｍｅ] '[dbo].[2024Orders]', 'do-not-echo'"},
 		{dbCore.GuardReadOnlySQL, "SELECT Note FROM [dbo].[2024Orders] WITH (UPDLOCK) WHERE Note = 'do-not-echo'"},
 	} {
 		err := c.guard(c.sql, dbCore.LexiconTSQL)
@@ -839,5 +847,201 @@ func TestGuardExternalSchemaOnPostgresAndMySQL(t *testing.T) {
 		"EXPLAIN ANALYZE CREATE TABLE legacy_copy AS SELECT 1":               ": CREATE statement refused;",
 	} {
 		assert.ErrorContains(t, dbCore.GuardExternalSchemaSQL(sql, pg), want)
+	}
+}
+
+// TestGuardExternalSchemaRefusesLinkedServerSQL: OPENQUERY, OPENROWSET and OPENDATASOURCE have
+// a linked server run SQL — a query's text, or whatever is called through the server — that
+// the guard does not read, and a linked server can be this one, so on SQL Server's rules each
+// is refused wherever it stands. The read-only guards refuse them already, as words no read
+// needs.
+func TestGuardExternalSchemaRefusesLinkedServerSQL(t *testing.T) {
+	tsql := dbCore.LexiconTSQL
+	const throughOpenDataSource = "EXEC OPENDATASOURCE('MSOLEDBSQL', 'Data Source=(local);Integrated Security=SSPI').reports.sys.sp_executesql N'DROP TABLE legacy'"
+	for _, sql := range []string{
+		"SELECT * FROM OPENQUERY([loopback], 'SELECT 1 AS x; DROP TABLE legacy')",
+		"select * from openquery(loopback, 'SELECT 1')",
+		"SELECT Id FROM legacy WHERE Id IN (SELECT Id FROM OPENQUERY([loopback], 'SELECT 1 AS Id'))",
+		"WITH c AS (SELECT * FROM OPENQUERY([loopback], 'SELECT 1 AS x')) SELECT x FROM c",
+		"SELECT * INTO #scratch FROM OPENQUERY([loopback], 'SELECT 1 AS x')", // a #temp target exempts only the INTO
+		"INSERT INTO OPENQUERY([loopback], 'SELECT Note FROM legacy') VALUES (N'x')",
+		"UPDATE OPENQUERY([loopback], 'SELECT Note FROM legacy') SET Note = N'x'",
+		"DELETE OPENQUERY([loopback], 'SELECT Id FROM legacy')",
+		"SELECT * FROM OPENROWSET('MSOLEDBSQL', 'Server=(local);Trusted_Connection=yes;', 'SELECT 1 AS x; DROP TABLE legacy')",
+		"SELECT BulkColumn FROM OPENROWSET(BULK '/tmp/legacy.csv', SINGLE_CLOB) AS f",
+		"SELECT * FROM OPENDATASOURCE('MSOLEDBSQL', 'Data Source=(local);Integrated Security=SSPI').reports.dbo.legacy",
+		// The procedure's name does not follow the EXEC, so only the function gives it away.
+		throughOpenDataSource,
+		"SELECT 1 SELECT * FROM OPENQUERY([loopback], 'SELECT 1 AS x')",
+	} {
+		assert.ErrorIs(t, dbCore.GuardExternalSchemaSQL(sql, tsql), dbCore.ErrExternalSchema, "%q must be refused", sql)
+		assert.ErrorIs(t, dbCore.GuardReadOnlySQL(sql, tsql), dbCore.ErrReadOnly, "%q must be refused", sql)
+		assert.ErrorIs(t, dbCore.GuardReadOnlyShape(sql, tsql), dbCore.ErrReadOnly, "%q must be refused", sql)
+	}
+
+	for _, sql := range []string{
+		"SELECT [openquery], [openrowset], [opendatasource] FROM legacy",
+		`SELECT "openquery" FROM legacy`,
+		"SELECT 'OPENQUERY([loopback], ''DROP TABLE legacy'')'",
+		"SELECT 1 -- OPENQUERY([loopback], 'DROP TABLE legacy')",
+		"SELECT * FROM loopback.reports.dbo.legacy", // a four-part name is a statement the guard reads
+		"UPDATE loopback.reports.dbo.legacy SET Note = @p1 WHERE Id = @p2",
+		"SELECT [value] FROM OPENJSON(@p1)", // OPENJSON and OPENXML parse a value; no server runs anything
+		"SELECT * FROM OPENXML(@doc, N'/root', 1)",
+	} {
+		assert.NoError(t, dbCore.GuardExternalSchemaSQL(sql, tsql), "%q must pass", sql)
+	}
+	for _, lex := range []dbCore.SQLLexicon{dbCore.LexiconPostgres, dbCore.LexiconMySQL} {
+		assert.NoError(t, dbCore.GuardExternalSchemaSQL("SELECT openquery, openrowset FROM legacy", lex),
+			"the words are SQL Server's; elsewhere they are names")
+	}
+
+	// The refusal says what it cannot check, as dynamic SQL's does, and quotes nothing of it.
+	// One wording covers the three ways in: a linked server (OPENQUERY), an ad hoc OLE DB
+	// provider string (OPENROWSET, OPENDATASOURCE), and a file (OPENROWSET(BULK …)), none of
+	// which a linked server's four-part name is the whole answer to.
+	const cannotCheck = " statement refused; the SQL it hands to a linked server or an OLE DB provider, " +
+		"or the file it reads, cannot be checked, so reach that data another way, such as a linked " +
+		"server's four-part name (a safety net — use a principal without DDL rights for a guarantee)"
+	for sql, refused := range map[string]string{
+		"SELECT * FROM OPENQUERY([loopback], 'DROP TABLE legacy')":                             "OPENQUERY",
+		"select * from openrowset('MSOLEDBSQL', 'x', 'SELECT 1')":                              "OPENROWSET",
+		"SELECT BulkColumn FROM OPENROWSET(BULK '/tmp/legacy.csv', SINGLE_CLOB) AS f":          "OPENROWSET",
+		"SELECT * FROM OPENDATASOURCE('MSOLEDBSQL', 'Data Source=(local)').reports.dbo.legacy": "OPENDATASOURCE",
+		throughOpenDataSource: "OPENDATASOURCE",
+	} {
+		err := dbCore.GuardExternalSchemaSQL(sql, tsql)
+		assert.EqualError(t, err, dbCore.ErrExternalSchema.Error()+": "+refused+cannotCheck, "%q", sql)
+		assert.NotContains(t, err.Error(), "reports")
+		assert.NotContains(t, err.Error(), "legacy")
+		assert.NotContains(t, err.Error(), "loopback")
+	}
+
+	// Anything else the statement does that is refused is named first, so an operator who
+	// replaces the function is not met by a second refusal of the same statement.
+	for sql, want := range map[string]string{
+		"SELECT * FROM OPENQUERY([loopback], 'SELECT 1') DROP TABLE legacy":       ": DROP statement refused; rows may be read",
+		"SELECT * INTO legacy_copy FROM OPENQUERY([loopback], 'SELECT 1 AS x')":   ": SELECT … INTO statement refused; rows may be read",
+		"SELECT * FROM OPENROWSET(BULK '/tmp/x.csv', SINGLE_CLOB) AS f EXEC (@s)": ": EXEC (…) statement refused; dynamic SQL cannot be checked",
+		"SELECT * FROM OPENQUERY([loopback], 'SELECT 1'); DROP TABLE legacy":      ": OPENQUERY statement refused;", // a statement of its own, which is refused first
+	} {
+		assert.ErrorContains(t, dbCore.GuardExternalSchemaSQL(sql, tsql), want, "%q", sql)
+	}
+}
+
+// TestGuardExternalSchemaFoldsProcedureNames: SQL Server looks a procedure's name up under
+// the database's collation, and under a width- or accent-insensitive one [ｓｐ＿ｒｅｎａｍｅ] and
+// [sp_rénamé] are sp_rename. So a refused procedure is refused under every spelling such a
+// collation would resolve to it, and the refusal names it in the guard's spelling, not the
+// SQL's. Whole names are compared: folding makes no prefix a match.
+func TestGuardExternalSchemaFoldsProcedureNames(t *testing.T) {
+	tsql := dbCore.LexiconTSQL
+	for _, c := range []struct{ sql, want string }{
+		{"EXEC [ｓｐ＿ｒｅｎａｍｅ] 'legacy', 'legacy_old'", "sp_rename"}, // fullwidth, low line included
+		{"EXEC sp_ｒｅｎａｍｅ 'legacy', 'legacy_old'", "sp_rename"},   // a fullwidth letter is a letter, so this is one word
+		{"EXEC [SP_ＲＥＮＡＭＥ] 'legacy', 'legacy_old'", "sp_rename"}, // fullwidth capitals
+		{"EXEC [sp_rénamé] 'legacy', 'legacy_old'", "sp_rename"}, // precomposed accents
+		{"EXEC sp_rénamé 'legacy', 'legacy_old'", "sp_rename"},   // é is a letter, so this is one word
+		{"EXEC [sp_réname] 'legacy', 'legacy_old'", "sp_rename"},
+		{"EXEC \"sp_réname\" 'legacy', 'legacy_old'", "sp_rename"},
+		{"EXEC [ſp_rename] 'legacy', 'legacy_old'", "sp_rename"},       // a long s
+		{"EXEC [sp_rena­me] 'legacy', 'legacy_old'", "sp_rename"},      // a soft hyphen, which weighs nothing
+		{"EXEC [sp_rena​me] 'legacy', 'legacy_old'", "sp_rename"},      // a zero-width space, likewise
+		{"EXEC [sys].[sp_ｒｅｎａｍｅ] 'legacy', 'legacy_old'", "sp_rename"}, // only the last part counts
+		{"[ｓｐ＿ｒｅｎａｍｅ] 'legacy', 'legacy_old'", "sp_rename"},            // a batch's first statement needs no EXEC
+		{"EXEC [sp_addéxtendedproperty] 'MS_Description', 'x'", "sp_addextendedproperty"},
+		{"EXEC [sp_bindrulé] 'rule', 'legacy.Note'", "sp_bindrule"},
+		{"EXEC sp_ｅｘｅｃｕｔｅｓｑｌ @stmt", "sp_executesql"},
+		{"EXEC [sys].[ｓｐ＿ｅｘｅｃｕｔｅｓｑｌ] N'DROP TABLE legacy'", "sp_executesql"},
+		{"sp_éxécutésql N'DROP TABLE legacy'", "sp_executesql"},
+		{"EXEC [sp_MSforeachtablé] 'DROP TABLE ?'", "sp_msforeachtable"},
+	} {
+		err := dbCore.GuardExternalSchemaSQL(c.sql, tsql)
+		if !assert.ErrorIs(t, err, dbCore.ErrExternalSchema, "%q must be refused", c.sql) {
+			continue
+		}
+		assert.ErrorContains(t, err, ": "+c.want+" statement refused;", "%q is refused as %s", c.sql, c.want)
+		for _, r := range c.sql {
+			if r >= utf8.RuneSelf {
+				assert.NotContains(t, err.Error(), string(r), "the refusal of %q names the procedure in its own spelling", c.sql)
+			}
+		}
+	}
+	assert.ErrorContains(t, dbCore.GuardExternalSchemaSQL("EXEC sp_ｅｘｅｃｕｔｅｓｑｌ @stmt", tsql),
+		"dynamic SQL cannot be checked", "a folded name still counts as dynamic SQL")
+
+	for _, sql := range []string{
+		"EXEC [sp_renamé_legacy] 1",  // folds to sp_rename_legacy: a whole name, not a prefix
+		"EXEC [ｓｐ＿ｗｈｏ]",              // folds to sp_who, which changes nothing
+		"EXEC [sp_ﬁnd] 1",            // folds to sp_find, likewise
+		"EXEC dbo.[usp_ｒｅｐｏｒｔｓ] @p1", // an app's own procedure, however it is spelt
+		"SELECT N'ｓｐ＿ｒｅｎａｍｅ', [sp_rénamé] FROM legacy",
+	} {
+		assert.NoError(t, dbCore.GuardExternalSchemaSQL(sql, tsql), "%q must pass", sql)
+	}
+	assert.NoError(t, dbCore.GuardExternalSchemaSQL("EXEC [ｓｐ＿ｒｅｎａｍｅ] 'a', 'b'", dbCore.LexiconPostgres),
+		"the procedure rules are SQL Server's")
+}
+
+// TestGuardsFoldNamesOnlyToRefuse pins that folding makes the guards refuse more and never
+// less. Every spelling refused before names were folded, when the guard compared them with
+// strings.ToLower, is still refused — including those with the characters outside ASCII that
+// strings.ToLower takes into it, the dotted capital I and the Kelvin sign. And keywords are
+// never folded: the server's parser reads them in ASCII, so a word that only folds to SELECT,
+// WITH, TABLE or COLUMN is a name to it, and reading it as the keyword would let through a
+// statement the server does not read as the guard did.
+func TestGuardsFoldNamesOnlyToRefuse(t *testing.T) {
+	tsql := dbCore.LexiconTSQL
+
+	// The characters outside ASCII that strings.ToLower maps into it, by what it maps them to.
+	lowersToASCII := map[byte][]rune{}
+	for r := rune(utf8.RuneSelf); r <= unicode.MaxRune; r++ {
+		if lower := strings.ToLower(string(r)); len(lower) == 1 && lower[0] < utf8.RuneSelf {
+			lowersToASCII[lower[0]] = append(lowersToASCII[lower[0]], r)
+		}
+	}
+	require.Contains(t, lowersToASCII, byte('i'), "the dotted capital I")
+	require.Contains(t, lowersToASCII, byte('k'), "the Kelvin sign")
+
+	for _, name := range []string{
+		"sp_rename", "sp_addextendedproperty", "sp_updateextendedproperty", "sp_dropextendedproperty",
+		"sp_addtype", "sp_droptype", "sp_bindrule", "sp_unbindrule", "sp_bindefault", "sp_unbindefault",
+		"sp_changeobjectowner", "sp_executesql", "sp_prepare", "sp_prepexec", "sp_cursoropen",
+		"sp_cursorprepare", "sp_cursorprepexec", "sp_MSforeachtable", "sp_MSforeachdb",
+	} {
+		spellings := []string{name, strings.ToUpper(name), strings.ToLower(name)}
+		for i := 0; i < len(name); i++ {
+			for _, r := range lowersToASCII[strings.ToLower(name)[i]] {
+				spellings = append(spellings, name[:i]+string(r)+name[i+1:])
+			}
+		}
+		for _, spelling := range spellings {
+			for _, sql := range []string{"EXEC [" + spelling + "] 1", "EXEC dbo." + spelling + " 1", spelling + " 1"} {
+				assert.ErrorIs(t, dbCore.GuardExternalSchemaSQL(sql, tsql), dbCore.ErrExternalSchema, "%q must be refused", sql)
+			}
+		}
+	}
+
+	// A keyword spelt outside ASCII is not the keyword on the side that lets a statement
+	// through: a read has to begin with SELECT or WITH itself, …
+	for _, sql := range []string{
+		"ſelect 1", "ｓｅｌｅｃｔ 1", "ＳＥＬＥＣＴ 1", "sélect 1", "SELÉCT 1", "ｗｉｔｈ c AS (SELECT 1) SELECT 1",
+	} {
+		for _, l := range everyLexicon {
+			assert.ErrorIs(t, dbCore.GuardReadOnlySQL(sql, l.lex), dbCore.ErrReadOnly, "%s: %q must be refused", l.name, sql)
+			assert.ErrorIs(t, dbCore.GuardReadOnlyShape(sql, l.lex), dbCore.ErrReadOnly, "%s: %q must be refused", l.name, sql)
+		}
+	}
+	// … and SQL Server's exemptions still need their own words: TABLE for a #temp table, and
+	// COLUMN for a clause of an ALTER TABLE. In ASCII the same statements pass.
+	for _, sql := range []string{
+		"DROP ＴＡＢＬＥ #scratch",
+		"CREATE ｔａｂｌｅ #scratch (Id int)",
+		"ALTER TABLE #scratch DROP ＣＯＬＵＭＮ Note",
+	} {
+		assert.ErrorIs(t, dbCore.GuardExternalSchemaSQL(sql, tsql), dbCore.ErrExternalSchema, "%q must be refused", sql)
+	}
+	for _, sql := range []string{"DROP TABLE #scratch", "CREATE TABLE #scratch (Id int)", "ALTER TABLE #scratch DROP COLUMN Note"} {
+		assert.NoError(t, dbCore.GuardExternalSchemaSQL(sql, tsql), "%q must pass", sql)
 	}
 }
