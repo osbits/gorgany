@@ -1874,9 +1874,14 @@ datasource config: no datasource drivers are registered, so "postgres_gorm" cann
 resolved. Import the engine you use for its side effects —
 _ "github.com/osbits/gorgany/v2/db/sql/driver/postgres" or
 _ "github.com/osbits/gorgany/v2/db/sql/driver/mysql", or
-_ "github.com/osbits/gorgany/v2/db/sql/driver/builtin" for both — typically next to your
-provider package's imports.
+_ "github.com/osbits/gorgany/v2/db/sql/driver/builtin" for both;
+_ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver" for SQL Server, which
+driver/builtin does not include — in pkg/provider/bootstrap.go, where the app's driver
+import lives.
 ```
+
+Up to and including v2.4.3 the message named only the first three packages and ended
+"typically next to your provider package's imports."
 
 Boot the app once. That is the check.
 

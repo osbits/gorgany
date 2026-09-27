@@ -1,16 +1,16 @@
 package builder_test
 
-// The builder corpus rendered through both shipped dialects. Everything the Postgres and
-// MySQL engines put on the wire for a builder query — SELECT with every clause, INSERT with
-// every conflict form, UPDATE, DELETE — and everything they refuse, since a refusal is as
-// much a part of the contract as the SQL it declines to emit.
+// The builder corpus rendered through the Postgres and MySQL dialects. Everything those two
+// engines put on the wire for a builder query — SELECT with every clause, INSERT with every
+// conflict form, UPDATE, DELETE — and everything they refuse, since a refusal is as much a
+// part of the contract as the SQL it declines to emit.
 //
 // The per-feature tests in builder_coverage_test.go assert the parts someone thought to
 // check. This pins the rest: argument order across clauses, the spacing of an empty WHERE,
 // which positions the MySQL ILIKE rewrite reaches, and the places where a subquery renders
-// through core rather than through the dialect. A new engine is about to be added behind the
-// same seam, and the changes that come with it are meant to be additive; this file is what
-// makes "Postgres and MySQL output is unchanged" a fact the build checks rather than a claim.
+// through core rather than through the dialect. The SQL Server engine was added behind the same
+// seam, and the changes that came with it were meant to be additive; this file is what makes
+// "Postgres and MySQL output is unchanged" a fact the build checks rather than a claim.
 // testdata/pg_mysql.golden was generated at v2.4.3, whose db/sql renders identically to
 // v2.2.1.
 //

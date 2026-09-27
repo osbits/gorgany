@@ -86,13 +86,113 @@ func skipUnlessLiveRequired(t *testing.T, format string, args ...any) {
 	t.Skip(reason)
 }
 
+// requireSQLServerEnvVar names the switch that turns the SQL Server cases' gate from a skip
+// into a failure.
+//
+// It is not E2E_REQUIRE_LIVE, because SQL Server is often absent where the other engines are
+// not. Its image is amd64-only and about 1.5 GB, so e2e/run.sh starts it only under this
+// switch while always setting E2E_REQUIRE_LIVE, and a developer on an arm64 machine without
+// Rosetta cannot run it at all. If E2E_REQUIRE_LIVE made an unreachable SQL Server fatal,
+// every such run would fail for an engine it never asked for. So E2E_REQUIRE_LIVE keeps
+// meaning Postgres and MySQL, and a run that must prove SQL Server says so with this one; the
+// CI live-db job does.
+const requireSQLServerEnvVar = "E2E_REQUIRE_SQLSERVER"
+
+// sqlServerRunIsRequired reports whether the caller demanded that the SQL Server cases run.
+func sqlServerRunIsRequired() bool {
+	return os.Getenv(requireSQLServerEnvVar) == "1"
+}
+
+// executedSQLServerCases counts the cases gateSQLServer admitted, for the same reason
+// executedLiveCases exists: under E2E_REQUIRE_SQLSERVER a run that reached SQL Server zero
+// times is not evidence about SQL Server, however green it is.
+var executedSQLServerCases atomic.Int64
+
+// sqlServerGaveUp records that a gate already waited out the whole budget without reaching
+// SQL Server, so the next one tries once instead of waiting again. A run without the engine
+// then costs one wait rather than one per case.
+var sqlServerGaveUp atomic.Bool
+
+// gateSQLServer admits a SQL Server case once reach succeeds, and otherwise skips it, or
+// fails it when E2E_REQUIRE_SQLSERVER=1. It returns what reach built, typically the
+// datasource the case runs on.
+//
+// reach is retried for up to wait, which absorbs a container that is still initialising. An
+// admitted case counts as a live case (recordLiveCase) and as a SQL Server one, which is
+// what TestMain checks each switch against. It is E2E_REQUIRE_SQLSERVER alone that makes the
+// gate fatal; see requireSQLServerEnvVar for why E2E_REQUIRE_LIVE does not.
+func gateSQLServer[T any](t *testing.T, wait time.Duration, reach func() (T, error)) T {
+	t.Helper()
+
+	value, err := reachSQLServer(wait, reach)
+	if err == nil {
+		admitSQLServerCase()
+		return value
+	}
+	if sqlServerRunIsRequired() {
+		t.Fatalf("%s is set, so this case must run against SQL Server rather than skip: %v",
+			requireSQLServerEnvVar, err)
+	}
+	t.Skip(err.Error())
+
+	var unreachable T
+	return unreachable
+}
+
+// reachSQLServer retries reach for up to wait and returns what it built, or why SQL Server
+// could not be reached. It decides nothing about the case; gateSQLServer skips or fails it,
+// and a case that runs on several engines leaves SQL Server out and carries on with the others
+// (see sqlServerForSharedCase).
+//
+// Once one call has waited out its whole budget, every later call tries once: sqlServerGaveUp
+// is what lets a run without SQL Server cost one wait rather than one per case.
+func reachSQLServer[T any](wait time.Duration, reach func() (T, error)) (T, error) {
+	retried := !sqlServerGaveUp.Load()
+	if !retried {
+		wait = 0
+	}
+
+	deadline := time.Now().Add(wait)
+	var lastErr error
+	for {
+		value, err := reach()
+		if err == nil {
+			return value, nil
+		}
+		lastErr = err
+		if !time.Now().Before(deadline) {
+			break
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	sqlServerGaveUp.Store(true)
+
+	var unreachable T
+	if !retried {
+		return unreachable, fmt.Errorf("SQL Server not reachable, and an earlier case already waited for it: %w", lastErr)
+	}
+	return unreachable, fmt.Errorf("SQL Server not reachable within %s: %w", wait, lastErr)
+}
+
+// admitSQLServerCase records that a case reached SQL Server: it is a live case and a SQL
+// Server case, the two counts TestMain checks the switches against.
+func admitSQLServerCase() {
+	recordLiveCase()
+	executedSQLServerCases.Add(1)
+}
+
 // TestMain catches what a per-case gate cannot see.
 //
 // Turning each skip into a failure only helps for cases that were selected to run at all.
 // A -run pattern that matches nothing, a build tag that left live_db_test.go out of the
 // binary, or a package with its test files renamed away all still exit 0 with no gate ever
 // consulted. Under E2E_REQUIRE_LIVE a run that executed zero live cases is therefore a
-// failure in its own right: the harness asked for proof and got an empty result.
+// failure in its own right: the harness asked for proof and got an empty result. The same
+// holds for E2E_REQUIRE_SQLSERVER and the SQL Server cases.
+//
+// Both checks read the variables of this process, so a run that only lists or selects
+// cases, such as `go test -list` or a child that runs one scenario, must clear them; see
+// runScenarioInChild.
 func TestMain(m *testing.M) {
 	code := m.Run()
 
@@ -101,6 +201,16 @@ func TestMain(m *testing.M) {
 			os.Stderr,
 			"%s is set but no live case executed, so this run proves nothing and is not a pass\n",
 			requireLiveEnvVar,
+		)
+		code = 1
+	}
+
+	if code == 0 && sqlServerRunIsRequired() && executedSQLServerCases.Load() == 0 {
+		fmt.Fprintf(
+			os.Stderr,
+			"%s is set but no SQL Server case executed, so this run proves nothing about SQL "+
+				"Server and is not a pass\n",
+			requireSQLServerEnvVar,
 		)
 		code = 1
 	}

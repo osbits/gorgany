@@ -36,16 +36,23 @@ jobs:
       - run: go test -race ./...
 
   live-db:
-    name: live PostgreSQL and MySQL
+    name: live PostgreSQL, MySQL and SQL Server
     runs-on: ubuntu-latest
 
     # Ports and credentials are the ones the live tests use: e2e/tests/live_db_test.go
     # defaults to them, and testsupport/live_test.go hardcodes them with no override, so
-    # these services must publish exactly 5433 and 3307 as postgres/test and root/test.
+    # these services must publish exactly 5433 and 3307 as postgres/test and root/test, and
+    # 14330 as sa/Gorgany-Test-1. SQL Server refuses a password below its complexity policy,
+    # so it cannot share the others' "test".
     #
     # Service containers cannot take a command, so MySQL runs without the compose file's
     # --character-set-server flags. mysql:8 already defaults to utf8mb4, and the datasource
-    # sets utf8mb4_unicode_ci on every connection it opens.
+    # sets utf8mb4_unicode_ci on every connection it opens. Nor can the SQL Server image
+    # create a database from its environment, so the SQL Server cases create gorgany_test
+    # through master themselves.
+    #
+    # The SQL Server image is the one e2e/docker-compose.yml pins, a cumulative update rather
+    # than 2022-latest, so a new CU reaches these cases only in a commit that says so.
     services:
       postgres:
         image: postgres:16
@@ -65,6 +72,17 @@ jobs:
         options: >-
           --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -ptest --silent"
           --health-interval 5s --health-timeout 5s --health-retries 30
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
+        env:
+          ACCEPT_EULA: 'Y'
+          MSSQL_SA_PASSWORD: Gorgany-Test-1
+          MSSQL_PID: Developer
+        ports: ['14330:1433']
+        # -C trusts the server's self-signed certificate, which tools18 otherwise refuses.
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P Gorgany-Test-1 -C -l 5 -Q 'SELECT 1' -b -o /dev/null"
+          --health-interval 5s --health-timeout 10s --health-retries 30 --health-start-period 60s
 
     steps:
       - uses: actions/checkout@v4
@@ -76,39 +94,79 @@ jobs:
 
       # E2E_REQUIRE_LIVE turns the per-engine skips fatal. Without it `go test` reports an
       # all-skipped run as `ok`, which is how twelve live cases came to be skipped while the
-      # criterion they were supposed to satisfy read as passed.
+      # criterion they were supposed to satisfy read as passed. It covers Postgres and MySQL;
+      # E2E_REQUIRE_SQLSERVER does the same for the SQL Server cases, which skip elsewhere
+      # because SQL Server is often not there (see requireSQLServerEnvVar in e2e_test.go).
       #
       # e2e_test.go's cases need the fixture app, which only the e2e job starts, so under
       # E2E_REQUIRE_LIVE they would fail here. They are exactly the cases that compile
-      # without the livedb tag, so they are listed that way and skipped. pipefail keeps a
-      # failing `go test` from being reported as tee's success.
+      # without the livedb tag, so they are listed that way and skipped. The listing clears
+      # both switches, since each also fails a run in which no case of its engine executed,
+      # and a listing executes none. pipefail keeps a failing `go test` from being reported
+      # as tee's success.
       - name: run the live suites
         env:
           E2E_REQUIRE_LIVE: '1'
+          E2E_REQUIRE_SQLSERVER: '1'
           E2E_PG_HOST: 127.0.0.1
           E2E_PG_PORT: '5433'
           E2E_MYSQL_HOST: 127.0.0.1
           E2E_MYSQL_PORT: '3307'
+          E2E_MSSQL_HOST: 127.0.0.1
+          E2E_MSSQL_PORT: '14330'
         run: |
           set -o pipefail
-          fixture_cases=$(E2E_REQUIRE_LIVE='' go test -list . ./e2e/tests | grep '^Test' | paste -sd '|' -)
+          fixture_cases=$(E2E_REQUIRE_LIVE='' E2E_REQUIRE_SQLSERVER='' go test -list . ./e2e/tests | grep '^Test' | paste -sd '|' -)
           go test -tags=livedb ./e2e/tests -count=1 -v -skip "^(${fixture_cases})\$" 2>&1 | tee live-db.log
 
       # Independent proof the suites ran, rather than a green tick over an all-skip run.
-      - name: assert both engines actually executed
+      #
+      # Each engine names the cases whose PASS lines prove it ran, and every one must be in
+      # the log. This used to grep for the engine's name, which any line satisfied: a case
+      # named for the engine matched whether it passed or not, and the ORM cases drop MySQL
+      # with only a log line when it is unreachable. An engine with no case named proves
+      # nothing, so that fails too.
+      - name: assert every engine actually executed
         run: |
           set -euo pipefail
-          grep -q -- '--- PASS' live-db.log
-          for engine in postgres mysql; do
-            if ! grep -qi "$engine" live-db.log; then
-              echo "::error::the live log never mentions $engine; that suite did not run"
+          pinned_cases() {
+            case "$1" in
+              postgres)
+                echo TestA1_OrmCreateInsertsOnEveryEngine/postgres
+                echo TestT15_SessionsMigrationOnPostgres
+                ;;
+              mysql)
+                echo TestA1_OrmCreateInsertsOnEveryEngine/mysql
+                echo TestT15_SessionsMigrationOnMySQL
+                echo TestMySQLQueriesRoundTripThroughTheDialect
+                ;;
+              sqlserver)
+                echo TestA1_OrmCreateInsertsOnEveryEngine/sqlserver
+                echo TestSQLServerConnectsWithSQLLogin
+                echo TestSQLServerQueriesRoundTripThroughTheDialect
+                echo TestExternalSchemaRefusesMigrateSeedAndDiffOnSQLServer
+                ;;
+            esac
+          }
+          for engine in postgres mysql sqlserver; do
+            cases=$(pinned_cases "$engine")
+            if [ -z "$cases" ]; then
+              echo "::error::no case is pinned for $engine, so nothing here proves its suite ran"
               exit 1
             fi
+            for case in $cases; do
+              if ! grep -qF -- "--- PASS: $case " live-db.log; then
+                echo "::error::$case did not pass, so the $engine suite did not run"
+                exit 1
+              fi
+            done
           done
 
       # testsupport has no E2E_REQUIRE_LIVE: an unreachable engine skips its subtest and the
       # run still exits 0. So both engines must show a pass, and the only skip allowed is
-      # the case that points at a closed port on purpose.
+      # the case that points at a closed port on purpose. SQL Server is not in the loop: the
+      # harness cannot truncate it yet (see truncate in testsupport/database.go), so its live
+      # suite has no SQL Server subtest to pass.
       - name: run the testsupport live suite
         run: |
           set -o pipefail

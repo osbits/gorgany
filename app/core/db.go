@@ -11,8 +11,15 @@ import (
 type DbType string
 
 // Driver names as written under `databases.<name>.driver`. They are the keys of
-// the driver registry in db/sql/driver; the framework's own drivers are registered
-// by db/sql/driver/builtin.
+// the driver registry in db/sql/driver. Each of the framework's engines registers its
+// own from its own package: db/sql/driver/postgres, db/sql/driver/mysql (or
+// db/sql/driver/builtin, which imports both) and db/sql/driver/sqlserver, which builtin
+// does not import. So a constant here names a driver an app can choose, and is resolved
+// only when the app imports that package.
+//
+// GormSQLServer serves SQL Server and Azure SQL. It stays out of builtin because builtin is
+// what testsupport and most Postgres or MySQL apps import, and linking go-mssqldb into them
+// would add the dependency surface the per-engine split removed.
 //
 // A `MongoDb DbType = "mongo"` constant used to sit here with no driver behind it. It
 // was never registered, so `driver: mongo` failed at boot with "unknown driver" while
@@ -25,6 +32,7 @@ type DbType string
 const (
 	GormPostgreSQL DbType = "postgres_gorm"
 	GormMySQL      DbType = "mysql_gorm"
+	GormSQLServer  DbType = "sqlserver_gorm"
 )
 
 // IDBContext defines the interface for database context management

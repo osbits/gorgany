@@ -182,7 +182,9 @@ func (h *Harness) prepare(t *testing.T, config Config, database DatabaseConfig, 
 
 	e := connect(config, database)
 	if e.err != nil {
-		if skipIfAbsent {
+		// Only an engine that is not there is a reason to skip. One the harness was
+		// misconfigured for would be reported as absent, the wrong diagnosis.
+		if skipIfAbsent && !isConfigError(e.err) {
 			t.Skipf("%v", e.err)
 		}
 		t.Fatalf("%v", e.err)

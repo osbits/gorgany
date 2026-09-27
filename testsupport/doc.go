@@ -53,4 +53,14 @@
 //
 // See Config for the full list and the defaults. Config.Databases lets a suite declare
 // several engines and run the same tests against each.
+//
+// # Targets
+//
+// The harness empties every table its migrations create, so it refuses a database it must
+// not run against: an Azure SQL, Azure Database for PostgreSQL or Azure Database for MySQL
+// host, a driver it cannot truncate, and a SQL Server database without "test" as a word of
+// its name. The refusal fails the test rather than skipping it, as a bad
+// config does, and GORGANY_TEST_ALLOW_ANY_TARGET=1 (or Config.AllowAnyTarget) switches it off
+// for a target known to be disposable. A driver that is not registered in the test binary
+// fails the same way, naming the import that registers it.
 package testsupport

@@ -55,6 +55,11 @@ instead of at their config.
 
 A *failing migration* always fails too: the engine is there and the schema is wrong.
 
+So does a *refused target* (see [Which databases the harness refuses](#which-databases-the-harness-refuses)),
+and a driver that is not registered in the test binary. Up to and including v2.4.3, an
+unregistered driver was retried for the whole engine wait and then skipped, as though the
+engine were not running.
+
 ## Isolation
 
 ```go
@@ -134,13 +139,15 @@ without a code change:
 | `GORGANY_TEST_ENGINE_WAIT` | `30s` |
 | `GORGANY_TEST_KEEP_DATA` | unset |
 | `GORGANY_TEST_MIGRATE_DOWN` | unset |
+| `GORGANY_TEST_ALLOW_ANY_TARGET` | unset |
 
 This holds for `Main`, `RequireDatabase` and `MustDatabase`, and for any harness from
 `Configure` or `New`. A field set in code keeps its value, and a field left zero takes its
 variable, then the default above. So `Configure(Config{Isolation: IsolateByRollback})`
 still honours `GORGANY_TEST_ENGINE_WAIT`, while a `Databases` list set in code ignores the
-connection variables. `KeepData` and `MigrateDown` are booleans and cannot be "unset", so
-their variables can switch them on for any harness but cannot switch them off.
+connection variables. `KeepData`, `MigrateDown` and `AllowAnyTarget` are booleans and
+cannot be "unset", so their variables can switch them on for any harness but cannot switch
+them off.
 
 An explicitly empty `GORGANY_TEST_PASSWORD=` is a real value, not an absence — substituting
 the default for it would silently connect as something else. An empty
@@ -158,6 +165,30 @@ Tests will interfere with each other; it is for debugging by hand.
 
 `GORGANY_TEST_MIGRATE_DOWN=1` runs every migration's `Down` before `Up`, so a schema left
 behind by an interrupted run does not poison the next one.
+
+`GORGANY_TEST_ALLOW_ANY_TARGET=1` switches off the target guard below. Set it only for a
+database you know is disposable.
+
+## Which databases the harness refuses
+
+The harness empties every table its migrations create, before the first test and after each
+one, so a stray `GORGANY_TEST_HOST` is all it takes to empty a database somebody needed. It
+therefore refuses, for `Databases` set in code as well as for the one from the environment:
+
+| Target | Why |
+|--------|-----|
+| An Azure SQL host, such as `example.database.windows.net`, or an Azure Database for PostgreSQL or MySQL host, such as `example.postgres.database.azure.com`, on any driver | A cloud database is never the disposable one a harness is for |
+| A driver other than `postgres_gorm`, `mysql_gorm` and `sqlserver_gorm` | Isolation has to know how to empty the engine's tables. Up to and including v2.4.3, any driver that was not Postgres was emptied as though it were MySQL |
+| A `sqlserver_gorm` database without `test`, `tests` or `testing` as a word of its name, or a system database (`master`, `model`, `msdb`, `tempdb`). `gorgany_test`, `AppTests` and `e2e-testing` pass; `LatestOrders` and `Attestations` do not | One SQL Server instance commonly hosts databases that are not disposable. Postgres and MySQL suites keep the names they had |
+
+A refused target fails the test, as a bad config does. `GORGANY_TEST_ALLOW_ANY_TARGET=1`, or
+`Config{AllowAnyTarget: true}`, switches all three off.
+
+Whatever that setting says, the driver must be registered in the test binary. testsupport
+registers Postgres and MySQL itself, through `driver/builtin`. SQL Server's driver is a separate
+import, `_ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver"`, which the test package (or
+the `pkg/provider` package it imports) has to make; the error names it. The harness does not
+truncate SQL Server yet: under `IsolateByTruncation` it fails the test with an error saying so.
 
 ## What `Database` gives you
 
@@ -190,3 +221,38 @@ mode this framework has hit before: the MySQL driver shipped in v2.0 with a gree
 while being unable to insert anything. The rollback-isolation bug in the first version of
 this package — helper writes went to the non-transactional handle, so rollback isolation
 silently did nothing — was caught by that test and by nothing else.
+
+### The framework's live suite
+
+`e2e/tests` holds the framework's own live cases, behind the same `livedb` tag. The Postgres
+and MySQL cases run against the two containers in [Quick start](#quick-start), and the SQL
+Server cases against this one:
+
+```bash
+docker run --rm -d --platform linux/amd64 --name gorgany-mssql -e ACCEPT_EULA=Y -e MSSQL_SA_PASSWORD=Gorgany-Test-1 -e MSSQL_PID=Developer -p 14330:1433 mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
+```
+
+The image is amd64-only and about 1.5 GB. On an Apple Silicon Mac it runs under Rosetta, once
+Docker Desktop's "Use Rosetta for x86_64/amd64 emulation on Apple Silicon" setting is on; under
+Docker's default emulation it does not start. The password is not the other engines' `test`
+because SQL Server refuses one below its complexity policy, and the cases create their
+`gorgany_test` database through `master` themselves, since the image cannot create one from
+its environment.
+
+```bash
+E2E_REQUIRE_SQLSERVER=1 go test -tags=livedb ./e2e/tests/ -run SQLServer -count=1 -v
+```
+
+| Variable | Effect |
+|----------|--------|
+| `E2E_REQUIRE_LIVE=1` | A Postgres or MySQL case that cannot reach its engine fails instead of skipping, and a run in which no live case executed fails |
+| `E2E_REQUIRE_SQLSERVER=1` | The same for the SQL Server cases, which otherwise skip, after one wait for the whole run, when SQL Server is not reachable |
+| `E2E_PG_HOST`, `E2E_PG_PORT`, `E2E_MYSQL_HOST`, `E2E_MYSQL_PORT`, `E2E_MSSQL_HOST`, `E2E_MSSQL_PORT` | Where the engines listen. The defaults are `127.0.0.1` and the ports above. `E2E_MSSQL_HOST` refuses an Azure SQL host, since the cases create and drop databases |
+
+`E2E_REQUIRE_SQLSERVER` is a switch of its own because SQL Server is often absent where the
+other engines are not, and `E2E_REQUIRE_LIVE` keeps meaning Postgres and MySQL. The
+dockerised harness starts SQL Server only when asked, with `E2E_REQUIRE_SQLSERVER=1 sh
+e2e/run.sh`, and the CI live-db job sets both switches.
+
+The testsupport harness itself does not run against SQL Server yet: it cannot truncate its
+tables (see [Which databases the harness refuses](#which-databases-the-harness-refuses)).

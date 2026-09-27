@@ -52,6 +52,42 @@ services:
       # takes to answer once it is up.
       start_period: 60s
 
+  # mssql-live backs the SQL Server cases in e2e/tests, which gate themselves on it the way
+  # the cases above gate on postgres-live and mysql-live.
+  #
+  # It is behind the sqlserver profile, so a plain run leaves it out. The image is amd64-only
+  # and about 1.5 GB, and on an arm64 machine it runs only under emulation, so e2e/run.sh
+  # starts it only when E2E_REQUIRE_SQLSERVER=1, which is also what makes its cases fatal
+  # instead of skipped. For the same reason the runner does not depend on it: Compose refuses
+  # a dependency on a service whose profile is off, and run.sh's `up --wait` already waits
+  # for it when it is on.
+  #
+  # Like every service here it publishes no host port, which run.sh relies on to run two
+  # projects at once. The CI live-db job runs the same image as a service container on
+  # 14330 instead, the port the tests default to.
+  #
+  # The tag is pinned to a cumulative update rather than 2022-latest, so a new CU changes
+  # what the SQL Server cases run against only in a commit that says so.
+  mssql-live:
+    image: mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
+    platform: linux/amd64
+    profiles: ["sqlserver"]
+    environment:
+      ACCEPT_EULA: "Y"
+      # SQL Server refuses a password that does not meet its complexity policy, and then
+      # exits, so this is not the "test" the other engines use.
+      MSSQL_SA_PASSWORD: "Gorgany-Test-1"
+      MSSQL_PID: Developer
+    healthcheck:
+      # -C trusts the server's self-signed certificate, which tools18 otherwise refuses.
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -l 5 -Q 'SELECT 1' -b -o /dev/null"]
+      interval: 3s
+      timeout: 10s
+      retries: 40
+      # The first boot upgrades the system databases, and under emulation that takes far
+      # longer than answering once it is up.
+      start_period: 120s
+
   app-migrate:
     build:
       context: ..
@@ -118,11 +154,17 @@ services:
       E2E_PG_PORT: "5432"
       E2E_MYSQL_HOST: mysql-live
       E2E_MYSQL_PORT: "3306"
+      E2E_MSSQL_HOST: mssql-live
+      E2E_MSSQL_PORT: "1433"
       # Every case in the suite gates itself on a dependency it can reach and skips when it
       # cannot, so an environment that came up wrong used to produce a run of nothing but
       # skips and an exit status of zero. This forbids the skips here: in the harness a case
       # that cannot reach its dependency is a failure, because reaching it is the point.
       E2E_REQUIRE_LIVE: "1"
+      # SQL Server has a switch of its own, passed through from run.sh's caller: its cases
+      # are fatal only when the run started mssql-live. See requireSQLServerEnvVar in
+      # e2e/tests/e2e_test.go.
+      E2E_REQUIRE_SQLSERVER: ${E2E_REQUIRE_SQLSERVER:-}
     # The `livedb` tag is what admits live_db_test.go to the binary. Without it the command
     # below compiled and ran only the fixture-app tests.
     command: ["go", "test", "-tags=livedb", "./e2e/tests/...", "-count=1", "-v"]

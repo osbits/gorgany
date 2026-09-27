@@ -46,11 +46,13 @@ type DataSource struct {
 
 	// SSL selects the transport security mode. On Postgres it is sslmode
 	// (disable/require/verify-ca/verify-full); on MySQL it is tls
-	// (false/true/skip-verify/preferred).
+	// (false/true/skip-verify/preferred); on SQL Server it is go-mssqldb's encrypt
+	// (true, the default when empty, strict, false or disable).
 	SSL string
 
 	// Instance names a SQL Server named instance, the part after the backslash in
-	// host\instance. It is for the SQL Server engine; no engine in this build reads it.
+	// host\instance. The SQL Server engine dials it through SQL Server Browser when no port
+	// is set, and ignores it, with a warning, when one is or the host is Azure SQL's.
 	// Postgres and MySQL have no such concept and refuse the key rather than ignore it: a
 	// config that names an instance was written for another engine, and connecting to
 	// whatever answers on the default port would hide that.
@@ -100,19 +102,18 @@ type DataSource struct {
 	// ALTERs, and the session store creates its own table. Against a schema another system
 	// migrates, each of those is a write nobody reviewed.
 	//
-	// In this build the datasource reports the flag through core.PolicyOf, which is what
-	// makes db:migrate, db:seed and db:diff refuse it before they send any SQL, db:migrate
-	// leave the session store's migrations out on such a default, and database session
-	// storage refuse one. Its connection refuses DDL as well: Postgres and MySQL install the
-	// guard in db/sql/gorm/guard, which refuses a schema change that reaches gorm. Cascading
-	// saves are not refused yet. DDL the guard cannot see, such as a Postgres DO block or a
-	// procedure that runs DDL, is not refused either, so a principal without DDL rights is the
-	// guarantee.
+	// The flag does two things. The datasource reports it through core.PolicyOf, which the db
+	// commands, the provider and the session store ask before they send any SQL, and refuse
+	// such a datasource. And its connection refuses DDL: every engine installs the guard in
+	// db/sql/gorm/guard, which refuses a schema change that reaches gorm. DDL the guard cannot
+	// see, such as a Postgres DO block or a procedure that runs DDL, is not refused, so a
+	// principal without DDL rights is the guarantee. A Save that would cascade into related
+	// entities is refused too, unless the model implements orm.CascadingSaves.
 	ExternalSchema bool
 
 	// ReadOnly declares that nothing may be written through this datasource.
 	//
-	// Postgres and MySQL enforce it in layers. Their dialect refuses to render an INSERT,
+	// Every engine enforces it in layers. Their dialect refuses to render an INSERT,
 	// UPDATE, DELETE or upsert, so a builder from the datasource's sessions and transactions
 	// fails where the write is built. A guard on the connection (guard.InstallReadOnly)
 	// refuses a write that reaches gorm any other way, in its callbacks and again as each
@@ -133,8 +134,9 @@ type DataSource struct {
 	//
 	// driver.New refuses a datasource from any other driver that does not report the flag
 	// (core.PolicyReporter): a flag that is accepted but not enforced reads as a guarantee it
-	// is not. The SQL Server engine that follows is to enforce it with a dialect that refuses
-	// writes, the same guard and ApplicationIntent=ReadOnly.
+	// is not. The SQL Server engine enforces it with its own dialect refusal, the same guard
+	// under the T-SQL lexicon, and ApplicationIntent=ReadOnly, which routes a connection to a
+	// readable secondary and is no guard of its own.
 	//
 	// It is a safety net, not a permission: the guards recognise write statements, they do
 	// not prove their absence, and a statement sent on the *sql.DB that DB() returns does not
@@ -143,18 +145,20 @@ type DataSource struct {
 	ReadOnly bool
 
 	// LazyConnect skips connecting at boot, so the first query opens the first connection
-	// instead. Postgres and MySQL skip gorm's initial ping, and MySQL its version query. The
-	// cost is that an unreachable server, or a credential that does not work, surfaces on the
-	// first request instead of failing the deploy. On MySQL there is a second cost: without
-	// the version query gorm's driver writes the SQL MySQL 8 takes, some of which MariaDB and
-	// MySQL 5.x reject, so leave it off against those.
+	// instead. Postgres and MySQL skip gorm's initial ping, and MySQL its version query; SQL
+	// Server skips its sign-in warm-up and its ping, so an Entra ID sign-in happens on the
+	// first connection instead of at boot. The cost is that an unreachable server, or a
+	// credential that does not work, surfaces on the first request instead of failing the
+	// deploy. On MySQL there is a second cost: without the version query gorm's driver writes
+	// the SQL MySQL 8 takes, some of which MariaDB and MySQL 5.x reject, so leave it off
+	// against those.
 	LazyConnect bool
 
 	// Auth selects how the connection signs in when a username and password are not the
 	// whole story. The zero value, and Method "sql", mean exactly that: Username and
 	// Password at the top level. Postgres and MySQL speak nothing else and refuse any other
-	// method; the other methods are for the SQL Server engine that follows, and no engine in
-	// this build reads them.
+	// method. The SQL Server engine takes the Entra ID methods that are registered with it,
+	// and refuses the others; no package in this release registers one.
 	Auth Auth
 
 	// Log turns on statement logging for this connection.

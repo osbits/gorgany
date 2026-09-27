@@ -140,7 +140,7 @@ func TestRenderConditionWithNilContextEqualsToSQL(t *testing.T) {
 // separate code, and TestRenderConditionWithNilContextEqualsToSQL only ever reaches the nil
 // side; this is what says the two still agree wherever they are meant to.
 func TestRenderConditionWithEmptyContextMatchesGolden(t *testing.T) {
-	const escapeHint = "; the escape must be exactly one character other than a single quote"
+	const escapeHint = "; the escape must be exactly one character other than a single quote, \"?\" and \"@\", such as '!'"
 	corrected := map[string]string{
 		"like/escape-multi-char-verbatim":   `err:  this dialect does not support LIKE ESCAPE "!!"` + escapeHint + "\n",
 		"like/escape-quote-verbatim":        `err:  this dialect does not support LIKE ESCAPE "'"` + escapeHint + "\n",
@@ -915,7 +915,9 @@ func TestRenderContextLikeEscapeValidation(t *testing.T) {
 	sql, _ := renderOK(t, like(""), bracketContext(false))
 	assert.Equal(t, "[Name] LIKE ?", sql, "no escape, no ESCAPE clause")
 
-	for _, escape := range []string{"!!", "'", "ab", "\xff"} {
+	// "?" and "@" are one character, and gorm reads either in the statement: "?" as a
+	// placeholder, which took the next argument into the literal, and "@" as named parameters.
+	for _, escape := range []string{"!!", "'", "ab", "\xff", "?", "@"} {
 		_, _, err := dbCore.RenderCondition(like(escape), bracketContext(false))
 		require.Errorf(t, err, "escape %q", escape)
 		assert.True(t, dbCore.IsUnsupported(err), "got %v", err)

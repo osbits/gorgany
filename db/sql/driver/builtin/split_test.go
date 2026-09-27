@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/osbits/gorgany/v2/app/core"
 	"github.com/osbits/gorgany/v2/db/sql/driver"
 	_ "github.com/osbits/gorgany/v2/db/sql/driver/builtin"
 	"github.com/stretchr/testify/assert"
@@ -63,6 +64,110 @@ func TestASingleEngineImportDoesNotLinkTheOther(t *testing.T) {
 	assert.Contains(t, mysqlOnly, "gorm.io/driver/mysql")
 	assert.NotContains(t, mysqlOnly, "gorm.io/driver/postgres",
 		"and the reverse holds too")
+
+	for name, linked := range map[string]string{"driver/postgres": postgresOnly, "driver/mysql": mysqlOnly} {
+		for _, engine := range sqlServerPackages {
+			assert.NotContainsf(t, linked, engine, "importing %s must not link %s", name, engine)
+		}
+	}
+}
+
+// sqlServerPackages are what the SQL Server engine links, and no package that does not speak
+// SQL Server may.
+var sqlServerPackages = []string{"github.com/microsoft/go-mssqldb", "gorm.io/driver/sqlserver"}
+
+// linkedPackages returns the packages pkg links, one per entry, or skips the test when the
+// toolchain is unavailable.
+func linkedPackages(t *testing.T, pkg string) map[string]bool {
+	t.Helper()
+
+	out, err := exec.Command("go", "list", "-deps", pkg).CombinedOutput()
+	if err != nil {
+		t.Skipf("go list unavailable: %v", err)
+	}
+	linked := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		linked[strings.TrimSpace(line)] = true
+	}
+	return linked
+}
+
+// linksUnder reports the first package in linked that is module or inside it, or "".
+func linksUnder(linked map[string]bool, module string) string {
+	for pkg := range linked {
+		if pkg == module || strings.HasPrefix(pkg, module+"/") {
+			return pkg
+		}
+	}
+	return ""
+}
+
+// requireNoSQLServer fails unless none of pkgs links the SQL Server engine.
+//
+// The SQL Server driver stays out of builtin, and the framework packages every app links pick
+// SQL Server behaviour by name only — gorm's Dialector.Name() or the dialect's Name() — so
+// that an app that never speaks SQL Server never links go-mssqldb.
+func requireNoSQLServer(t *testing.T, pkgs ...string) {
+	t.Helper()
+	for _, pkg := range pkgs {
+		linked := linkedPackages(t, pkg)
+		for _, engine := range sqlServerPackages {
+			assert.Emptyf(t, linksUnder(linked, engine), "%s must not link %s", pkg, engine)
+		}
+	}
+}
+
+// TestBuiltinDoesNotRegisterSQLServer: builtin is Postgres and MySQL, and stays that way; this
+// test binary imports builtin and nothing else.
+func TestBuiltinDoesNotRegisterSQLServer(t *testing.T) {
+	_, ok := driver.Lookup("sqlserver_gorm")
+	assert.False(t, ok, "driver/builtin must not register SQL Server")
+}
+
+func TestBuiltinLinksNoSQLServer(t *testing.T) {
+	requireNoSQLServer(t, "github.com/osbits/gorgany/v2/db/sql/driver/builtin")
+}
+
+// TestTestsupportLinksNoSQLServer: every test binary of an app links testsupport.
+func TestTestsupportLinksNoSQLServer(t *testing.T) {
+	requireNoSQLServer(t, "github.com/osbits/gorgany/v2/testsupport")
+}
+
+func TestProviderAuthAndCommandsLinkNoSQLServer(t *testing.T) {
+	requireNoSQLServer(t,
+		"github.com/osbits/gorgany/v2/provider",
+		"github.com/osbits/gorgany/v2/auth",
+		"github.com/osbits/gorgany/v2/command/db",
+		"github.com/osbits/gorgany/v2/db/migration",
+	)
+}
+
+func TestORMLinksNoSQLServer(t *testing.T) {
+	requireNoSQLServer(t, "github.com/osbits/gorgany/v2/db/orm")
+}
+
+// TestTheSQLServerDriverDoesNotLinkAzureAD: a SQL login needs go-mssqldb and nothing of Azure.
+// The Entra ID methods, when they come, will live in a package of their own, since they link
+// the identity SDK, MSAL and a browser opener, which an app that signs in with a SQL login must
+// not link. Nor may the SQL Server driver link another engine's.
+func TestTheSQLServerDriverDoesNotLinkAzureAD(t *testing.T) {
+	linked := linkedPackages(t, "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver")
+
+	assert.True(t, linked["github.com/microsoft/go-mssqldb"], "the driver is go-mssqldb")
+	assert.True(t, linked["gorm.io/driver/sqlserver"])
+	for _, module := range []string{
+		"github.com/Azure/azure-sdk-for-go",
+		"github.com/AzureAD/microsoft-authentication-library-for-go",
+		"github.com/microsoft/go-mssqldb/azuread",
+		"github.com/microsoft/go-mssqldb/integratedauth/krb5",
+		"github.com/pkg/browser",
+		"github.com/jackc/pgx",
+		"github.com/go-sql-driver/mysql",
+		"gorm.io/driver/postgres",
+		"gorm.io/driver/mysql",
+	} {
+		assert.Emptyf(t, linksUnder(linked, module), "driver/sqlserver must not link %s", module)
+	}
 }
 
 // TestDbProviderLinksNeitherEngine is the other half: the provider itself must be
@@ -119,4 +224,11 @@ func TestTheDriverNameConstantsAgree(t *testing.T) {
 		t.Skipf("go list unavailable: %v", err)
 	}
 	assert.Equal(t, "postgres", strings.TrimSpace(string(out)))
+
+	out, err = exec.Command("go", "list", "-f", "{{.Name}}",
+		"github.com/osbits/gorgany/v2/db/sql/driver/sqlserver").CombinedOutput()
+	require.NoError(t, err, "%s", out)
+	assert.Equal(t, "sqlserver", strings.TrimSpace(string(out)))
+	assert.Equal(t, "sqlserver_gorm", string(core.GormSQLServer),
+		"the SQL Server name is checked against core here, since this binary must not link that driver")
 }

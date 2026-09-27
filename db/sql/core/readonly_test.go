@@ -673,6 +673,30 @@ func TestGuardExternalSchemaRefusesDDLButAllowsTempTables(t *testing.T) {
 		"ENABLE TRIGGER ALL ON legacy",
 		"SELECT 1 DISABLE TRIGGER trg_legacy ON legacy",
 
+		// So are the procedural twins of what the rules above refuse in SQL: trigger order,
+		// role membership, logins, users and the database's owner.
+		"EXEC sp_settriggerorder @triggername = 'dbo.trg_legacy', @order = 'First', @stmttype = 'UPDATE'",
+		"EXEC sp_addrolemember 'db_owner', 'user@example.com'",
+		"EXEC sp_droprolemember 'db_datareader', 'user@example.com'",
+		"sp_addsrvrolemember 'user@example.com', 'sysadmin'",
+		"EXEC sp_dropsrvrolemember 'user@example.com', 'sysadmin'",
+		"EXEC sp_addrole 'auditors'",
+		"EXEC sp_droprole 'auditors'",
+		"EXEC master.dbo.sp_addlogin 'legacy_app', 'x'",
+		"EXEC sp_droplogin 'legacy_app'",
+		"EXEC sp_adduser 'legacy_app'",
+		"EXEC sp_dropuser 'legacy_app'",
+		"EXEC sp_grantdbaccess 'legacy_app'",
+		"EXEC sp_revokedbaccess 'legacy_app'",
+		"EXEC sp_changedbowner 'sa'",
+
+		// DBCC CHECKIDENT … RESEED moves an owner's IDENTITY for good, and no DBCC command is
+		// a row the app reads or writes.
+		"DBCC CHECKIDENT ('dbo.legacy', RESEED, 1000)",
+		"dbcc checkident ('legacy')",
+		"IF 1 = 1 DBCC CHECKIDENT ('legacy', RESEED, 1)",
+		"SELECT 1; DBCC FREEPROCCACHE",
+
 		"CREATE TABLE 'unterminated",
 	}
 	for _, sql := range refused {
@@ -721,6 +745,8 @@ func TestGuardExternalSchemaRefusesDDLButAllowsTempTables(t *testing.T) {
 		"SET SHOWPLAN_XML ON", // plans without running
 		"SELECT [disable], [trigger] FROM legacy",
 		"SELECT [cluster], [refresh], [security] FROM legacy",
+		"SELECT [dbcc], N'DBCC CHECKIDENT' FROM legacy",
+		"SELECT name FROM sys.procedures WHERE name = N'sp_addrolemember'",
 	}
 	for _, sql := range allowed {
 		assert.NoError(t, dbCore.GuardExternalSchemaSQL(sql, tsql), "%q must pass", sql)
@@ -1052,7 +1078,10 @@ func TestGuardsFoldNamesOnlyToRefuse(t *testing.T) {
 	for _, name := range []string{
 		"sp_rename", "sp_addextendedproperty", "sp_updateextendedproperty", "sp_dropextendedproperty",
 		"sp_addtype", "sp_droptype", "sp_bindrule", "sp_unbindrule", "sp_bindefault", "sp_unbindefault",
-		"sp_changeobjectowner", "sp_executesql", "sp_prepare", "sp_prepexec", "sp_cursoropen",
+		"sp_changeobjectowner", "sp_settriggerorder", "sp_changedbowner", "sp_addrole", "sp_droprole",
+		"sp_addrolemember", "sp_droprolemember", "sp_addsrvrolemember", "sp_dropsrvrolemember",
+		"sp_addlogin", "sp_droplogin", "sp_adduser", "sp_dropuser", "sp_grantdbaccess",
+		"sp_revokedbaccess", "sp_executesql", "sp_prepare", "sp_prepexec", "sp_cursoropen",
 		"sp_cursorprepare", "sp_cursorprepexec", "sp_MSforeachtable", "sp_MSforeachdb",
 	} {
 		spellings := []string{name, strings.ToUpper(name), strings.ToLower(name)}

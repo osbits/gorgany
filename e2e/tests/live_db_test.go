@@ -17,6 +17,8 @@
 //
 //	go test -tags=livedb ./e2e/tests/ -count=1 -v
 //
+// The SQL Server cases, and the container they need, are in live_sqlserver_test.go.
+//
 // e2e/run.sh runs this same suite inside the compose network instead, where the engines
 // answer on their service names rather than on host-published ports; see liveEngineHost
 // for the variables that redirect it. It also sets E2E_REQUIRE_LIVE=1, which forbids the
@@ -186,12 +188,20 @@ func secondaryConfig(t *testing.T) (cfg map[string]any, dialect string) {
 	return secondPgConfig(), "postgres"
 }
 
+// secondaryDataSource opens the datasource cfg describes through the gate of its engine: a
+// SQL Server one through gateSQLServer, whose switch is E2E_REQUIRE_SQLSERVER rather than
+// E2E_REQUIRE_LIVE.
 func secondaryDataSource(t *testing.T, cfg map[string]any) dbCore.IDataSource {
 	t.Helper()
 
-	if cfg["driver"] == "mysql_gorm" {
+	switch cfg["driver"] {
+	case "mysql_gorm":
 		return waitForDatasource(t, func() (dbCore.IDataSource, error) {
 			return mysqlv2.NewDataSource(cfg)
+		})
+	case "sqlserver_gorm":
+		return gateSQLServer(t, engineWait, func() (dbCore.IDataSource, error) {
+			return openMSSQL(cfg)
 		})
 	}
 	return waitForDatasource(t, func() (dbCore.IDataSource, error) {
@@ -345,14 +355,17 @@ func TestT11_TwoDatasourcesBothResolveByNameOnTenBoots(t *testing.T) {
 // which is the observable that made the pre-v2 nondeterminism dangerous.
 //
 // The query itself is per-engine: Postgres spells it current_database(), MySQL
-// spells it DATABASE().
+// spells it DATABASE(), and SQL Server DB_NAME().
 func assertDatabaseName(t *testing.T, ds dbCore.IDataSource, want string) {
 	t.Helper()
 
 	query := `SELECT current_database()`
 	if aware, ok := ds.(interface{ Dialect() dbCore.SQLDialect }); ok {
-		if aware.Dialect().Name() == "mysql" {
+		switch aware.Dialect().Name() {
+		case "mysql":
 			query = `SELECT DATABASE()`
+		case "sqlserver":
+			query = `SELECT DB_NAME()`
 		}
 	}
 
@@ -1005,6 +1018,20 @@ var migrateUpScenarios = map[string]migrateUpScenario{
 	"pg-record-fails": {pgConfig, closureMigration{name: "probe_record_fails", up: refuseBookkeepingRows}},
 
 	"mysql-record-fails": {mysqlConfig, closureMigration{name: "probe_record_fails", up: refuseBookkeepingRows}},
+
+	// SQL Server has transactional DDL, as Postgres has, and no deferrable constraint to fail a
+	// COMMIT with, so its failing runs are the other two. Its swallowed error dooms the
+	// transaction only because every connection runs SET XACT_ABORT ON; without it SQL Server
+	// fails the one statement and keeps the transaction, and the probe table would commit.
+	"mssql-succeeds": {mssqlConfig, closureMigration{name: "probe_succeeds", up: createProbe}},
+	"mssql-transaction-aborted": {mssqlConfig, closureMigration{name: "probe_transaction_aborted", up: func(g *gorm.DB) error {
+		if err := createProbe(g); err != nil {
+			return err
+		}
+		_ = g.Exec(`SELECT * FROM table_that_does_not_exist_anywhere`).Error
+		return nil
+	}}},
+	"mssql-record-fails": {mssqlConfig, closureMigration{name: "probe_record_fails", up: refuseBookkeepingRows}},
 }
 
 func createProbe(g *gorm.DB) error {
@@ -1049,9 +1076,12 @@ func runScenarioInChild(t *testing.T, test, envVar, scenario string) (int, strin
 	// handling would do, rather than leaving it to the parent's much longer one.
 	child := exec.Command(os.Args[0], "-test.run=^"+test+"$", "-test.count=1", "-test.timeout=2m")
 
-	// The child is not a verification run, so it must not demand live cases of itself.
+	// The child is not a verification run, so it must not demand live cases of itself. It
+	// runs one scenario and admits no case through a gate, so either switch would fail its
+	// TestMain.
 	for _, entry := range os.Environ() {
-		if !strings.HasPrefix(entry, requireLiveEnvVar+"=") {
+		if !strings.HasPrefix(entry, requireLiveEnvVar+"=") &&
+			!strings.HasPrefix(entry, requireSQLServerEnvVar+"=") {
 			child.Env = append(child.Env, entry)
 		}
 	}
@@ -1089,18 +1119,27 @@ func TestMigrateUpRecordsOnlyWhatCommitsOnPostgres(t *testing.T) {
 	// t.Cleanup rather than defer: a deferred Close runs before the cleanups, which would
 	// then reset the probe through a closed handle and leave it behind.
 	t.Cleanup(func() { ds.Close() })
-	gormDb := gormOf(t, ds)
 
-	t.Run("pg-succeeds", func(t *testing.T) {
+	assertMigrateUpRecordsOnlyWhatCommits(t, gormOf(t, ds), "pg-succeeds",
+		"pg-commit-fails", "pg-transaction-aborted", "pg-record-fails")
+}
+
+// assertMigrateUpRecordsOnlyWhatCommits runs the control scenario, which must succeed and be
+// recorded, and then each failing one, which must fail the run and leave neither the probe
+// table nor its record: the assertions of an engine whose DDL is transactional.
+func assertMigrateUpRecordsOnlyWhatCommits(t *testing.T, gormDb *gorm.DB, control string, failing ...string) {
+	t.Helper()
+
+	t.Run(control, func(t *testing.T) {
 		resetMigrateUpProbe(t, gormDb)
 
-		code, output := runMigrateUpInChild(t, "pg-succeeds")
+		code, output := runMigrateUpInChild(t, control)
 		require.Equal(t, 0, code, "the control scenario must succeed:\n%s", output)
 		assert.True(t, gormDb.Migrator().HasTable(migrateUpProbe))
-		assert.True(t, isApplied(t, gormDb, "probe_succeeds"))
+		assert.True(t, isApplied(t, gormDb, migrateUpScenarios[control].migration.name))
 	})
 
-	for _, scenario := range []string{"pg-commit-fails", "pg-transaction-aborted", "pg-record-fails"} {
+	for _, scenario := range failing {
 		t.Run(scenario, func(t *testing.T) {
 			resetMigrateUpProbe(t, gormDb)
 
@@ -1224,6 +1263,10 @@ var seedScenarios = map[string]seedScenario{
 
 	"mysql-save-fails":   {mysqlConfig, probeSeeder{name: "probe_save_fails", labels: []string{"one", "refused"}}, refuseProbeLabel},
 	"mysql-record-fails": {mysqlConfig, probeSeeder{name: "probe_record_fails", labels: []string{"one", "two"}}, refuseSeederRows},
+
+	"mssql-succeeds":     {mssqlConfig, probeSeeder{name: "probe_seeds", labels: []string{"one", "two"}}, nil},
+	"mssql-save-fails":   {mssqlConfig, probeSeeder{name: "probe_save_fails", labels: []string{"one", "refused"}}, refuseProbeLabel},
+	"mssql-record-fails": {mssqlConfig, probeSeeder{name: "probe_record_fails", labels: []string{"one", "two"}}, refuseSeederRows},
 }
 
 func pgOneConnectionConfig() map[string]any {
@@ -1468,7 +1511,7 @@ var ownershipCommands = map[string]ownershipCommand{
 // is on: it sends one statement on `legacy` and exits 0.
 const logControl = "log-control"
 
-var ownershipEngines = map[string]func() map[string]any{"pg": pgConfig, "mysql": mysqlConfig}
+var ownershipEngines = map[string]func() map[string]any{"pg": pgConfig, "mysql": mysqlConfig, "mssql": mssqlConfig}
 
 // loggedConfig is config() with every statement the datasource sends written to the child's
 // output, so a child that sent one shows it.
@@ -1571,8 +1614,11 @@ func tableInInformationSchema(t *testing.T, g *gorm.DB, table string) bool {
 	t.Helper()
 
 	schema := "current_schema()"
-	if g.Dialector.Name() == "mysql" {
+	switch g.Dialector.Name() {
+	case "mysql":
 		schema = "DATABASE()"
+	case "sqlserver":
+		schema = "SCHEMA_NAME()"
 	}
 
 	var count int64
@@ -1684,8 +1730,11 @@ func createOrmSchema(t *testing.T, gormDb *gorm.DB, dialect string) {
 	dropOrmSchema(t, gormDb)
 
 	autoPK := "BIGSERIAL PRIMARY KEY"
-	if dialect == "mysql" {
+	switch dialect {
+	case "mysql":
 		autoPK = "BIGINT AUTO_INCREMENT PRIMARY KEY"
+	case "sqlserver":
+		autoPK = "BIGINT IDENTITY(1,1) PRIMARY KEY"
 	}
 
 	stmts := []string{
@@ -1706,13 +1755,13 @@ func dropOrmSchema(t *testing.T, gormDb *gorm.DB) {
 	}
 }
 
-// TestA1_OrmCreateInsertsOnBothEngines is the test whose absence let a MySQL driver
+// TestA1_OrmCreateInsertsOnEveryEngine is the test whose absence let a MySQL driver
 // ship with a green suite while being unable to insert a row.
 //
 // The ORM built every query with v2.NewBuilder() — the Postgres builder — so
 // `Create` appended `RETURNING id` and MySQL answered with error 1064. Every dialect
 // test asserted strings; none drove the ORM against a real engine.
-func TestA1_OrmCreateInsertsOnBothEngines(t *testing.T) {
+func TestA1_OrmCreateInsertsOnEveryEngine(t *testing.T) {
 	for _, engine := range ormEngines(t) {
 		t.Run(engine.name, func(t *testing.T) {
 			gormDb := gormOf(t, engine.ds)
@@ -1730,8 +1779,8 @@ func TestA1_OrmCreateInsertsOnBothEngines(t *testing.T) {
 			require.NoError(t, orm.New[*ormWidget](session).Create(widget),
 				"orm.Create must succeed on %s", engine.name)
 
-			// The generated key must come back on both engines: via RETURNING on
-			// Postgres, via the driver's sql.Result on MySQL.
+			// The generated key must come back on every engine: via RETURNING on
+			// Postgres, OUTPUT on SQL Server, and the driver's sql.Result on MySQL.
 			assert.NotZero(t, widget.ID,
 				"the auto-increment primary key must be populated after Create")
 
@@ -1823,8 +1872,22 @@ type ormEngine struct {
 }
 
 // ormEngines returns every reachable engine, so the ORM tests assert on Postgres
-// (no regression) and MySQL (the fix) from one body.
+// (no regression), MySQL (the fix) and SQL Server from one body. SQL Server is left out with
+// a log line when it is not reachable, as MySQL is, unless E2E_REQUIRE_SQLSERVER=1 demands it
+// (see sqlServerForSharedCase).
 func ormEngines(t *testing.T) []ormEngine {
+	t.Helper()
+
+	engines := postgresAndMySQLEngines(t)
+	if ds := sqlServerForSharedCase(t); ds != nil {
+		engines = append(engines, ormEngine{name: "sqlserver", ds: ds})
+	}
+	return engines
+}
+
+// postgresAndMySQLEngines is ormEngines without SQL Server, for a case whose SQL Server
+// counterpart is a case of its own.
+func postgresAndMySQLEngines(t *testing.T) []ormEngine {
 	t.Helper()
 
 	engines := []ormEngine{}
@@ -1858,155 +1921,192 @@ func ormEngines(t *testing.T) []ormEngine {
 // refused by Postgres (42803) and by MySQL's ONLY_FULL_GROUP_BY (1055), so it is replaced,
 // while a GROUP BY that names a select-list alias or position needs that list kept.
 func TestCountByQueryShapesOnBothEngines(t *testing.T) {
-	for _, engine := range ormEngines(t) {
+	for _, engine := range postgresAndMySQLEngines(t) {
 		t.Run(engine.name, func(t *testing.T) {
-			gormDb := gormOf(t, engine.ds)
-			createOrmSchema(t, gormDb, engine.name)
-			t.Cleanup(func() { dropOrmSchema(t, gormDb) })
-
-			for _, row := range [][2]any{{"a", "x"}, {"a", "y"}, {"b", "x"}, {"b", "x"}, {"c", nil}} {
-				require.NoError(t, gormDb.Exec(
-					"INSERT INTO orm_widgets (name, label) VALUES (?, ?)", row[0], row[1]).Error)
-			}
-			for _, name := range []string{"a", "z"} {
-				require.NoError(t, gormDb.Exec("INSERT INTO orm_tags (name) VALUES (?)", name).Error)
-			}
-
-			session, err := engine.ds.NewSession()
-			require.NoError(t, err)
-			t.Cleanup(func() { assert.NoError(t, session.Close()) })
-			widgets := orm.New[*ormWidget](session)
-
-			shapes := []struct {
-				name  string
-				build func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder
-				want  int64
-			}{
-				{
-					// The total of the second page of one, not the page itself.
-					name: "paged",
-					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
-						return q.Neq("name", "c").OrderBy("name", "ASC").Limit(1).Offset(1)
-					},
-					want: 4,
-				},
-				{
-					name: "group by",
-					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
-						return q.Select("name", "COUNT(*)").GroupBy("name").OrderBy("name", "ASC")
-					},
-					want: 3,
-				},
-				{
-					name: "group by with having",
-					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
-						return q.Select("name", "COUNT(*) AS n").GroupBy("name").
-							Having(&dbCore.RawCondition{SQL: "COUNT(*) > ?", Args: []any{1}})
-					},
-					want: 2,
-				},
-				{
-					name: "group by with having and no select list",
-					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
-						return q.GroupBy("name").Having(&dbCore.RawCondition{SQL: "COUNT(*) > ?", Args: []any{1}})
-					},
-					want: 2,
-				},
-				{
-					name: "group by with having and a star",
-					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
-						return q.Select("*").GroupBy("name").
-							Having(&dbCore.RawCondition{SQL: "COUNT(*) > ?", Args: []any{1}})
-					},
-					want: 2,
-				},
-				{
-					name: "group by a select-list alias",
-					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
-						return q.Select("UPPER(name) AS uname", "COUNT(*) AS n").GroupBy("uname")
-					},
-					want: 3,
-				},
-				{
-					name: "group by a select-list position",
-					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
-						return q.Select("name").GroupBy("1")
-					},
-					want: 3,
-				},
-				{
-					name: "distinct",
-					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
-						return q.Select("DISTINCT name, label").Limit(2)
-					},
-					want: 4,
-				},
-				{
-					name: "distinct written with parentheses",
-					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
-						return q.Select("DISTINCT(name)")
-					},
-					want: 3,
-				},
-				{
-					name: "distinct written with parentheses beside another column",
-					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
-						return q.Select("DISTINCT(name), label")
-					},
-					want: 4,
-				},
-				{
-					// Both columns are called name; aliasing one is what keeps MySQL from
-					// answering 1060 for the derived table.
-					name: "distinct across a join",
-					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
-						return q.Select("DISTINCT orm_widgets.name", "orm_tags.name AS tag_name").
-							CrossJoin("orm_tags")
-					},
-					want: 6,
-				},
-				{
-					name: "union",
-					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
-						tags := session.Query().Select("name").From("orm_tags").Build()
-						return q.Select("name").Union(tags).Limit(1)
-					},
-					want: 4,
-				},
-				{
-					name: "union all",
-					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
-						tags := session.Query().Select("name").From("orm_tags").Build()
-						return q.Select("name").UnionAll(tags)
-					},
-					want: 7,
-				},
-				{
-					name: "common table expression",
-					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
-						labelled := session.Query().Select("name").From("orm_widgets").IsNotNull("label").Build()
-						return q.WithCTE("labelled", labelled).From("labelled").Select("DISTINCT name")
-					},
-					want: 2,
-				},
-			}
-			for _, shape := range shapes {
-				t.Run(shape.name, func(t *testing.T) {
-					total, err := widgets.CountByQuery(shape.build(session.Query()))
-					require.NoError(t, err, "CountByQuery must run on %s", engine.name)
-					assert.Equal(t, shape.want, total)
-				})
-			}
-
-			// Unaliased, the join's two name columns would reach MySQL as a derived table with
-			// a repeated column. The ORM refuses that itself, on every engine, before sending.
-			_, err = widgets.CountByQuery(session.Query().
-				Select("DISTINCT orm_widgets.name", "orm_tags.name").CrossJoin("orm_tags"))
-			require.Error(t, err)
-			assert.Equal(t, "orm: CountByQuery cannot wrap a DISTINCT/UNION query with unnamed or duplicate "+
-				"columns (name is not unique); alias them", err.Error())
+			assertCountByQueryShapes(t, engine)
 		})
 	}
+}
+
+// countByQueryShape is one query CountByQuery wraps, and the total it must report.
+type countByQueryShape struct {
+	name  string
+	build func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder
+	want  int64
+
+	// sqlServerError is the error number SQL Server answers the shape with, for a spelling it
+	// does not have, or 0 when it runs there too.
+	sqlServerError int32
+
+	// sqlServerRefusal is the construct the SQL Server dialect refuses the shape as, before
+	// anything is sent, or "" when it renders there.
+	sqlServerRefusal string
+}
+
+// countByQueryShapes are the shapes TestCountByQueryShapesOnBothEngines and
+// TestSQLServerCountByQueryShapes count, over the rows assertCountByQueryShapes inserts.
+func countByQueryShapes(session dbCore.ISession) []countByQueryShape {
+	return []countByQueryShape{
+		{
+			// The total of the second page of one, not the page itself.
+			name: "paged",
+			build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+				return q.Neq("name", "c").OrderBy("name", "ASC").Limit(1).Offset(1)
+			},
+			want: 4,
+		},
+		{
+			name: "group by",
+			build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+				return q.Select("name", "COUNT(*)").GroupBy("name").OrderBy("name", "ASC")
+			},
+			want: 3,
+		},
+		{
+			name: "group by with having",
+			build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+				return q.Select("name", "COUNT(*) AS n").GroupBy("name").
+					Having(&dbCore.RawCondition{SQL: "COUNT(*) > ?", Args: []any{1}})
+			},
+			want: 2,
+		},
+		{
+			name: "group by with having and no select list",
+			build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+				return q.GroupBy("name").Having(&dbCore.RawCondition{SQL: "COUNT(*) > ?", Args: []any{1}})
+			},
+			want: 2,
+		},
+		{
+			name: "group by with having and a star",
+			build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+				return q.Select("*").GroupBy("name").
+					Having(&dbCore.RawCondition{SQL: "COUNT(*) > ?", Args: []any{1}})
+			},
+			want: 2,
+		},
+		{
+			// T-SQL cannot GROUP BY a select-list alias (Msg 207, invalid column name).
+			name: "group by a select-list alias",
+			build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+				return q.Select("UPPER(name) AS uname", "COUNT(*) AS n").GroupBy("uname")
+			},
+			want:           3,
+			sqlServerError: 207,
+		},
+		{
+			// Nor by a position, which it reads as the constant 1 (Msg 164). The dialect says
+			// so itself, before the server does.
+			name: "group by a select-list position",
+			build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+				return q.Select("name").GroupBy("1")
+			},
+			want:             3,
+			sqlServerRefusal: "a GROUP BY position",
+		},
+		{
+			name: "distinct",
+			build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+				return q.Select("DISTINCT name, label").Limit(2)
+			},
+			want: 4,
+		},
+		{
+			name: "distinct written with parentheses",
+			build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+				return q.Select("DISTINCT(name)")
+			},
+			want: 3,
+		},
+		{
+			name: "distinct written with parentheses beside another column",
+			build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+				return q.Select("DISTINCT(name), label")
+			},
+			want: 4,
+		},
+		{
+			// Both columns are called name; aliasing one is what keeps MySQL from
+			// answering 1060 for the derived table.
+			name: "distinct across a join",
+			build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+				return q.Select("DISTINCT orm_widgets.name", "orm_tags.name AS tag_name").
+					CrossJoin("orm_tags")
+			},
+			want: 6,
+		},
+		{
+			name: "union",
+			build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+				tags := session.Query().Select("name").From("orm_tags").Build()
+				return q.Select("name").Union(tags).Limit(1)
+			},
+			want: 4,
+		},
+		{
+			name: "union all",
+			build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+				tags := session.Query().Select("name").From("orm_tags").Build()
+				return q.Select("name").UnionAll(tags)
+			},
+			want: 7,
+		},
+		{
+			name: "common table expression",
+			build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+				labelled := session.Query().Select("name").From("orm_widgets").IsNotNull("label").Build()
+				return q.WithCTE("labelled", labelled).From("labelled").Select("DISTINCT name")
+			},
+			want: 2,
+		},
+	}
+}
+
+// assertCountByQueryShapes counts every shape of countByQueryShapes on engine.
+func assertCountByQueryShapes(t *testing.T, engine ormEngine) {
+	t.Helper()
+
+	gormDb := gormOf(t, engine.ds)
+	createOrmSchema(t, gormDb, engine.name)
+	t.Cleanup(func() { dropOrmSchema(t, gormDb) })
+
+	for _, row := range [][2]any{{"a", "x"}, {"a", "y"}, {"b", "x"}, {"b", "x"}, {"c", nil}} {
+		require.NoError(t, gormDb.Exec(
+			"INSERT INTO orm_widgets (name, label) VALUES (?, ?)", row[0], row[1]).Error)
+	}
+	for _, name := range []string{"a", "z"} {
+		require.NoError(t, gormDb.Exec("INSERT INTO orm_tags (name) VALUES (?)", name).Error)
+	}
+
+	session, err := engine.ds.NewSession()
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, session.Close()) })
+	widgets := orm.New[*ormWidget](session)
+
+	for _, shape := range countByQueryShapes(session) {
+		t.Run(shape.name, func(t *testing.T) {
+			total, err := widgets.CountByQuery(shape.build(session.Query()))
+			if engine.name == "sqlserver" && shape.sqlServerError != 0 {
+				require.Error(t, err, "SQL Server has no such spelling")
+				assert.Equal(t, shape.sqlServerError, sqlServerErrorNumber(err), "%v", err)
+				return
+			}
+			if engine.name == "sqlserver" && shape.sqlServerRefusal != "" {
+				requireUnsupported(t, err, shape.sqlServerRefusal)
+				return
+			}
+			require.NoError(t, err, "CountByQuery must run on %s", engine.name)
+			assert.Equal(t, shape.want, total)
+		})
+	}
+
+	// Unaliased, the join's two name columns would reach MySQL as a derived table with
+	// a repeated column. The ORM refuses that itself, on every engine, before sending.
+	_, err = widgets.CountByQuery(session.Query().
+		Select("DISTINCT orm_widgets.name", "orm_tags.name").CrossJoin("orm_tags"))
+	require.Error(t, err)
+	assert.Equal(t, "orm: CountByQuery cannot wrap a DISTINCT/UNION query with unnamed or duplicate "+
+		"columns (name is not unique); alias them", err.Error())
 }
 
 // TestTheUpsertOptInWorksThroughTheConfig is H3 against a real MySQL 8.

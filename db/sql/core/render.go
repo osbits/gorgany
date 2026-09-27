@@ -10,7 +10,7 @@ import (
 // RenderContext is how an engine takes part in rendering the condition family.
 //
 // Conditions render themselves, and Condition.ToSQL takes no dialect. That is the boundary
-// docs/DIALECTS.md describes ("Known boundary: conditions are dialect-independent"): every
+// docs/DIALECTS.md describes ("Conditions and the rendering seam"): every
 // identifier a condition emits is verbatim, and every subquery nested in one goes through
 // buildSubquerySQL, which spells LIMIT and OFFSET the Postgres/MySQL way and emits Postgres's
 // DISTINCT ON. Postgres and MySQL mostly get away with that. An engine whose identifiers need
@@ -38,7 +38,7 @@ import (
 // corrections a nil one must not make, since a nil context is held to today's output and
 // ToSQL has no way to report an error:
 //
-//   - a LIKE ESCAPE must be exactly one character other than a single quote;
+//   - a LIKE ESCAPE must be exactly one character other than a single quote, "?" and "@";
 //   - a WHERE clause or CompositeCondition skips parts that render empty, joins with AND
 //     when its Operator is "", and spells AND and OR in upper case;
 //   - a nil condition or a nil subquery is an error rather than a panic (a nil

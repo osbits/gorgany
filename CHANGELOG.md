@@ -26,8 +26,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   pin that.
 - `core.BindParameterLimiter` / `core.BindParameterLimit(d)` and
   `core.TriggerSensitiveReturning` / `core.ReturningBlockedByTriggers(d)`: optional dialect
-  capabilities, probed the way `SupportsReturning` is. Neither shipped dialect declares them,
-  so both probes answer on Postgres and MySQL what callers assumed before they existed.
+  capabilities, probed the way `SupportsReturning` is. Postgres and MySQL do not declare them,
+  so both probes answer there what callers assumed before they existed; the SQL Server dialect
+  (below) declares both, 2098 parameters and returning blocked by triggers.
 - Five datasource keys under `databases.<name>`: `instance`, `external_schema`, `read_only`,
   `lazy_connect`, and an `auth` block (`method`, `tenant_id`, `client_id`, `client_secret`,
   `certificate_path`, `certificate_password`, `send_certificate_chain`, `resource_id`,
@@ -35,8 +36,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   parsed as strictly as the other keys: a flag that is not a boolean (an unresolved `${VAR}`
   included), an unknown key under `auth` and a negative `login_timeout` all fail the boot.
   A SQL Server or Azure spelling at the top level, such as `encrypt`, `server`, `fedauth`,
-  `ApplicationIntent` or `tenant_id`, gets a suggestion naming the key it belongs to. The keys
-  are written for the SQL Server engine that follows. On Postgres and MySQL today:
+  `ApplicationIntent` or `tenant_id`, gets a suggestion naming the key it belongs to. The SQL
+  Server engine (below) reads them. On Postgres and MySQL:
   - `instance` is refused, since a named instance is a SQL Server concept.
   - `auth` is refused unless it is absent or `method: sql` with nothing else in it. That is the
     top-level username and password both engines have always used.
@@ -114,8 +115,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     variable, and `sp_executesql` and the other system procedures that run SQL text. That
     refusal says to send the statement itself. A procedure called by name, such as
     `EXEC dbo.usp_archive 1`, passes: what it runs is server code, like a function. On SQL
-    Server it also refuses the procedures that change a schema, such as `sp_rename`, and
-    `ENABLE TRIGGER` / `DISABLE TRIGGER`. `#temp` objects are exempt. There it also refuses
+    Server it also refuses the procedures that change a schema or who may use it, such as
+    `sp_rename`, `sp_settriggerorder` and `sp_addrolemember`, `ENABLE TRIGGER` /
+    `DISABLE TRIGGER`, and `DBCC`, whose `CHECKIDENT … RESEED` moves an owner's `IDENTITY` for
+    good. `#temp` objects are exempt. There it also refuses
     `OPENQUERY`, `OPENROWSET` and `OPENDATASOURCE` at any depth, since the linked server or
     OLE DB provider they reach, which may be this server, runs SQL the guard cannot read, and
     `OPENROWSET(BULK …)` reads a file. That refusal is reported only when nothing else in the
@@ -237,6 +240,65 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   otherwise refused (see Changed). It is asked of each entity the cascade would reach, so a
   related entity's own relations cascade only if that entity opts in too. It changes nothing on
   a datasource gorgany owns.
+- `core.GormSQLServer`, the driver name `sqlserver_gorm`. It is registered by
+  `_ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver"`, which `driver/builtin` does not
+  import, so an app on `builtin` links no SQL Server code until it adds that import.
+- A SQL Server and Azure SQL engine, `db/sql/gorm/sqlserver/v2`, behind the `sqlserver_gorm`
+  driver, signing in with a SQL login; the Microsoft Entra ID methods come in a later release.
+  It targets SQL Server 2016 or newer and Azure SQL Database. Its dialect brackets every
+  identifier, so EF Core names such as `[dbo].[2024Orders]` and `[Order]` work, in conditions
+  too, through the new rendering seam. It translates `Limit` to `TOP (n)`, `Offset` to
+  `OFFSET … FETCH` (with `ORDER BY (SELECT NULL)` when there is no `ORDER BY`), `RETURNING` to
+  `OUTPUT`, `DO NOTHING` to an `INSERT … WHERE NOT EXISTS` with locking hints, `DO UPDATE` to
+  `MERGE … WITH (HOLDLOCK)`, `LATERAL` to `CROSS`/`OUTER APPLY` and `ILIKE` to `LIKE`, and a
+  `DISTINCT` written into the first select item goes before `TOP`. Unlike Postgres's, the
+  `DO NOTHING` translation fails a statement whose own rows share a key (Msg 2627), so
+  deduplicate them first, and concurrent multi-row upserts whose keys overlap can deadlock (Msg
+  1205, which carries a hint); docs/DIALECTS.md says what to do about both. It refuses what
+  T-SQL cannot express rather than emitting it, among others `DISTINCT ON`, `NATURAL JOIN`,
+  `ORDER BY` in a subquery without `Limit`, a nested `WITH`, `FILTER (WHERE …)`, a `GROUP BY`
+  position, a window frame T-SQL has no form for, Postgres and MySQL operators, and
+  `search_path`; docs/DIALECTS.md, "What SQL Server refuses, and translates", has the full
+  tables, each row with the test that pins it. The executor runs every statement through gorm,
+  so gorm rewrites `?` to `@pN`; it binds a `time.Time` in UTC, since SQL Server stores a
+  zoned time's wall clock in a `datetime2`, and a `json.RawMessage` as text rather than as
+  `varbinary`. A builder write reports its own row count from `ROWCOUNT_BIG()`, not the
+  driver's, which counts trigger rows; `ExecInsert` reads the key with `SCOPE_IDENTITY()`,
+  which works on a table with triggers where `OUTPUT` does not (Msg 334). A statement from the builder, or from
+  a raw path (`ExecRaw`, `FindRaw`, `CountRaw`, gorm's `db.Raw` and `db.Exec`), with more than
+  2098 bind parameters, counted after gorm expands `IN (?)` slices, is refused before it is
+  sent; SQL that gorm builds itself (its chain API, `Create`, `Update`, `Delete`) is not
+  counted, and reaches the server as Msg 8003. Every
+  connection runs `SET XACT_ABORT ON`, so an error dooms the transaction as it does on
+  Postgres. `read_only` and `external_schema` are enforced: the dialect refuses writes, the
+  connection's guards refuse writes or DDL, and `read_only` also sets
+  `ApplicationIntent=ReadOnly`. `ssl` maps to go-mssqldb's `encrypt` and defaults to encrypted
+  with the certificate verified; an Azure SQL host refuses anything weaker. `options` is a
+  closed list, with snake_case names for go-mssqldb's spaced keys. A named `instance` is
+  dialled through SQL Server Browser only on premises with no port; a set port wins, and an
+  Azure host drops it, each with a boot warning. Pool settings left unset default to 10 open
+  and 5 idle connections, closed after 5 minutes idle or 30 minutes in all.
+- An authenticator registry for SQL Server's token sign-ins: `sqlserver.RegisterAuthenticator`,
+  `RegisteredAuthMethods`, and the `Authenticator`, `AuthRequest` and `TokenSource` types, with
+  the method names as `AuthMethod*` constants. `auth.method` picks a registered method, and a
+  datasource asks it for one token source, which the connection uses for every sign-in and
+  whose sign-in in flight `Close` abandons. The Entra ID methods will register from a package of
+  their own in a later release, so an app on a SQL login links no Azure SDK. No package
+  registers one in this release, so a built-in Entra ID `auth.method` fails the boot, saying so
+  and naming `sqlserver.RegisterAuthenticator`; a method an app registers, under a name of its
+  own or a built-in one, is used as it is.
+- `testsupport.Config.AllowAnyTarget` and `GORGANY_TEST_ALLOW_ANY_TARGET`, which switch off the
+  harness's new target guard (see Changed). Like `KeepData`, the variable switches it on, never
+  off.
+- A live SQL Server for the framework's own tests: an `mssql-live` service under the
+  `sqlserver` profile of `e2e/docker-compose.yml`, which `E2E_REQUIRE_SQLSERVER=1 sh e2e/run.sh`
+  starts, and an `mssql` service in the CI live-db job. Both run the same pinned image,
+  `mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04`, which is amd64-only.
+  `E2E_REQUIRE_SQLSERVER=1` makes the SQL Server cases fail rather than skip when the server is
+  unreachable, and fails a run in which none of them executed; `E2E_REQUIRE_LIVE` keeps meaning
+  Postgres and MySQL, so a run without SQL Server is unaffected. The cases are in
+  `e2e/tests/live_sqlserver_test.go`, and the ORM cases that run on every engine gain a
+  `sqlserver` subtest; docs/TESTING.md says how to run them, under Rosetta on Apple Silicon.
 
 ### Changed
 
@@ -377,6 +439,51 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   **Upgrade note:** a model on an `external_schema` datasource whose `Save` relied on the
   cascade now gets the refusal. Save the related entities with their own ORM, or implement
   `CascadeSaves()` returning true once the related tables are known to be safe to write.
+- testsupport refuses a target it must not empty, since it empties every table its migrations
+  create: an Azure SQL, Azure Database for PostgreSQL or Azure Database for MySQL host on any
+  driver, a driver other than `postgres_gorm`, `mysql_gorm` and `sqlserver_gorm`, and a
+  `sqlserver_gorm` database without `test`, `tests` or `testing` as a word of its name (so
+  `gorgany_test` passes and `LatestOrders` does not) or that is `master`, `model`, `msdb` or
+  `tempdb`. The refusal is a config error, so it fails the test
+  whether `RequireDatabase` or `MustDatabase` asked, and it covers a `Databases` list set in
+  code as well as the environment. A driver that is not registered in the test binary now fails
+  at once, naming the import that registers it; it used to be retried for the whole engine wait
+  and then skipped, as though the engine were down. So does a setting the driver refuses. The
+  harness truncates Postgres and MySQL as before; any other driver is an error, where it used to
+  be emptied as though it were MySQL, and SQL Server says its truncation is not implemented yet.
+
+  **Upgrade note:** a Postgres or MySQL suite on a local engine is unaffected. A suite pointed at
+  an Azure database host, or at an app's own driver, now fails; set
+  `GORGANY_TEST_ALLOW_ANY_TARGET=1` for a target known to be disposable, and use
+  `IsolateByRollback` with an app's own driver. A suite whose driver is not imported into the
+  test binary now fails where it skipped; add the import the error names.
+- The unknown-driver error names the one import that registers a framework driver, and says
+  that `driver/builtin` does not include SQL Server, and where the import goes:
+  `pkg/provider/bootstrap.go`, next to the other driver import. The empty-registry hint lists
+  `driver/sqlserver` as well.
+
+  **Upgrade note:** the text of both messages changed after their first sentence, which is
+  unchanged. MIGRATION_v2.md §21 quotes the new empty-registry message.
+- `go.mod` requires `github.com/microsoft/go-mssqldb v1.11.2` and `gorm.io/driver/sqlserver
+  v1.6.4`, and moves `github.com/stretchr/testify` to v1.12.1 (with `github.com/stretchr/objx`
+  v0.5.3), `golang.org/x/crypto` to v0.55.0, `golang.org/x/text` to v0.41.0 and
+  `golang.org/x/net` to v0.58.0. go-mssqldb is required at v1.11.2 by name: without it, module
+  selection picks v1.9.6, which lacks two v1.10.0 fixes the engine relies on: reading a
+  table with triggers, and refusing a statement after the server has rolled back a transaction
+  under `XACT_ABORT`, which v1.9.6 ran as its own auto-committed statement. The go and
+  toolchain directives are unchanged. Only an app that imports `driver/sqlserver` links the
+  SQL Server packages, and none links the Azure SDK, but
+  the Azure SDK, MSAL and Kerberos modules go-mssqldb requires are now in every consumer's
+  module graph and `go.sum`, although nothing links them.
+
+  **Upgrade note:** run `go mod tidy` after upgrading; expect `go.sum` to grow, and the
+  testify, x/crypto, x/text and x/net versions of your own module to move up with it.
+- The CI live-db job is named `live PostgreSQL, MySQL and SQL Server`, and proves each engine
+  ran by the PASS lines of cases pinned by name rather than by a case-insensitive grep for the
+  engine's name, which any case named for the engine satisfied whether it passed or not.
+
+  **Upgrade note:** a branch protection rule that requires the check `live PostgreSQL and
+  MySQL` has to require the new name instead.
 
 ### Fixed
 

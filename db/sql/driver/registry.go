@@ -1,6 +1,11 @@
 // Package driver holds the datasource driver registry: a mapping from a driver
-// name as written in the app config (`postgres_gorm`, `mysql_gorm`, ...) to the
-// constructor that builds that datasource.
+// name as written in the app config (`postgres_gorm`, `mysql_gorm`, `sqlserver_gorm`,
+// ...) to the constructor that builds that datasource.
+//
+// Each of the framework's engines registers itself from a package of its own, which the app
+// imports for its side effects: driver/postgres, driver/mysql, driver/builtin for both of
+// those, and driver/sqlserver, which builtin does not import. So a name that fails to
+// resolve is usually a missing import, and the errors below name the one that fixes it.
 //
 // Before v2 the provider had a hard-coded switch that understood exactly one
 // driver, so adding an engine meant editing the framework. Registration also
@@ -98,12 +103,8 @@ func New(cfg dsconfig.DataSource) (dbCore.IDataSource, error) {
 					"resolved.%s", cfg.Driver, importHint(registered))
 		}
 
-		return nil, fmt.Errorf(
-			"datasource config: unknown driver %q (registered drivers: %v). If the engine you "+
-				"want is missing, import its package for its side effects: "+
-				"_ \"github.com/osbits/gorgany/v2/db/sql/driver/postgres\" or "+
-				"_ \"github.com/osbits/gorgany/v2/db/sql/driver/mysql\"",
-			cfg.Driver, registered)
+		return nil, fmt.Errorf("datasource config: unknown driver %q (registered drivers: %v). %s",
+			cfg.Driver, registered, missingImportHint(cfg.Driver))
 	}
 
 	ds, err := ctor(cfg)
@@ -162,10 +163,56 @@ func importHint(registered []string) string {
 		return ""
 	}
 	return " Import the engine you use for its side effects — " +
-		"_ \"github.com/osbits/gorgany/v2/db/sql/driver/postgres\" or " +
-		"_ \"github.com/osbits/gorgany/v2/db/sql/driver/mysql\", or " +
-		"_ \"github.com/osbits/gorgany/v2/db/sql/driver/builtin\" for both — " +
-		"typically next to your provider package's imports."
+		importLine("postgres") + " or " + importLine("mysql") + ", or " +
+		importLine("builtin") + " for both; " +
+		importLine("sqlserver") + " for SQL Server, which driver/builtin does not include — " +
+		"in pkg/provider/bootstrap.go, where the app's driver import lives."
+}
+
+// frameworkDrivers maps each driver name the framework ships to the driver package whose
+// import registers it, and says whether driver/builtin imports that package too.
+//
+// It exists for the unknown-driver message. A framework name that is not registered is a
+// missing import rather than a typo, so the reader needs the one import that registers it,
+// and a reader who imported builtin expecting every engine needs to hear that it does not
+// bring SQL Server.
+var frameworkDrivers = map[string]struct {
+	pkg     string
+	builtin bool
+}{
+	"postgres_gorm":  {pkg: "postgres", builtin: true},
+	"mysql_gorm":     {pkg: "mysql", builtin: true},
+	"sqlserver_gorm": {pkg: "sqlserver"},
+}
+
+// missingImportHint says how to register name, a driver the registry does not know.
+//
+// The import goes in pkg/provider/bootstrap.go, next to the driver import the app already
+// has: docs/PROJECT_STRUCTURE.md puts the app's wiring there, and a driver imported anywhere
+// else is registered only in the binaries that happen to link that file.
+func missingImportHint(name string) string {
+	const where = "in pkg/provider/bootstrap.go, next to the other driver import"
+
+	known, ok := frameworkDrivers[name]
+	switch {
+	case !ok:
+		return "If the engine you want is missing, import its package for its side effects " +
+			where + ": " + importLine("postgres") + ", " + importLine("mysql") + " or " +
+			importLine("sqlserver") + " (driver/builtin does not include sqlserver). An engine " +
+			"the framework does not ship is registered with driver.Register."
+	case known.builtin:
+		return "Import " + importLine(known.pkg) + " for its side effects " + where +
+			"; driver/builtin imports it too."
+	default:
+		return "Import " + importLine(known.pkg) + " for its side effects " + where +
+			" — driver/builtin does not include it."
+	}
+}
+
+// importLine renders the blank import of the framework driver package pkg as it is written
+// in Go source.
+func importLine(pkg string) string {
+	return `_ "github.com/osbits/gorgany/v2/db/sql/driver/` + pkg + `"`
 }
 
 // reset clears the registry. Test-only.

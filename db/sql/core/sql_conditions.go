@@ -3,6 +3,7 @@ package core
 import (
 	"fmt"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -424,7 +425,8 @@ func (c *LikeCondition) contextSQL(ctx *RenderContext) (string, []any, error) {
 	}
 	if c.Escape != "" && !isLikeEscape(c.Escape) {
 		return "", nil, Unsupported(ctx.dialectName(), fmt.Sprintf("LIKE ESCAPE %q", c.Escape),
-			"the escape must be exactly one character other than a single quote")
+			"the escape must be exactly one character other than a single quote, \"?\" and \"@\", "+
+				"such as '!'")
 	}
 
 	fieldSQL, args, err := identifierOperandSQL(c.Field, nil, ctx, slotLikeField)
@@ -449,12 +451,17 @@ func (c *LikeCondition) contextSQL(ctx *RenderContext) (string, []any, error) {
 }
 
 // isLikeEscape reports whether escape is exactly one valid character and not a single quote,
-// which is what every engine asks of ESCAPE '<escape>'.
+// which is what every engine asks of ESCAPE '<escape>', nor "?" or "@", which gorm reads in
+// the statement whatever quotes them.
 //
 // ToSQL interpolates Escape into a string literal as it stands, so a single quote closes the
 // literal early and whatever follows it is SQL; and an escape of more than one character is
 // refused by every engine, but only once the statement reaches the server. Under a context
-// both are caught while the query is being built instead.
+// both are caught while the query is being built instead. So are the two characters gorm
+// gives a meaning of its own, on every engine: a "?" anywhere in the statement is a
+// placeholder to it, so ESCAPE '?' took the next argument into the literal and moved every
+// argument after it along by one, and an "@" switches the whole statement to named
+// parameters.
 //
 // It is not the whole of what makes an escape safe on every engine. Where a string literal
 // treats a backslash as an escape of its own — MySQL, unless sql_mode has
@@ -462,7 +469,8 @@ func (c *LikeCondition) contextSQL(ctx *RenderContext) (string, []any, error) {
 // an engine like that needs more than this check before it renders LIKE under a context.
 // T-SQL and standard SQL take '\' as the one-character literal it looks like.
 func isLikeEscape(escape string) bool {
-	return utf8.ValidString(escape) && utf8.RuneCountInString(escape) == 1 && escape != "'"
+	return utf8.ValidString(escape) && utf8.RuneCountInString(escape) == 1 &&
+		escape != "'" && escape != "?" && escape != "@"
 }
 
 // IsNullCondition represents an IS NULL condition
@@ -634,15 +642,14 @@ func expandIdentifierPlaceholders(sql string, args []any, identifier func(arg an
 				}
 
 				// pattern "?.<word>"
-				// Extract the literal column name following the dot
+				// Extract the literal column name following the dot. A name is letters and
+				// digits of any script, "_", "$" and a double quote: the scanner stopping at
+				// an ASCII boundary split Größe into Gr and öße, which a context then
+				// delimited as [Gr]öße. Without a context the column is emitted as written,
+				// so where it ends changes nothing.
 				j := i + 2 // start after "?."
-				for j < len(runes) {
-					r := runes[j]
-					if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '"' {
-						j++
-						continue
-					}
-					break
+				for j < len(runes) && isPlaceholderColumnRune(runes[j]) {
+					j++
 				}
 				if len(rest) < 1 {
 					return "", nil, false, nil
@@ -685,6 +692,13 @@ func expandIdentifierPlaceholders(sql string, args []any, identifier func(arg an
 	}
 
 	return sb.String(), values, true, nil
+}
+
+// isPlaceholderColumnRune reports whether r can be part of the literal column after a "?."
+// placeholder: a letter or digit of any script, "_", "$", or a double quote, which a caller
+// who delimited the column already writes (see RenderContext.placeholderColumn).
+func isPlaceholderColumnRune(r rune) bool {
+	return unicode.IsLetter(r) || unicode.IsNumber(r) || r == '_' || r == '$' || r == '"'
 }
 
 // cloneArgs copies args, keeping a nil slice nil and an empty one empty: a caller can tell the

@@ -21,6 +21,7 @@ var packagesAllowedToNameADialect = []string{
 	"db/sql/builder/",
 	"db/sql/gorm/postgres/v2/",
 	"db/sql/gorm/mysql/v2/",
+	"db/sql/gorm/sqlserver/v2/",
 }
 
 // TestNoHardCodedPostgresBuilderOutsideDialectPackages is an enforcement test, not

@@ -6,6 +6,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+
+	dsconfig "github.com/osbits/gorgany/v2/db/sql/config"
+	"github.com/osbits/gorgany/v2/db/sql/driver"
 )
 
 // Isolation is how the harness keeps one test's rows out of the next test's way.
@@ -41,6 +45,9 @@ const (
 	EnvEngineWait  = "GORGANY_TEST_ENGINE_WAIT"
 	EnvKeepData    = "GORGANY_TEST_KEEP_DATA"
 	EnvMigrateDown = "GORGANY_TEST_MIGRATE_DOWN"
+
+	// EnvAllowAnyTarget switches off the target guard; see Config.AllowAnyTarget.
+	EnvAllowAnyTarget = "GORGANY_TEST_ALLOW_ANY_TARGET"
 )
 
 // Driver names, matching the keys of the framework's driver registry.
@@ -48,6 +55,17 @@ const (
 	DriverPostgres = "postgres_gorm"
 	DriverMySQL    = "mysql_gorm"
 )
+
+// driverSQLServer is the SQL Server engine's registry key, which the target guard accepts.
+//
+// It is unexported because the harness cannot yet truncate SQL Server (see truncate), and an
+// exported Driver constant beside the other two would advertise support the harness does not
+// have. The guard still has to know the name: the rules for a database on that engine apply
+// from the first run that points at one, not from the release that completes the support.
+//
+// It is a string, not a reference to the engine's package, because testsupport must not link
+// SQL Server's driver into every app's test binary; a suite that uses the engine imports it.
+const driverSQLServer = "sqlserver_gorm"
 
 // DatabaseConfig describes one engine to test against.
 type DatabaseConfig struct {
@@ -155,6 +173,21 @@ type Config struct {
 	//
 	// GORGANY_TEST_MIGRATE_DOWN turns it on even when this is false, as with KeepData.
 	MigrateDown bool
+
+	// AllowAnyTarget switches off the target guard, which refuses to point the harness at a
+	// database it may not empty: an Azure SQL host, a driver it does not know how to
+	// truncate, and a SQL Server database whose name does not say it is for tests. See
+	// guardTarget for why each is refused.
+	//
+	// The harness empties every table its migrations create, before the first test and
+	// after each one, so a stray GORGANY_TEST_HOST left over from a debugging session is all
+	// it takes to empty a database somebody needed. Set this only for a target you know is
+	// disposable. A driver that is not registered is refused either way, since no setting
+	// can make it connect.
+	//
+	// GORGANY_TEST_ALLOW_ANY_TARGET switches it on even when this is false, as with
+	// KeepData: the variable switches it on, never off.
+	AllowAnyTarget bool
 }
 
 // DefaultEngineWait is how long the harness waits for an engine to accept connections.
@@ -178,9 +211,10 @@ func FromEnv() Config {
 			Database: envOr(EnvDatabase, "gorgany_test"),
 			SSL:      envOr(EnvSSL, "disable"),
 		}},
-		Isolation:   Isolation(envOr(EnvIsolation, string(IsolateByTruncation))),
-		KeepData:    envBool(EnvKeepData),
-		MigrateDown: envBool(EnvMigrateDown),
+		Isolation:      Isolation(envOr(EnvIsolation, string(IsolateByTruncation))),
+		KeepData:       envBool(EnvKeepData),
+		MigrateDown:    envBool(EnvMigrateDown),
+		AllowAnyTarget: envBool(EnvAllowAnyTarget),
 	}
 
 	if raw := os.Getenv(EnvEngineWait); raw != "" {
@@ -229,6 +263,7 @@ func (c Config) resolved() (Config, error) {
 	}
 	out.KeepData = out.KeepData || env.KeepData
 	out.MigrateDown = out.MigrateDown || env.MigrateDown
+	out.AllowAnyTarget = out.AllowAnyTarget || env.AllowAnyTarget
 
 	// An empty or unparseable variable leaves these zero too.
 	if out.Isolation == "" {
@@ -252,7 +287,210 @@ func (c Config) resolved() (Config, error) {
 		}
 	}
 
+	// After Validate, so a config missing its host is reported as that. It covers Databases
+	// set in code as well as the one from the environment: a suite's hard-coded list can
+	// point at the wrong server as easily as a variable can.
+	for _, database := range out.Databases {
+		if err := guardTarget(database, out.AllowAnyTarget); err != nil {
+			return out, err
+		}
+	}
+
 	return out, nil
+}
+
+// guardTarget refuses a database the harness must not run against, and a config that cannot
+// connect however long the harness waits.
+//
+// Its errors are config errors, so they fail the test whichever of RequireDatabase and
+// MustDatabase asked. A refused target is not an absent engine: skipping would read as "no
+// database running" to someone whose variables in fact point at a real one.
+//
+// The safety rules, which AllowAnyTarget switches off:
+//
+//   - An Azure SQL host is refused for any driver, and so is an Azure Database for
+//     PostgreSQL or MySQL host (see azureDatabaseHostSuffixes), which is the Azure host a
+//     Postgres or MySQL suite can actually reach. Truncation empties every table the
+//     migrations created, and a cloud database is never the disposable one a harness is for;
+//     the likeliest way to reach one is a production variable exported in the same shell.
+//   - A driver other than Postgres, MySQL and SQL Server is refused. Isolation has to know how
+//     to empty the engine's tables, and until this check an unknown driver was emptied as
+//     though it were MySQL.
+//   - A SQL Server database must have "test" as a word of its name (see namedForTests), and
+//     must not be a system database. One SQL Server instance commonly hosts many databases,
+//     some of them not disposable, such as a copy of production restored for debugging, so
+//     the name is the one evidence the harness can check that this one is disposable.
+//     Postgres and MySQL suites keep the names they had.
+//
+// The rest are not safety rules and hold whatever AllowAnyTarget says:
+//
+//   - The driver must be registered in this test binary. An unregistered one used to be
+//     retried for the whole engine wait and then skipped, as though the engine were down; the
+//     fix is an import, and the error names it.
+//   - The datasource config the harness renders must parse, which is checked once here rather
+//     than on every retry.
+func guardTarget(database DatabaseConfig, allowAnyTarget bool) error {
+	label := database.Label()
+
+	if !allowAnyTarget {
+		if kind := azureHostKind(database.Host); kind != "" {
+			return fmt.Errorf("testsupport: %s: refusing %s, %s: the harness empties "+
+				"every table its migrations create, so it runs only against a disposable local "+
+				"engine. Point it at a container, or set %s=1 if this database really is disposable",
+				label, database.Host, kind, EnvAllowAnyTarget)
+		}
+
+		switch database.Driver {
+		case DriverPostgres, DriverMySQL:
+		case driverSQLServer:
+			if err := guardSQLServerDatabase(label, database.Database); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("testsupport: %s: driver %q is not one the harness supports (%s, %s "+
+				"or %s): isolation has to know how to empty its tables. Set %s=1 to use it anyway, "+
+				"with IsolateByRollback",
+				label, database.Driver, DriverPostgres, DriverMySQL, driverSQLServer, EnvAllowAnyTarget)
+		}
+	}
+
+	if err := requireRegistered(database); err != nil {
+		return err
+	}
+
+	if _, err := dsconfig.Parse(database.datasourceConfig()); err != nil {
+		return fmt.Errorf("testsupport: %s: %w", label, err)
+	}
+	return nil
+}
+
+// azureDatabaseHostSuffixes are the DNS suffixes of Azure Database for PostgreSQL and Azure
+// Database for MySQL in the public cloud. dsconfig.IsAzureSQLHost answers for Azure SQL alone,
+// hosts only the SQL Server engine can reach, and the engine relies on that meaning, so the
+// harness keeps the managed Postgres and MySQL suffixes here. Their US Government and China
+// endpoints end in .database.usgovcloudapi.net and .database.chinacloudapi.cn, which
+// IsAzureSQLHost already matches.
+var azureDatabaseHostSuffixes = []string{".postgres.database.azure.com", ".mysql.database.azure.com"}
+
+// azureHostKind says what kind of Azure database host is, for the refusal, or "" when it is
+// not one. host may be a comma-separated list, and each name in it may carry a :port or the
+// root dot of a fully qualified name; a bare suffix, with no server name in front of it, is not
+// a host.
+func azureHostKind(host string) string {
+	if dsconfig.IsAzureSQLHost(host) {
+		return "an Azure SQL host"
+	}
+	for _, name := range strings.Split(host, ",") {
+		name = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(name)), ".")
+		if at := strings.LastIndexByte(name, ':'); at >= 0 {
+			if _, err := strconv.Atoi(name[at+1:]); err == nil {
+				name = strings.TrimSuffix(name[:at], ".")
+			}
+		}
+		for _, suffix := range azureDatabaseHostSuffixes {
+			if strings.HasSuffix(name, suffix) && len(name) > len(suffix) {
+				return "an Azure Database for PostgreSQL or MySQL host"
+			}
+		}
+	}
+	return ""
+}
+
+// namedForTests reports whether name has test, tests or testing as one of its words (see
+// nameWords), so gorgany_test, TestDb, AppTests, e2e-testing and test1 are named for tests, and
+// Attestations, LatestOrders, Contests and Protest, whose "test" is inside another word, are
+// not.
+func namedForTests(name string) bool {
+	for _, word := range nameWords(name) {
+		switch strings.ToLower(word) {
+		case "test", "tests", "testing":
+			return true
+		}
+	}
+	return false
+}
+
+// nameWords splits name into words: at every character that is not a letter or a digit,
+// between letters and digits, between a lower-case letter and an upper-case one, and before
+// the last capital of a run of them that goes on in lower case, as in APITests.
+func nameWords(name string) []string {
+	runes := []rune(name)
+	var words []string
+	start := 0
+	cut := func(end int) {
+		if end > start {
+			words = append(words, string(runes[start:end]))
+		}
+		start = end
+	}
+	for i, r := range runes {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			cut(i)
+			start = i + 1
+			continue
+		}
+		if i == start {
+			continue
+		}
+		prev := runes[i-1]
+		switch {
+		case unicode.IsLetter(prev) != unicode.IsLetter(r),
+			unicode.IsLower(prev) && unicode.IsUpper(r),
+			unicode.IsUpper(prev) && unicode.IsUpper(r) && i+1 < len(runes) && unicode.IsLower(runes[i+1]):
+			cut(i)
+		}
+	}
+	cut(len(runes))
+	return words
+}
+
+// sqlServerSystemDatabases are the databases every SQL Server instance has. Emptying one is
+// never what a test means, whatever it is called.
+var sqlServerSystemDatabases = []string{"master", "model", "msdb", "tempdb"}
+
+// guardSQLServerDatabase refuses a SQL Server database whose name does not mark it as one
+// for tests; see guardTarget.
+func guardSQLServerDatabase(label, name string) error {
+	for _, system := range sqlServerSystemDatabases {
+		if strings.EqualFold(name, system) {
+			return fmt.Errorf("testsupport: %s: refusing %q, a SQL Server system database; use a "+
+				"database of its own for tests, such as gorgany_test", label, name)
+		}
+	}
+	if !namedForTests(name) {
+		return fmt.Errorf("testsupport: %s: refusing SQL Server database %q: on SQL Server the "+
+			"harness runs only against a database with \"test\" in its name as a word of its own, "+
+			"such as gorgany_test or AppTests, since it empties every table its migrations create. "+
+			"Rename it, or set %s=1 if this database really is disposable", label, name, EnvAllowAnyTarget)
+	}
+	return nil
+}
+
+// requireRegistered refuses a database whose driver is not registered in this test binary,
+// naming the import that registers it; see registrationHint.
+func requireRegistered(database DatabaseConfig) error {
+	if _, ok := driver.Lookup(database.Driver); ok {
+		return nil
+	}
+	return fmt.Errorf("testsupport: %s: driver %q is not registered in this test binary "+
+		"(registered: %v). %s", database.Label(), database.Driver, driver.Names(),
+		registrationHint(database.Driver))
+}
+
+// registrationHint says how to register the driver name in a test binary.
+//
+// testsupport registers Postgres and MySQL itself, through driver/builtin, so only another
+// engine can be missing. The import belongs in the test package, or in the package the tests
+// already import for the app's wiring, since a registration made only in the app's main
+// package is not linked into its test binaries.
+func registrationHint(name string) string {
+	if name == driverSQLServer {
+		return `Add _ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver" to the test package, ` +
+			"or to pkg/provider/bootstrap.go if the tests import it: testsupport registers only " +
+			DriverPostgres + " and " + DriverMySQL + ", through driver/builtin"
+	}
+	return "Import the package that registers it, or call driver.Register, before the first " +
+		"test asks for a database"
 }
 
 func envOr(name, fallback string) string {

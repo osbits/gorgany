@@ -221,11 +221,18 @@ func GuardReadOnlyShape(sql string, lex SQLLexicon) error {
 // Under SQL Server's rules (lex.BracketIdentifiers) more is refused, because that is how SQL
 // Server spells a schema change, how gorm's SQL Server migrator issues its renames and its
 // column comments, and how SQL Server runs SQL text. One is a call, with or without EXEC, of
-// a stored procedure that renames objects or changes their types, rules, defaults, owners or
-// extended properties — sp_rename, sp_addextendedproperty, sp_updateextendedproperty,
-// sp_dropextendedproperty, sp_addtype, sp_droptype, sp_bindrule, sp_unbindrule,
-// sp_bindefault, sp_unbindefault and sp_changeobjectowner — however its name is bracketed or
-// qualified. Another is SQL Server's dynamic SQL, wherever an EXEC stands: EXEC or EXECUTE
+// a stored procedure that renames objects or changes their types, rules, defaults, owners,
+// extended properties or trigger order, or changes who may do what — sp_rename,
+// sp_addextendedproperty, sp_updateextendedproperty, sp_dropextendedproperty, sp_addtype,
+// sp_droptype, sp_bindrule, sp_unbindrule, sp_bindefault, sp_unbindefault,
+// sp_changeobjectowner, sp_settriggerorder, sp_changedbowner, and the role, login and user
+// procedures sp_addrole, sp_droprole, sp_addrolemember, sp_droprolemember,
+// sp_addsrvrolemember, sp_dropsrvrolemember, sp_addlogin, sp_droplogin, sp_adduser,
+// sp_dropuser, sp_grantdbaccess and sp_revokedbaccess, the procedural twins of the ALTER ROLE,
+// CREATE LOGIN and CREATE USER the rule below refuses — however its name is bracketed or
+// qualified. Another is DBCC, anywhere outside parentheses: DBCC CHECKIDENT … RESEED moves an
+// IDENTITY's next value for good, and none of DBCC's commands is a row the app reads or
+// writes. Another is SQL Server's dynamic SQL, wherever an EXEC stands: EXEC or EXECUTE
 // followed by "(", as in EXEC ('…'), EXEC (N'…' + @name) and EXEC (@sql); an EXEC of a
 // procedure the guard cannot name, because a variable holds its name or a literal spells it;
 // and a call, with or without EXEC and named as the procedures above are, of a system
@@ -420,12 +427,16 @@ func schemaStatementName(statement []sqlToken) string {
 }
 
 // sqlServerSchemaProcedures are the system procedures through which SQL Server renames
-// objects and changes their types, rules, defaults, owners and extended properties, in the
-// lower-case ASCII that foldName leaves as it is.
+// objects, changes their types, rules, defaults, owners, extended properties and trigger
+// order, and changes roles, logins and users, in the lower-case ASCII that foldName leaves as
+// it is.
 var sqlServerSchemaProcedures = wordSet(
 	"sp_rename", "sp_addextendedproperty", "sp_updateextendedproperty", "sp_dropextendedproperty",
 	"sp_addtype", "sp_droptype", "sp_bindrule", "sp_unbindrule", "sp_bindefault",
-	"sp_unbindefault", "sp_changeobjectowner",
+	"sp_unbindefault", "sp_changeobjectowner", "sp_settriggerorder", "sp_changedbowner",
+	"sp_addrole", "sp_droprole", "sp_addrolemember", "sp_droprolemember", "sp_addsrvrolemember",
+	"sp_dropsrvrolemember", "sp_addlogin", "sp_droplogin", "sp_adduser", "sp_dropuser",
+	"sp_grantdbaccess", "sp_revokedbaccess",
 )
 
 // sqlServerDynamicProcedures are the system procedures that run, or prepare to run, the SQL
@@ -838,6 +849,8 @@ func schemaStatementRefusal(statement []sqlToken, lex SQLLexicon) string {
 			case token.depth == 0 && (token.isWord("ENABLE") || token.isWord("DISABLE")) &&
 				i+1 < len(statement) && statement[i+1].isWord("TRIGGER"):
 				return token.upper + " TRIGGER"
+			case token.depth == 0 && token.isWord("DBCC"):
+				return "DBCC"
 			}
 		}
 	}

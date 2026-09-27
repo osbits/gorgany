@@ -2,6 +2,7 @@ package testsupport
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -140,6 +141,12 @@ func (d *Database) executor() dbCore.IQueryExecutor {
 // forwards hits a foreign key. Postgres gets one TRUNCATE ... CASCADE, which is both
 // faster and immune to ordering; MySQL has no CASCADE on TRUNCATE, so its foreign key
 // checks are suspended for the duration instead.
+//
+// Every other engine is an error that says so. This used to treat anything that was not
+// Postgres as MySQL, so another engine was sent MySQL's statements and the test failed on
+// whatever that engine made of them, an error that pointed at MySQL syntax rather than at
+// the harness. SQL Server is refused by name until its truncation is implemented, which
+// needs more than a translation of MySQL's: its constraint switch outlives the session.
 func (d *Database) truncate(tables ...string) error {
 	targets := tables
 	if len(targets) == 0 {
@@ -154,13 +161,27 @@ func (d *Database) truncate(tables ...string) error {
 		quoted = append(quoted, d.quoteIdentifier(targets[i]))
 	}
 
-	if d.config.Driver == DriverPostgres {
+	switch d.config.Driver {
+	case DriverPostgres:
 		statement := "TRUNCATE TABLE " + strings.Join(quoted, ", ") + " RESTART IDENTITY CASCADE"
 		return d.gorm.Exec(statement).Error
+	case DriverMySQL:
+		return d.truncateMySQL(quoted)
+	case driverSQLServer:
+		return fmt.Errorf("%s: truncation is not implemented for SQL Server yet, so "+
+			"IsolateByTruncation cannot keep its tests apart", d.Label())
+	default:
+		return fmt.Errorf("%s: cannot empty tables on driver %q: truncation is implemented for "+
+			"%s and %s only; use IsolateByRollback", d.Label(), d.config.Driver, DriverPostgres, DriverMySQL)
 	}
+}
 
-	// MySQL. Restore the check even if a truncate fails, or every later test in the
-	// process runs without referential integrity and passes when it should not.
+// truncateMySQL empties the quoted tables with foreign key checks suspended, since MySQL has
+// no TRUNCATE ... CASCADE. The switch is scoped to the session, which is why suspending it is
+// safe here and would not be on an engine where it persists.
+func (d *Database) truncateMySQL(quoted []string) error {
+	// Restore the check even if a truncate fails, or every later test in the process runs
+	// without referential integrity and passes when it should not.
 	if err := d.gorm.Exec("SET FOREIGN_KEY_CHECKS = 0").Error; err != nil {
 		return err
 	}
@@ -227,7 +248,17 @@ func connect(cfg Config, database DatabaseConfig) *engine {
 	e := &engine{config: database}
 	engines[key] = e
 
-	datasource, err := waitForEngine(database, cfg.EngineWait)
+	// Parsed once, outside the retry loop: a config that does not parse is wrong on every
+	// attempt, and retrying it for the whole engine wait only to skip reported it as an
+	// engine that was not running. resolved has already parsed it, so this failing means the
+	// harness itself is inconsistent, which is never a reason to skip either.
+	parsed, err := dsconfig.Parse(database.datasourceConfig())
+	if err != nil {
+		e.err = configError{fmt.Errorf("testsupport: %s: %w", database.Label(), err)}
+		return e
+	}
+
+	datasource, err := waitForEngine(database, parsed, cfg.EngineWait)
 	if err != nil {
 		e.err = err
 		return e
@@ -255,14 +286,21 @@ func connect(cfg Config, database DatabaseConfig) *engine {
 //
 // A container started in the same CI step is usually not listening yet, and a suite that
 // gives up on the first refused dial is a suite that fails intermittently.
-func waitForEngine(database DatabaseConfig, wait time.Duration) (dbCore.IDataSource, error) {
-	dsConfig := database.datasourceConfig()
+//
+// The datasource is built through the framework's own registry, so the harness connects
+// exactly the way a booting app does. Only a failure to connect is retried. A driver the
+// registry does not know, or a setting the driver refuses, is the same answer on every
+// attempt, so it returns at once as a configError, which prepare never turns into a skip.
+func waitForEngine(database DatabaseConfig, parsed dsconfig.DataSource, wait time.Duration) (dbCore.IDataSource, error) {
+	if err := requireRegistered(database); err != nil {
+		return nil, configError{err}
+	}
 
 	deadline := time.Now().Add(wait)
 	var lastErr error
 
 	for {
-		datasource, err := newDatasource(dsConfig)
+		datasource, err := driver.New(parsed)
 		if err == nil {
 			if pingErr := ping(datasource); pingErr == nil {
 				return datasource, nil
@@ -270,6 +308,8 @@ func waitForEngine(database DatabaseConfig, wait time.Duration) (dbCore.IDataSou
 				lastErr = pingErr
 				_ = datasource.Close()
 			}
+		} else if isRefusal(err) {
+			return nil, configError{fmt.Errorf("testsupport: %s: %w", database.Label(), err)}
 		} else {
 			lastErr = err
 		}
@@ -283,14 +323,28 @@ func waitForEngine(database DatabaseConfig, wait time.Duration) (dbCore.IDataSou
 	}
 }
 
-// newDatasource parses a config map and builds the datasource through the framework's own
-// registry, so the harness connects exactly the way a booting app does.
-func newDatasource(dsConfig map[string]any) (dbCore.IDataSource, error) {
-	parsed, err := dsconfig.Parse(dsConfig)
-	if err != nil {
-		return nil, err
-	}
-	return driver.New(parsed)
+// configError is an engine failure that no wait can fix and no skip may hide: the harness
+// was told something wrong, rather than finding nothing listening.
+//
+// prepare skips a test whose engine is absent when RequireDatabase asked, and a
+// misconfiguration reported that way reads as "start the container", which sends the reader
+// to the wrong place.
+type configError struct{ err error }
+
+func (e configError) Error() string { return e.err.Error() }
+func (e configError) Unwrap() error { return e.err }
+
+// isRefusal reports whether err is a driver's UnsupportedError, found through any wrapping:
+// an engine may prefix its refusals with its name, and wrapped they are still refusals.
+func isRefusal(err error) bool {
+	var unsupported *dbCore.UnsupportedError
+	return errors.As(err, &unsupported)
+}
+
+// isConfigError reports whether err is a configError.
+func isConfigError(err error) bool {
+	var target configError
+	return errors.As(err, &target)
 }
 
 // ping verifies the connection is actually usable.

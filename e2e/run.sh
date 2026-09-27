@@ -4,6 +4,7 @@
 #
 #   sh e2e/run.sh                                     a project of its own, gorgany-e2e-<pid>
 #   COMPOSE_PROJECT_NAME=e2e-$RUN_ID sh e2e/run.sh    a project the caller names, as CI may
+#   E2E_REQUIRE_SQLSERVER=1 sh e2e/run.sh             SQL Server too, which is amd64-only
 set -eu
 
 compose_file="e2e/docker-compose.yml"
@@ -23,6 +24,20 @@ compose_file="e2e/docker-compose.yml"
 : "${COMPOSE_PROJECT_NAME:=gorgany-e2e-$$}"
 export COMPOSE_PROJECT_NAME
 printf 'e2e harness: compose project %s\n' "$COMPOSE_PROJECT_NAME" >&2
+
+# SQL Server runs only when asked for. Its image is amd64-only and about 1.5 GB, so it is
+# behind the compose file's sqlserver profile, and E2E_REQUIRE_SQLSERVER=1 is what switches
+# it on here, what the runner passes to the suite, and what makes the SQL Server cases fail
+# rather than skip. The profile is exported with the project name, and for the same reason:
+# every `docker compose` below has to see it, the trap's `down` included, or that `down`
+# would not know the service and would leave its container running.
+sqlserver_services=
+if [ "${E2E_REQUIRE_SQLSERVER:-}" = "1" ]; then
+  COMPOSE_PROFILES=sqlserver
+  export COMPOSE_PROFILES
+  sqlserver_services=mssql-live
+  printf 'e2e harness: E2E_REQUIRE_SQLSERVER=1, starting SQL Server too\n' >&2
+fi
 
 # cleanup carries the real outcome out of the trap instead of leaving it to the shell.
 #
@@ -75,7 +90,8 @@ docker compose -f "$compose_file" build app-migrate app-seed app-server runner
 # moment later, so a database that died while initialising or a fixture app that panicked on
 # boot left the harness walking on to the next step against a stack that was not running.
 # --wait blocks on each service's healthcheck and exits non-zero when one of them stops.
-docker compose -f "$compose_file" up -d --wait postgres postgres-live mysql-live
+# $sqlserver_services is unquoted on purpose: empty, it must add no argument at all.
+docker compose -f "$compose_file" up -d --wait postgres postgres-live mysql-live $sqlserver_services
 
 docker compose -f "$compose_file" run --rm app-migrate
 docker compose -f "$compose_file" run --rm app-seed

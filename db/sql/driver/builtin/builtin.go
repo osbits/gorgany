@@ -10,6 +10,13 @@
 // go-sql-driver/mysql and filippo.io/edwards25519 with no way to opt out. DbProvider now
 // imports nothing and the app chooses: the one engine it uses, or this package for both.
 //
+// "Both" is Postgres and MySQL, and it stays that way: SQL Server is a separate import,
+// _ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver", which this package does not
+// make. This is the import most apps and testsupport already have. Bringing SQL Server into
+// it would link go-mssqldb and gorm.io/driver/sqlserver into every one of them, dependency
+// and attack surface they did not choose, which is the cost the split above removed for
+// MySQL. An app that speaks SQL Server imports that package next to this one.
+//
 // An app adding an engine of its own calls driver.Register("<name>", ctor) from its
 // provider's Register phase; it does not need this package.
 package builtin

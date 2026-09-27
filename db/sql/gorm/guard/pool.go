@@ -3,13 +3,10 @@ package guard
 import (
 	"context"
 	"database/sql"
-	"database/sql/driver"
-	"errors"
-	"sync"
 	"sync/atomic"
-	"time"
 
 	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
+	"github.com/osbits/gorgany/v2/db/sql/gorm/internal/refused"
 	"gorm.io/gorm"
 )
 
@@ -263,36 +260,8 @@ func (t *stmtTxPool) StmtContext(ctx context.Context, stmt *sql.Stmt) *sql.Stmt 
 	return t.tx.StmtContext(ctx, stmt)
 }
 
-// refusedRow returns a *sql.Row whose Scan and Err report err. Only database/sql can make a
-// *sql.Row that carries an error, and it makes one when a query's context is done before the
-// query gets a connection — so refusedRow asks a pool that never connects, with a context
-// that is already done and gives err as the reason. Nothing is sent anywhere.
+// refusedRow returns a *sql.Row whose Scan and Err report err, and sends nothing; see
+// refused.Row.
 func refusedRow(err error) *sql.Row {
-	return refusalPool().QueryRowContext(refusedContext{err}, "")
+	return refused.Row(err)
 }
-
-// refusalPool is the pool refusedRow asks. It is opened once, on the first refusal that needs
-// it, and lives as long as the process, as does the goroutine database/sql starts for it.
-var refusalPool = sync.OnceValue(func() *sql.DB { return sql.OpenDB(neverConnects{}) })
-
-type neverConnects struct{}
-
-var errNeverConnects = errors.New("guard: this pool never connects")
-
-func (neverConnects) Connect(context.Context) (driver.Conn, error) { return nil, errNeverConnects }
-func (neverConnects) Driver() driver.Driver                        { return neverConnects{} }
-func (neverConnects) Open(string) (driver.Conn, error)             { return nil, errNeverConnects }
-
-// refusedContext is a context that is done from the start, with err as the reason.
-type refusedContext struct{ err error }
-
-var done = func() chan struct{} {
-	c := make(chan struct{})
-	close(c)
-	return c
-}()
-
-func (refusedContext) Deadline() (time.Time, bool) { return time.Time{}, false }
-func (refusedContext) Done() <-chan struct{}       { return done }
-func (c refusedContext) Err() error                { return c.err }
-func (refusedContext) Value(any) any               { return nil }
