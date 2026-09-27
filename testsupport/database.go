@@ -39,6 +39,10 @@ type Database struct {
 
 	// tx is the test's transaction under IsolateByRollback.
 	tx dbCore.IDBTransaction
+
+	// truncating is the engine's, shared by every test on it; see truncateSQLServer. Nil in a
+	// Database no engine prepared.
+	truncating *sync.Mutex
 }
 
 // Session is the database session the test should use.
@@ -65,7 +69,7 @@ func (d *Database) Gorm() *gorm.DB {
 	return d.gorm
 }
 
-// Driver reports which engine this is: DriverPostgres or DriverMySQL.
+// Driver reports which engine this is: DriverPostgres, DriverMySQL or DriverSQLServer.
 //
 // Tests need it more often than they should have to — a dialect-specific assertion about
 // quoting or a RETURNING clause has to know which engine it is talking to.
@@ -73,9 +77,10 @@ func (d *Database) Driver() string {
 	return d.config.Driver
 }
 
-// IsPostgres and IsMySQL are the readable forms of a Driver comparison.
-func (d *Database) IsPostgres() bool { return d.config.Driver == DriverPostgres }
-func (d *Database) IsMySQL() bool    { return d.config.Driver == DriverMySQL }
+// IsPostgres, IsMySQL and IsSQLServer are the readable forms of a Driver comparison.
+func (d *Database) IsPostgres() bool  { return d.config.Driver == DriverPostgres }
+func (d *Database) IsMySQL() bool     { return d.config.Driver == DriverMySQL }
+func (d *Database) IsSQLServer() bool { return d.config.Driver == DriverSQLServer }
 
 // Label is how this database appears in test output.
 func (d *Database) Label() string { return d.config.Label() }
@@ -140,13 +145,13 @@ func (d *Database) executor() dbCore.IQueryExecutor {
 // Reverse order matters: the migrations create parents before children, so deleting
 // forwards hits a foreign key. Postgres gets one TRUNCATE ... CASCADE, which is both
 // faster and immune to ordering; MySQL has no CASCADE on TRUNCATE, so its foreign key
-// checks are suspended for the duration instead.
+// checks are suspended for the duration instead. SQL Server has neither, and its constraint
+// switch outlives the session, so it gets a sequence of its own; see truncateSQLServer.
 //
 // Every other engine is an error that says so. This used to treat anything that was not
 // Postgres as MySQL, so another engine was sent MySQL's statements and the test failed on
 // whatever that engine made of them, an error that pointed at MySQL syntax rather than at
-// the harness. SQL Server is refused by name until its truncation is implemented, which
-// needs more than a translation of MySQL's: its constraint switch outlives the session.
+// the harness.
 func (d *Database) truncate(tables ...string) error {
 	targets := tables
 	if len(targets) == 0 {
@@ -156,24 +161,33 @@ func (d *Database) truncate(tables ...string) error {
 		return nil
 	}
 
-	quoted := make([]string, 0, len(targets))
+	reversed := make([]string, 0, len(targets))
 	for i := len(targets) - 1; i >= 0; i-- {
-		quoted = append(quoted, d.quoteIdentifier(targets[i]))
+		reversed = append(reversed, targets[i])
 	}
 
 	switch d.config.Driver {
 	case DriverPostgres:
-		statement := "TRUNCATE TABLE " + strings.Join(quoted, ", ") + " RESTART IDENTITY CASCADE"
+		statement := "TRUNCATE TABLE " + strings.Join(d.quoteAll(reversed), ", ") + " RESTART IDENTITY CASCADE"
 		return d.gorm.Exec(statement).Error
 	case DriverMySQL:
-		return d.truncateMySQL(quoted)
-	case driverSQLServer:
-		return fmt.Errorf("%s: truncation is not implemented for SQL Server yet, so "+
-			"IsolateByTruncation cannot keep its tests apart", d.Label())
+		return d.truncateMySQL(d.quoteAll(reversed))
+	case DriverSQLServer:
+		return d.truncateSQLServer(reversed, len(tables) > 0)
 	default:
 		return fmt.Errorf("%s: cannot empty tables on driver %q: truncation is implemented for "+
-			"%s and %s only; use IsolateByRollback", d.Label(), d.config.Driver, DriverPostgres, DriverMySQL)
+			"%s, %s and %s only; use IsolateByRollback", d.Label(), d.config.Driver,
+			DriverPostgres, DriverMySQL, DriverSQLServer)
 	}
+}
+
+// quoteAll quotes each table name for this engine.
+func (d *Database) quoteAll(tables []string) []string {
+	quoted := make([]string, 0, len(tables))
+	for _, table := range tables {
+		quoted = append(quoted, d.quoteIdentifier(table))
+	}
+	return quoted
 }
 
 // truncateMySQL empties the quoted tables with foreign key checks suspended, since MySQL has
@@ -202,10 +216,14 @@ func (d *Database) truncateMySQL(quoted []string) error {
 // developer-supplied, not caller-supplied, but silently producing broken SQL for an
 // unusual name is still worse than producing correct SQL.
 func (d *Database) quoteIdentifier(name string) string {
-	if d.config.Driver == DriverMySQL {
+	switch d.config.Driver {
+	case DriverMySQL:
 		return "`" + strings.ReplaceAll(name, "`", "``") + "`"
+	case DriverSQLServer:
+		return quoteSQLServerIdentifier(name)
+	default:
+		return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 	}
-	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
 }
 
 // ---------------------------------------------------------------- connection
@@ -227,6 +245,10 @@ type engine struct {
 
 	// migrateOnceGuard keeps the migrations to one run per engine per process.
 	migrateOnceGuard sync.Once
+
+	// truncating keeps this engine's SQL Server truncations to one at a time; see
+	// truncateSQLServer.
+	truncating sync.Mutex
 }
 
 var (
@@ -291,15 +313,44 @@ func connect(cfg Config, database DatabaseConfig) *engine {
 // exactly the way a booting app does. Only a failure to connect is retried. A driver the
 // registry does not know, or a setting the driver refuses, is the same answer on every
 // attempt, so it returns at once as a configError, which prepare never turns into a skip.
+//
+// On SQL Server each attempt first creates the database if it is missing, until that has
+// worked once; see ensureSQLServerDatabase. It is inside the loop because a server that has
+// just started accepts logins before it can create a database, and it is attempted before
+// connecting because connecting to a database that does not exist fails as surely as
+// connecting to a server that is not running. If it fails, the attempt still tries the
+// database itself, which a login that may not create databases can reach once someone has
+// created it.
+//
+// A database whose name the harness will not create (see sqlServerCreatableName) is never
+// offered to CREATE DATABASE, which would refuse it on every attempt. When connecting to it
+// fails, master is asked whether it exists, and a database that does not is a configError:
+// no wait will bring it into being, and reporting it as an engine that never came up, as the
+// harness did, sends the reader to start a container that is already running.
 func waitForEngine(database DatabaseConfig, parsed dsconfig.DataSource, wait time.Duration) (dbCore.IDataSource, error) {
 	if err := requireRegistered(database); err != nil {
 		return nil, configError{err}
 	}
 
+	createDatabase := createsItsDatabase(database)
+	uncreatable := createDatabase && !sqlServerCreatableName.MatchString(database.Database)
+	if uncreatable {
+		createDatabase = false
+	}
 	deadline := time.Now().Add(wait)
 	var lastErr error
 
 	for {
+		var createErr error
+		if createDatabase {
+			createErr = ensureSQLServerDatabase(database, driver.New)
+			if createErr == nil {
+				createDatabase = false
+			} else if isRefusal(createErr) {
+				return nil, configError{fmt.Errorf("testsupport: %s: %w", database.Label(), createErr)}
+			}
+		}
+
 		datasource, err := driver.New(parsed)
 		if err == nil {
 			if pingErr := ping(datasource); pingErr == nil {
@@ -312,6 +363,18 @@ func waitForEngine(database DatabaseConfig, parsed dsconfig.DataSource, wait tim
 			return nil, configError{fmt.Errorf("testsupport: %s: %w", database.Label(), err)}
 		} else {
 			lastErr = err
+		}
+		if createErr != nil {
+			lastErr = fmt.Errorf("%w; creating the database first: %w", lastErr, createErr)
+		}
+		if uncreatable {
+			// An error asking is left to the retry: master may be as far from ready as the target.
+			if exists, err := sqlServerDatabaseExists(database, driver.New); err == nil && !exists {
+				return nil, configError{fmt.Errorf("testsupport: %s: database %q does not exist on %s:%d, "+
+					"and the harness creates only a SQL Server database named with letters, digits and "+
+					"underscores, so it will not create this one; create it yourself, or rename it: %w",
+					database.Label(), database.Database, database.Host, database.Port, lastErr)}
+			}
 		}
 
 		if time.Now().After(deadline) {

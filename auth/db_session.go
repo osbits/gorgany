@@ -23,7 +23,21 @@ func (AttributesMap) GormDataType() string {
 	return "string"
 }
 
+// GormDBDataType is the column type GORM's migrator declares for the attribute bag: text on
+// Postgres and MySQL, nvarchar(max) on SQL Server.
+//
+// SQL Server has a text type, and it is the wrong one. It is deprecated, and it is not
+// Unicode: it stores characters in the code page of the column's collation, so a JSON bag
+// holding a name in a script that code page lacks is written back with question marks in it.
+// nvarchar(max) is the Unicode type of the same capacity, and what the sessions migration
+// declares there.
+//
+// The dialect is recognised by its name, not by importing the SQL Server driver, so that an
+// app with database sessions links go-mssqldb only if it speaks SQL Server.
 func (AttributesMap) GormDBDataType(db *gorm.DB, _ *schema.Field) string {
+	if db != nil && db.Config != nil && db.Dialector != nil && db.Dialector.Name() == sqlServerDialect {
+		return "nvarchar(max)"
+	}
 	return "text"
 }
 

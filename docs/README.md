@@ -16,7 +16,7 @@
 |----------|----------------|
 | [DIALECTS.md](DIALECTS.md) | Writing a `SQLDialect`, the condition rendering seam, and the tables of what MySQL and SQL Server refuse rather than mistranslate, and what SQL Server translates |
 | [SQLSERVER.md](SQLSERVER.md) | Connecting to SQL Server and Azure SQL: the imports, the keys a DataGrip or SSMS connection maps to, `ssl` and `options`, signing in with a SQL login or Microsoft Entra ID, sovereign clouds, and a second, externally owned datasource |
-| [TESTING.md](TESTING.md) | The `testsupport` database harness: isolation strategies, both engines, skip-or-fail, the targets it refuses; running the framework's live suite, SQL Server included |
+| [TESTING.md](TESTING.md) | The `testsupport` database harness: isolation strategies, Postgres, MySQL and SQL Server, skip-or-fail, the targets it refuses; running the framework's live suite, SQL Server included |
 | [VALIDATION.md](VALIDATION.md) | The validation error shape a client receives, the message catalog, and localisation |
 | [CSRF.md](CSRF.md) | The client contract: fetch on boot, re-read the header, send on every mutating request |
 | [RATE_LIMITING.md](RATE_LIMITING.md) | The token-bucket middleware, its bucket key, and the per-instance caveat |

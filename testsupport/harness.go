@@ -152,9 +152,9 @@ func (h *Harness) database(t *testing.T, skipIfAbsent bool) *Database {
 //	    // ... runs once per engine, named after it
 //	})
 //
-// This is how one suite covers Postgres and MySQL. An engine that is not reachable skips
-// its own subtest rather than the whole set, so a laptop with only Postgres running still
-// gets Postgres coverage.
+// This is how one suite covers Postgres, MySQL and SQL Server. An engine that is not
+// reachable skips its own subtest rather than the whole set, so a laptop with only Postgres
+// running still gets Postgres coverage.
 func EachDatabase(t *testing.T, fn func(*testing.T, *Database)) {
 	t.Helper()
 	defaultHarness.EachDatabase(t, fn)
@@ -203,6 +203,7 @@ func (h *Harness) prepare(t *testing.T, config Config, database DatabaseConfig, 
 		datasource: e.datasource,
 		gorm:       e.gorm,
 		tables:     e.tables,
+		truncating: &e.truncating,
 	}
 
 	session, err := e.datasource.NewSession()

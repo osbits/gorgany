@@ -43,8 +43,21 @@ var AllowedTypesToMigrate = []string{"gorm.io/gorm.DeletedAt", gorgany.Framework
 // emits, for example, a UNIQUE or CHECK constraint that the CREATE TABLE above it already
 // declares, and that migration fails too.
 //
+// SQL Server is on the list because its DDL is transactional as Postgres's is: CREATE TABLE,
+// ALTER TABLE and CREATE INDEX inside a transaction are undone by its rollback, which the live
+// suite shows on the statements (TestSQLServerDDLRollsBackInATransaction) and through db:diff
+// itself (TestDiffRollsBackAndItsDraftRunsOnSQLServer). The statements SQL Server cannot run
+// in a transaction at all, such as CREATE DATABASE, are ones the diff never sends. It is
+// matched by name, so this package does not link the SQL Server driver.
+//
 // Add a dialect here only if its DDL rolls back.
-var TransactionalDDLDialects = []string{"postgres"}
+var TransactionalDDLDialects = []string{"postgres", sqlServerDialect}
+
+// sqlServerDialect is the name gorm's SQL Server dialector reports (gorm.Dialector.Name()).
+//
+// db:diff compares it as a string rather than import gorm.io/driver/sqlserver: the provider
+// links this package, and an app that never speaks SQL Server must not link go-mssqldb.
+const sqlServerDialect = "sqlserver"
 
 type DiffCommand struct {
 	// Datasource declares --datasource to command.Resolver, whose flag parser rejects
@@ -114,9 +127,8 @@ func (thiz DiffCommand) Execute(ctx context.Context) {
 	defer tx.Rollback()
 
 	var statements []string
-	tx.Callback().Raw().Register("record_migration", func(tx *gorm.DB) {
-		statements = append(statements, tx.Statement.SQL.String())
-	})
+	stopRecording := recordStatements(tx, &statements)
+	defer stopRecording()
 
 	moduleName := util.ModuleName()
 
@@ -153,9 +165,10 @@ func (thiz DiffCommand) Execute(ctx context.Context) {
 	}
 
 	migrator := tx.Migrator()
+	dialect := tx.Dialector.Name()
 	for _, model := range domains {
 		rType := reflect.TypeOf(model)
-		err := thiz.migrateModelConstraints(rType, &statements, migrator)
+		err := thiz.migrateModelConstraints(rType, &statements, migrator, dialect)
 		if err != nil {
 			fmt.Printf("Domain: %s, error: %v", rType.Name(), err)
 			return
@@ -244,14 +257,17 @@ func (thiz DiffCommand) migratePivatTable(model any, tx *gorm.DB) error {
 // it was DDL on, or a new dependency of, a table whose datasource may be external_schema.
 // Nor is a table extended that belongs to another datasource. Each one skipped is printed,
 // and a constraint between datasources that share a database is written by hand.
-func (thiz DiffCommand) migrateModelConstraints(rModel reflect.Type, statements *[]string, migrator gorm.Migrator) error {
+//
+// dialect is the diffed datasource's gorm dialect name, which decides how the struct column
+// is added (see structColumnDDL).
+func (thiz DiffCommand) migrateModelConstraints(rModel reflect.Type, statements *[]string, migrator gorm.Migrator, dialect string) error {
 	namingStrategyService := schema.NamingStrategy{}
 	alreadyExtends := false
 	for i := 0; i < rModel.NumField(); i++ {
 		rField := rModel.Field(i)
 
 		if rField.Anonymous && rField.Type.Kind() == reflect.Struct && orm.IsParamInTagExists(rField.Tag, core.GeneratedDomainTagValue) {
-			err := thiz.migrateModelConstraints(rField.Type, statements, migrator)
+			err := thiz.migrateModelConstraints(rField.Type, statements, migrator, dialect)
 			if err != nil {
 				return err
 			}
@@ -286,14 +302,14 @@ func (thiz DiffCommand) migrateModelConstraints(rModel reflect.Type, statements 
 			// configured column name was never the one added.
 			structColumn := plugin.StructModelColumn()
 			if !migrator.HasColumn(tableName, structColumn) {
-				*statements = append(*statements, fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s varchar(255)", tableName, structColumn))
+				*statements = append(*statements, structColumnDDL(dialect, tableName, structColumn))
 			}
 
 			alreadyExtends = true
 
 			thiz.modelStructAlreadyAdded[tableName] = true
 
-			err := thiz.migrateModelConstraints(rField.Type, statements, migrator)
+			err := thiz.migrateModelConstraints(rField.Type, statements, migrator, dialect)
 			if err != nil {
 				return err
 			}
@@ -321,6 +337,29 @@ func (thiz DiffCommand) migrateModelConstraints(rModel reflect.Type, statements 
 
 	}
 	return nil
+}
+
+// structColumnDDL renders the statement that adds column, the struct column, to table, the
+// table of a domain another one extends.
+//
+// On Postgres, and on any dialect it does not know, it is the statement db:diff has always
+// drafted, unchanged. SQL Server has neither ADD COLUMN nor IF NOT EXISTS in ALTER TABLE, and
+// refuses that statement as a syntax error, so there it is ADD with the column bracketed and
+// declared nullable. nvarchar rather than varchar, because SQL Server's varchar stores the code
+// page of the column's collation instead of Unicode. NULL is written out because a column
+// added without it takes its nullability from session settings. The check that the column is
+// missing ran when the diff did, so the draft needs no IF of its own on either engine.
+func structColumnDDL(dialect, table, column string) string {
+	if dialect == sqlServerDialect {
+		return fmt.Sprintf("ALTER TABLE %s ADD %s nvarchar(255) NULL", bracketIdentifier(table), bracketIdentifier(column))
+	}
+	return fmt.Sprintf("ALTER TABLE %s ADD COLUMN IF NOT EXISTS %s varchar(255)", table, column)
+}
+
+// bracketIdentifier quotes name as one SQL Server identifier, doubling any closing bracket in
+// it. Brackets quote whatever QUOTED_IDENTIFIER is set to, where double quotes depend on it.
+func bracketIdentifier(name string) string {
+	return "[" + strings.ReplaceAll(name, "]", "]]") + "]"
 }
 
 // otherDomain is a registered domain of a datasource other than the one being diffed: its
@@ -441,6 +480,10 @@ func (thiz DiffCommand) otherDatasourceConstraint(model any, field string) (othe
 
 // requireTransactionalDDL refuses a datasource whose dialect would commit the DDL that
 // db:diff runs to find differences. See TransactionalDDLDialects.
+//
+// The message says why for the dialects known to commit DDL, and says only that the dialect
+// is not supported for one nobody has checked, rather than claim something about an engine
+// that may not be true of it.
 func requireTransactionalDDL(gormDb *gorm.DB, datasource string) error {
 	dialect := "unknown"
 	if gormDb != nil && gormDb.Config != nil && gormDb.Dialector != nil {
@@ -451,12 +494,21 @@ func requireTransactionalDDL(gormDb *gorm.DB, datasource string) error {
 		return nil
 	}
 
+	supported := strings.Join(TransactionalDDLDialects, ", ")
+	if dialect == "mysql" {
+		return fmt.Errorf(
+			"db:diff cannot run against datasource %q: its dialect (%s) commits DDL immediately, "+
+				"so the CREATE TABLE and ALTER TABLE statements db:diff runs to find differences "+
+				"would change that database instead of being rolled back. db:diff supports %s; "+
+				"write migrations for this datasource by hand",
+			datasource, dialect, supported)
+	}
 	return fmt.Errorf(
-		"db:diff cannot run against datasource %q: its dialect (%s) commits DDL immediately, "+
-			"so the CREATE TABLE and ALTER TABLE statements db:diff runs to find differences "+
-			"would change that database instead of being rolled back. db:diff supports %s; "+
+		"db:diff cannot run against datasource %q: its dialect (%s) is not one whose DDL is known "+
+			"to roll back, and db:diff finds differences by running CREATE TABLE and ALTER TABLE "+
+			"in a transaction and rolling it back. db:diff supports %s; "+
 			"write migrations for this datasource by hand",
-		datasource, dialect, strings.Join(TransactionalDDLDialects, ", "))
+		datasource, dialect, supported)
 }
 
 func (thiz DiffCommand) generateMigration(statements []string, datasource string) {
@@ -480,6 +532,66 @@ func (thiz DiffCommand) generateMigration(statements []string, datasource string
 	}
 
 	fmt.Printf("File %s/%s successfully generated\n", MigrationDir, fileName)
+}
+
+// recordMigrationCallback is the name the recorder is registered under; see recordStatements.
+const recordMigrationCallback = "record_migration"
+
+// recordStatements makes tx append every statement it executes to statements, as the draft
+// will run it (see draftStatement). A statement that cannot be drafted fails where it ran,
+// so the diff stops instead of writing a migration that could not work. It returns the
+// function that stops the recording, which the diff defers.
+//
+// gorm keeps callbacks on the *gorm.DB the transaction was begun from, which every session of
+// the datasource shares, not on the transaction. So the recorder passes over any statement
+// that did not run on tx's own connection: another session's traffic on the pool is not the
+// diff's, and is neither drafted nor refused. It used to be drafted. And the recorder is
+// removed when the diff returns. It used to stay registered, and since it refuses a statement
+// that binds anything but a string, every later Exec on that datasource in the same process
+// that bound a number, a time or a bool would fail with db:diff's error, on Postgres as on SQL
+// Server. The CLI exits after the command, so a test, an embedding tool or anything else
+// sharing the pool is what would meet it.
+func recordStatements(tx *gorm.DB, statements *[]string) (stop func()) {
+	diffConn := tx.Statement.ConnPool
+	_ = tx.Callback().Raw().Register(recordMigrationCallback, func(db *gorm.DB) {
+		if db.Statement.ConnPool != diffConn {
+			return
+		}
+		statement, err := draftStatement(db)
+		if err != nil {
+			_ = db.AddError(err)
+			return
+		}
+		*statements = append(*statements, statement)
+	})
+	// A fresh Raw(): Register and Remove each record themselves on the value they are called on.
+	return func() { _ = tx.Callback().Raw().Remove(recordMigrationCallback) }
+}
+
+// draftStatement returns the statement tx executed in the form the draft runs it in, which is
+// dbGorm.Exec with no arguments.
+//
+// A statement executed without bound arguments is returned as it is; on Postgres that is every
+// statement the diff runs, so its drafts are what they always were. The SQL Server migrator
+// binds three in one place: a column comment is stored by sp_addextendedproperty with the
+// schema, table and column passed as @p1, @p2 and @p3. Recorded as it was, that statement
+// reached the draft with the placeholders and nothing to fill them, and failed when db:migrate
+// ran it. Those arguments are names, so they are written into the statement as string
+// literals, with the dialect's own quoting. A statement that binds anything other than a
+// string is refused, since no literal is known to stand in for it faithfully.
+func draftStatement(tx *gorm.DB) (string, error) {
+	sql := tx.Statement.SQL.String()
+	if len(tx.Statement.Vars) == 0 {
+		return sql, nil
+	}
+	for _, value := range tx.Statement.Vars {
+		if _, ok := value.(string); !ok {
+			return "", fmt.Errorf(
+				"db:diff cannot draft %q: it binds a %T, which a migration that runs statements "+
+					"without arguments cannot pass; write this change by hand", sql, value)
+		}
+	}
+	return tx.Dialector.Explain(sql, tx.Statement.Vars...), nil
 }
 
 // renderMigration returns the file name and the gofmt'd source of a migration that runs

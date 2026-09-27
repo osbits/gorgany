@@ -19,9 +19,10 @@ func ({{.StructName}}) Name() string { return {{goString .Name}} }
 // migration there and skips it everywhere else.
 func ({{.StructName}}) DataSourceName() string { return {{goString .Datasource}} }
 
-// Up runs each statement on dbGorm, the transaction db:migrate opened for this migration,
-// so on PostgreSQL a failing statement rolls back the ones before it and nothing is
-// recorded. MySQL commits each DDL statement as it runs, so there the earlier ones stay.
+// Up runs each statement on dbGorm, the transaction db:migrate opened for this migration.
+// db:diff drafts only for PostgreSQL and SQL Server, whose DDL a transaction rolls back, so
+// a failing statement takes the ones before it back with it and nothing is recorded. Run on
+// MySQL, which commits each DDL statement as it runs, the earlier ones would stay.
 func ({{.StructName}}) Up() core.MigrationClosure {
     return func(dbGorm *gorm.DB) error {
         statements := []string{

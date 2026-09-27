@@ -402,6 +402,79 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Postgres and MySQL, so a run without SQL Server is unaffected. The cases are in
   `e2e/tests/live_sqlserver_test.go`, and the ORM cases that run on every engine gain a
   `sqlserver` subtest; docs/TESTING.md says how to run them, under Rosetta on Apple Silicon.
+- SQL Server as the `default` gorgany owns: it migrates up and down, seeds, diffs, stores and
+  sweeps database sessions, and runs under testsupport. docs/SQLSERVER.md, "SQL Server as the
+  owned `default`", covers each. The pieces:
+  - `auth.BatchedExpiredDeleteSQLServer`,
+    `DELETE TOP (?) FROM [sessions] WHERE [expiry] < SYSDATETIMEOFFSET()`, and
+    `auth.BatchedExpiredDeleteSQLFor(dialect)`, which returns it for `"sqlserver"` and
+    `auth.BatchedExpiredDeleteSQL` for any other name. `DbSessionRepository.DeleteExpired` runs
+    the statement for the dialect the `default` datasource reports, and a datasource that
+    reports none gets `BatchedExpiredDeleteSQL`, which is unchanged. SQL Server has neither
+    `LIMIT` nor `NOW()`, and `SYSDATETIMEOFFSET()` compares instants against the
+    `datetimeoffset` expiry, whatever the server's time zone. `AttributesMap` declares the
+    attribute bag `nvarchar(max)` on SQL Server, where `text` is deprecated and not Unicode,
+    and `text` elsewhere, as before.
+  - `migration.SessionsTableModelFor(dialect)`, the model the sessions migration uses on a
+    dialect: on SQL Server `id` and `user_id` are `nvarchar(255)` and `attributes`
+    `nvarchar(max)`, and elsewhere it is `SessionsTableModel()`, unchanged. The migration
+    picks the model by the connection's dialect. On SQL Server the version migration's `Down`
+    drops the column's DEFAULT constraint, which SQL Server names itself, before the column,
+    which SQL Server otherwise refuses (Msg 5074). It runs in the transaction `db:migrate down`
+    opens, so a failure takes both back. On SQL Server both migrations look `sessions` and its
+    `version` column up where the unqualified name resolves, the login's default schema and
+    then `dbo`, and so do `db:migrate` and `db:seed` for `migrations` and `seeders`. gorm's SQL
+    Server migrator finds a table or column of that name in any schema, so a same-named table
+    in another schema of the database, such as an externally owned one's, would otherwise be
+    taken for gorgany's.
+  - `dbCmd.TransactionalDDLDialects` gains `"sqlserver"`, so `db:diff` runs on a SQL Server
+    datasource. A live test runs `CREATE TABLE`, `CREATE INDEX`, `ALTER TABLE … ADD`, a foreign
+    key and a column comment in a transaction and finds them gone after its rollback, and
+    another runs the real `db:diff` on SQL Server, finds nothing it ran left behind, and then
+    runs its draft there. On SQL Server the draft adds an extended domain's struct column as
+    ``ALTER TABLE [<table>] ADD [<column>] nvarchar(255) NULL``; the Postgres statement is
+    unchanged. A statement the diff runs with bound arguments, which on SQL Server is the
+    `sp_addextendedproperty` call that stores a column comment, is drafted with its string
+    arguments written in as literals, since the draft runs statements without arguments; one
+    that binds anything else stops the diff before it writes a draft, with an error naming the
+    statement. On every dialect the diff records only the statements its own transaction
+    runs, and stops recording when it returns. The recorder sits on the handle every session of
+    the datasource shares, and it used to stay there, so a statement another session ran on the
+    pool during the diff was recorded into the draft. No statement the diff runs on Postgres
+    binds an argument, so the statements in a Postgres draft are byte for byte what they were.
+    The comment on the drafted migration's `Up` now says that `db:diff` drafts only for
+    PostgreSQL and SQL Server, whose DDL a transaction rolls back, so a new draft differs from
+    an older one in that comment.
+  - testsupport runs against SQL Server: `testsupport.DriverSQLServer` (`sqlserver_gorm`) and
+    `Database.IsSQLServer()`. With `GORGANY_TEST_DRIVER=sqlserver_gorm` the environment's
+    defaults follow the driver: port 14330, user `sa`, password `Gorgany-Test-1` and `SSL`
+    `true`. A SQL Server database gets `options.trust_server_certificate: true` for a host that
+    is not Azure SQL's and an `SSL` other than `strict`; `DatabaseConfig.TrustServerCertificate`
+    and `GORGANY_TEST_TRUST_SERVER_CERT` override that, and a value other than true or false is
+    a config error. So is an `SSL` the engine does not accept, such as a Postgres `require`
+    left in `GORGANY_TEST_SSL`. The harness creates the test database through `master` when it
+    is missing, with `READ_COMMITTED_SNAPSHOT ON`, and only for a name of letters, digits and
+    underscores and a host that is not Azure SQL's. A database with any other name that does
+    not exist fails the test at once, saying so. It empties tables by switching their
+    constraints off, deleting their rows in reverse order, reseeding each identity that has
+    issued a value so that the next row gets the identity's seed, and switching the
+    constraints back on `WITH CHECK`, reporting a failure of that last step even after an
+    earlier one. Truncations on one engine run one at a time, since two could deadlock.
+    testsupport still links no SQL Server code: a suite imports `driver/sqlserver`, and without
+    it the harness fails the test naming that import. Postgres and MySQL get the settings and
+    the statements they got before. docs/TESTING.md, "SQL Server", has the details.
+
+  **Upgrade note:** nothing changes on Postgres or MySQL. A testsupport suite that listed a
+  `sqlserver_gorm` database and failed with "truncation is not implemented for SQL Server
+  yet" now runs. With `GORGANY_TEST_DRIVER=sqlserver_gorm`, the port, user, password and SSL
+  the environment leaves unset now default to 14330, `sa`, `Gorgany-Test-1` and `true`, where
+  they were 5433, `postgres`, `test` and `disable` (the harness never sent that `disable` to
+  SQL Server). A `Databases` list set in code gets no defaults: its `Password` is used as
+  written, and an empty `SSL` means the engine's default, encrypted. What changed for such an
+  entry is that its `SSL` now reaches SQL Server, where it used to be dropped, so an entry
+  that copied `SSL: "disable"` from the Postgres example now really turns encryption off, and
+  that it gets `options.trust_server_certificate: true` unless it sets
+  `TrustServerCertificate`, its host is Azure SQL's or its `SSL` is `strict`.
 
 - `orm.TableWithTriggers`, `interface{ TableHasTriggers() bool }`. A model whose table has an
   enabled DML trigger that blocks `RETURNING` returns true, and `Create` and `Update` then read
@@ -499,6 +572,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   down` logs `Nothing to roll back on datasource "<name>"` followed by `: no migrations target
   it` or ``: it has no `migrations` table``. A pipeline that looks for the old lines has to
   look for these as well.
+- `db:diff`'s refusal of a dialect it does not run on says that the dialect commits DDL
+  immediately only for MySQL, which does. Any other dialect missing from
+  `TransactionalDDLDialects`, such as an app's own driver's, is told that its DDL is not known
+  to roll back, rather than something that may not be true of it. Both name the dialects
+  `db:diff` supports, now Postgres and SQL Server (see Added).
+
+  **Upgrade note:** the MySQL refusal keeps its wording, with `sqlserver` added to the dialects
+  it lists. A script that matches the refusal of another dialect by its text has to match the
+  new wording.
 - `db:diff` diffs only the domains of the selected datasource. A domain belongs to the
   datasource its `DbConnectionName()` (`core.DbConnectionNamer`) names, else its
   `DataSourceName()`, else `default`, and each one skipped is listed. In an app with no
@@ -611,8 +693,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   code as well as the environment. A driver that is not registered in the test binary now fails
   at once, naming the import that registers it; it used to be retried for the whole engine wait
   and then skipped, as though the engine were down. So does a setting the driver refuses. The
-  harness truncates Postgres and MySQL as before; any other driver is an error, where it used to
-  be emptied as though it were MySQL, and SQL Server says its truncation is not implemented yet.
+  harness truncates Postgres and MySQL as before, and SQL Server with a sequence of its own (see
+  Added); any other driver is an error, where it used to be emptied as though it were MySQL.
 
   **Upgrade note:** a Postgres or MySQL suite on a local engine is unaffected. A suite pointed at
   an Azure database host, or at an app's own driver, now fails; set
@@ -655,7 +737,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   testify, x/crypto, x/text and x/net versions of your own module to move up with it.
 - The CI live-db job is named `live PostgreSQL, MySQL and SQL Server`, and proves each engine
   ran by the PASS lines of cases pinned by name rather than by a case-insensitive grep for the
-  engine's name, which any case named for the engine satisfied whether it passed or not.
+  engine's name, which any case named for the engine satisfied whether it passed or not. Its
+  testsupport step requires a SQL Server pass as well as a Postgres and a MySQL one, and the
+  testsupport live suite finds each engine through the same `E2E_*_HOST` and `E2E_*_PORT`
+  variables as the e2e live suite, where it used to hard-code the ports.
 
   **Upgrade note:** a branch protection rule that requires the check `live PostgreSQL and
   MySQL` has to require the new name instead.

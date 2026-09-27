@@ -143,10 +143,52 @@ func ownedDefaultRefusal(dbContext core.IDBContext) string {
 
 // ensureMigrationsTable creates the bookkeeping table on the datasource if it is missing.
 func ensureMigrationsTable(gormInstance *gorm.DB, datasource string) error {
-	if err := gormInstance.AutoMigrate(&db.Migration{}); err != nil {
+	if err := migrateBookkeepingTable(gormInstance, &db.Migration{}, "migrations"); err != nil {
 		return fmt.Errorf("unable to migrate table `migrations` on datasource %q: %w", datasource, err)
 	}
 	return nil
+}
+
+// migrateBookkeepingTable creates model's table, the bookkeeping table called table
+// (`migrations` or `seeders`), or brings it up to date, with AutoMigrate.
+//
+// On SQL Server a table that is missing where its unqualified name resolves is created with
+// CreateTable instead, which is what AutoMigrate runs for a missing table. gorm's SQL Server
+// migrator asks INFORMATION_SCHEMA whether the table exists in any schema of the database, and
+// the default collation folds case. So a Migrations or Seeders table in another schema of an
+// owned default, which may hold an externally owned (EF) schema beside gorgany's, made
+// AutoMigrate take the table as present, and it then failed reading its columns from a table
+// that was not there: "Invalid object name 'migrations'". OBJECT_ID resolves the name as the
+// CREATE TABLE, and every read and write of the table after it, do. SQL Server is matched by
+// name, so this package does not link its driver. Postgres and MySQL run AutoMigrate as before.
+func migrateBookkeepingTable(gormInstance *gorm.DB, model any, table string) error {
+	if isSQLServer(gormInstance) {
+		exists, err := sqlServerHasTable(gormInstance, table)
+		if err != nil {
+			return fmt.Errorf("cannot tell whether it exists: %w", err)
+		}
+		if !exists {
+			return gormInstance.Migrator().CreateTable(model)
+		}
+	}
+	return gormInstance.AutoMigrate(model)
+}
+
+// isSQLServer reports whether gormInstance speaks SQL Server, by its dialector's name.
+func isSQLServer(gormInstance *gorm.DB) bool {
+	return gormInstance != nil && gormInstance.Config != nil && gormInstance.Dialector != nil &&
+		gormInstance.Dialector.Name() == sqlServerDialect
+}
+
+// sqlServerHasTable reports whether table, an unqualified name, is a table where SQL Server
+// resolves that name: in the login's default schema, then dbo. See migrateBookkeepingTable.
+func sqlServerHasTable(gormInstance *gorm.DB, table string) (bool, error) {
+	var exists int
+	if err := gormInstance.Raw("SELECT CASE WHEN OBJECT_ID(?, N'U') IS NULL THEN 0 ELSE 1 END", table).
+		Row().Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists == 1, nil
 }
 
 func (thiz MigrateCommand) up(ctx context.Context) {
@@ -347,10 +389,18 @@ func (thiz MigrateCommand) down(ctx context.Context) {
 // unreachable server or a bad credential, which lazy_connect leaves to the first query, or
 // a connection dropped mid-deploy — read as "no table", and down exited 0 having rolled back
 // nothing. GetTables runs the same lookup in the dialect's own SQL, and returns its error.
+//
+// On SQL Server GetTables lists the tables of every schema in the database, so a `migrations`
+// table in another schema of an owned default read as this one, and down then failed reading
+// a table that was not there. There the name is resolved as the reads after it resolve it (see
+// migrateBookkeepingTable).
 func hasMigrationsTable(gormInstance *gorm.DB) (bool, error) {
 	statement := &gorm.Statement{DB: gormInstance}
 	if err := statement.Parse(&db.Migration{}); err != nil {
 		return false, err
+	}
+	if isSQLServer(gormInstance) {
+		return sqlServerHasTable(gormInstance, statement.Table)
 	}
 
 	tables, err := gormInstance.Migrator().GetTables()

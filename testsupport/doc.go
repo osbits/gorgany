@@ -41,18 +41,24 @@
 //
 // # Engines
 //
-// Both Postgres and MySQL, selected by environment variable so one suite covers both
+// Postgres, MySQL and SQL Server, selected by environment variable so one suite covers each
 // without a code change:
 //
-//	GORGANY_TEST_DRIVER=postgres_gorm   # or mysql_gorm
+//	GORGANY_TEST_DRIVER=postgres_gorm   # or mysql_gorm, or sqlserver_gorm
 //	GORGANY_TEST_HOST=127.0.0.1
 //	GORGANY_TEST_PORT=5433
 //	GORGANY_TEST_USER=postgres
 //	GORGANY_TEST_PASSWORD=test
 //	GORGANY_TEST_DB=gorgany_test
 //
-// See Config for the full list and the defaults. Config.Databases lets a suite declare
-// several engines and run the same tests against each.
+// See Config for the full list and the defaults, which follow the driver. Config.Databases
+// lets a suite declare several engines and run the same tests against each.
+//
+// testsupport registers the Postgres and MySQL drivers itself. SQL Server's is an import of the
+// suite's own, _ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver", so that an app that
+// never speaks SQL Server does not link its driver into every test binary. On SQL Server the
+// harness creates the database through master when it is missing, since the engine's container
+// image cannot create one from its environment.
 //
 // # Targets
 //

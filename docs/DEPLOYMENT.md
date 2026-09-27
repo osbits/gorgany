@@ -369,7 +369,8 @@ The tag's pipeline builds and tests that image, and offers the manual deploy.
 `--datasource=<name>` says otherwise. Each skips the migrations or seeders that target another
 datasource, and logs each at info level. Put the flag after `up` or `down`:
 `db:migrate --datasource=<name> up` exits 2. `db:diff --datasource=<name>` diffs the domains of
-one datasource, and refuses a MySQL one (PROJECT_STRUCTURE.md, "Migrations and seeders").
+one datasource, on Postgres or SQL Server, and refuses a MySQL one (PROJECT_STRUCTURE.md,
+"Migrations and seeders"). Up to and including v2.4.3, it diffs Postgres only.
 `db:migrate up` and `db:seed` create their `migrations` or `seeders` table only when something
 targets the datasource. A run with nothing to do logs `No migrations target datasource "<name>"`
 or `No seeders target datasource "<name>"` and exits 0. Up to and including v2.4.3, every run
@@ -406,7 +407,27 @@ seeds `default` only, so keep seeders there.
 - **Every server replica runs every job.** `JobProvider.Boot` starts the scheduler in each one,
   and nothing elects a leader. Make each job idempotent. At the start of `Run`, take a
   Postgres advisory lock (`SELECT pg_try_advisory_lock(<job id>)`), and return if it is held
-  elsewhere.
+  elsewhere. When `default` is SQL Server, take an application lock instead, in the
+  transaction the job does its work in:
+
+  ```sql
+  DECLARE @granted int;
+  EXEC @granted = sp_getapplock @Resource = N'<job id>', @LockMode = 'Exclusive',
+      @LockOwner = 'Transaction', @LockTimeout = 0;
+  IF @granted < -1 THROW 50000, N'sp_getapplock failed', 1;
+  SELECT @granted;
+  ```
+
+  `-1` means another replica holds it: roll back and return. `0` means this one has it. Any other
+  negative result is an error, not a skip, which is why the snippet throws: `-999` means no
+  transaction is open (or a parameter is wrong) and `-3` that the call was chosen as a deadlock
+  victim. Neither raises an error by itself, so without the `THROW` a job that ran the snippet
+  outside a transaction, on the pool, would read `-999` as "held elsewhere" and skip its work on
+  every replica, every time. The lock is released when the transaction ends. Either lock belongs
+  to one connection, so do the job's work on the connection that took it, in that transaction,
+  not on the pool. The framework's own session
+  sweep needs neither: each replica deletes a batch of expired sessions at a time, and a row
+  another replica deleted first is simply not there.
 - **Sessions must live in the database.** `auth.session.storage` defaults to `memory`, which one
   replica cannot see from another. Use `database`, as the template does.
 - **Rate limits are per instance** ([RATE_LIMITING.md](RATE_LIMITING.md)).

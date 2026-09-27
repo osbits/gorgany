@@ -32,7 +32,7 @@ const (
 )
 
 // Environment variables the harness reads. A suite configures the engine without a code
-// change, which is what lets one test file run against both Postgres and MySQL in CI.
+// change, which is what lets one test file run against Postgres, MySQL and SQL Server in CI.
 const (
 	EnvDriver      = "GORGANY_TEST_DRIVER"
 	EnvHost        = "GORGANY_TEST_HOST"
@@ -48,31 +48,35 @@ const (
 
 	// EnvAllowAnyTarget switches off the target guard; see Config.AllowAnyTarget.
 	EnvAllowAnyTarget = "GORGANY_TEST_ALLOW_ANY_TARGET"
+
+	// EnvTrustServerCert sets DatabaseConfig.TrustServerCertificate; false makes a SQL Server
+	// connection verify the server's certificate. Postgres and MySQL ignore it.
+	EnvTrustServerCert = "GORGANY_TEST_TRUST_SERVER_CERT"
 )
 
 // Driver names, matching the keys of the framework's driver registry.
 const (
 	DriverPostgres = "postgres_gorm"
 	DriverMySQL    = "mysql_gorm"
-)
 
-// driverSQLServer is the SQL Server engine's registry key, which the target guard accepts.
-//
-// It is unexported because the harness cannot yet truncate SQL Server (see truncate), and an
-// exported Driver constant beside the other two would advertise support the harness does not
-// have. The guard still has to know the name: the rules for a database on that engine apply
-// from the first run that points at one, not from the release that completes the support.
-//
-// It is a string, not a reference to the engine's package, because testsupport must not link
-// SQL Server's driver into every app's test binary; a suite that uses the engine imports it.
-const driverSQLServer = "sqlserver_gorm"
+	// DriverSQLServer serves SQL Server and Azure SQL, though the target guard refuses an Azure
+	// SQL host unless AllowAnyTarget is set.
+	//
+	// It is a string, not a reference to the engine's package, because testsupport must not
+	// link SQL Server's driver into every app's test binary. testsupport registers only
+	// Postgres and MySQL, so a suite that tests against SQL Server imports its driver itself,
+	// _ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver", and the harness says so when
+	// the import is missing.
+	DriverSQLServer = "sqlserver_gorm"
+)
 
 // DatabaseConfig describes one engine to test against.
 type DatabaseConfig struct {
 	// Name labels this engine in test output and subtest names. Empty means Driver.
 	Name string
 
-	// Driver is a key of the framework's driver registry: DriverPostgres or DriverMySQL.
+	// Driver is a key of the framework's driver registry: DriverPostgres, DriverMySQL or
+	// DriverSQLServer.
 	Driver string
 
 	Host     string
@@ -81,8 +85,23 @@ type DatabaseConfig struct {
 	Password string
 	Database string
 
-	// SSL is the Postgres sslmode. Ignored by MySQL.
+	// SSL is the Postgres sslmode, empty meaning disable, and SQL Server's encryption mode
+	// (see dsconfig.DataSource.SSL), empty meaning encrypted. Ignored by MySQL.
 	SSL string
+
+	// TrustServerCertificate is SQL Server's options.trust_server_certificate, "true" or
+	// "false". Ignored by Postgres and MySQL.
+	//
+	// Empty means true, so that the connection accepts the self-signed certificate a SQL Server
+	// container generates when it starts, and is still encrypted; the harness is for such a
+	// container. It means false on an Azure SQL host, whose certificate always verifies and
+	// which the engine refuses to trust blindly, and with SSL strict, which verifies the
+	// certificate by definition. Set it to false to verify a server whose certificate a trusted
+	// authority signed.
+	//
+	// It is a string rather than a bool because the zero value has to mean "the default",
+	// which depends on the host, as an empty SSL does.
+	TrustServerCertificate string
 }
 
 // Label is how this database appears in test output.
@@ -113,7 +132,36 @@ func (c DatabaseConfig) Validate() error {
 		return fmt.Errorf("testsupport: database config %q is missing %s",
 			c.Label(), strings.Join(missing, ", "))
 	}
+
+	// Checked here rather than left to the driver, which refuses a value that is not a boolean
+	// with an error it reports on every attempt to connect: the harness would retry it for the
+	// whole engine wait and then skip, as though the engine were not running.
+	if c.Driver == DriverSQLServer && c.TrustServerCertificate != "" {
+		if _, err := strconv.ParseBool(c.TrustServerCertificate); err != nil {
+			return fmt.Errorf("testsupport: database config %q: TrustServerCertificate %q is not "+
+				"true or false (%s sets it)", c.Label(), c.TrustServerCertificate, EnvTrustServerCert)
+		}
+	}
+
+	// The same holds for an SSL value SQL Server's engine does not know, which the harness
+	// forwards to it. The likeliest is a Postgres sslmode such as require, still exported in
+	// GORGANY_TEST_SSL after GORGANY_TEST_DRIVER was switched to SQL Server.
+	if c.Driver == DriverSQLServer && !sqlServerSSLModes[strings.ToLower(strings.TrimSpace(c.SSL))] {
+		return fmt.Errorf("testsupport: database config %q: SSL %q is not a SQL Server encryption "+
+			"mode; use true (the default), strict, false or disable (%s sets it)", c.Label(), c.SSL, EnvSSL)
+	}
 	return nil
+}
+
+// sqlServerSSLModes are the SSL values SQL Server's engine accepts, compared in lower case with
+// surrounding space trimmed, as it compares them: "" and its synonyms for encrypted, strict, the
+// synonyms for false, and disable. testsupport cannot ask the engine, which it does not link, so
+// TestTheHarnessAcceptsTheSSLModesTheEngineDoes keeps this list and the engine's together.
+var sqlServerSSLModes = map[string]bool{
+	"": true, "true": true, "mandatory": true, "yes": true, "1": true,
+	"strict": true,
+	"false":  true, "optional": true, "no": true, "0": true,
+	"disable": true,
 }
 
 // datasourceConfig renders the map the framework's driver registry expects.
@@ -135,7 +183,38 @@ func (c DatabaseConfig) datasourceConfig() map[string]any {
 		cfg["ssl"] = ssl
 	}
 
+	if c.Driver == DriverSQLServer {
+		// An empty SSL is left out rather than defaulted to Postgres's disable: on SQL Server
+		// that turns encryption off, and the engine's own default, encrypted, is what the
+		// container supports.
+		if c.SSL != "" {
+			cfg["ssl"] = c.SSL
+		}
+		if trust := c.trustServerCertificate(); trust != "" {
+			cfg["options"] = map[string]any{"trust_server_certificate": trust}
+		}
+	}
+
 	return cfg
+}
+
+// trustServerCertificate is the options.trust_server_certificate a SQL Server datasource gets,
+// or "" for none; see DatabaseConfig.TrustServerCertificate.
+//
+// The default is left out, rather than rendered as false, where the engine refuses a trusted
+// certificate, so that a config the engine would refuse is never one the harness wrote. A value
+// the caller set is rendered whatever the host, and the engine refuses it where it must.
+func (c DatabaseConfig) trustServerCertificate() string {
+	if c.TrustServerCertificate != "" {
+		if trust, err := strconv.ParseBool(c.TrustServerCertificate); err == nil {
+			return strconv.FormatBool(trust)
+		}
+		return c.TrustServerCertificate
+	}
+	if dsconfig.IsAzureSQLHost(c.Host) || strings.EqualFold(strings.TrimSpace(c.SSL), "strict") {
+		return ""
+	}
+	return "true"
 }
 
 // Config is the harness's settings.
@@ -197,19 +276,21 @@ const DefaultEngineWait = 30 * time.Second
 //
 // Defaults are the Postgres container from docs/TESTING.md — 127.0.0.1:5433,
 // postgres/test, gorgany_test — so a developer who starts that container needs no
-// environment at all.
+// environment at all. The port, user, password and SSL defaults follow GORGANY_TEST_DRIVER, to
+// the MySQL or SQL Server container from the same page, so switching engines is one variable.
 func FromEnv() Config {
 	driver := envOr(EnvDriver, DriverPostgres)
 
 	cfg := Config{
 		Databases: []DatabaseConfig{{
-			Driver:   driver,
-			Host:     envOr(EnvHost, "127.0.0.1"),
-			Port:     envIntOr(EnvPort, defaultPortFor(driver)),
-			User:     envOr(EnvUser, defaultUserFor(driver)),
-			Password: envOr(EnvPassword, "test"),
-			Database: envOr(EnvDatabase, "gorgany_test"),
-			SSL:      envOr(EnvSSL, "disable"),
+			Driver:                 driver,
+			Host:                   envOr(EnvHost, "127.0.0.1"),
+			Port:                   envIntOr(EnvPort, defaultPortFor(driver)),
+			User:                   envOr(EnvUser, defaultUserFor(driver)),
+			Password:               envOr(EnvPassword, defaultPasswordFor(driver)),
+			Database:               envOr(EnvDatabase, "gorgany_test"),
+			SSL:                    envOr(EnvSSL, defaultSSLFor(driver)),
+			TrustServerCertificate: envOr(EnvTrustServerCert, ""),
 		}},
 		Isolation:      Isolation(envOr(EnvIsolation, string(IsolateByTruncation))),
 		KeepData:       envBool(EnvKeepData),
@@ -230,17 +311,50 @@ func FromEnv() Config {
 // docs/TESTING.md, not the engine's default port — a developer running this against a
 // container mapped to the standard port has a real database on it.
 func defaultPortFor(driver string) int {
-	if driver == DriverMySQL {
+	switch driver {
+	case DriverMySQL:
 		return 3307
+	case DriverSQLServer:
+		return 14330
+	default:
+		return 5433
 	}
-	return 5433
 }
 
+// defaultUserFor is the administrator of the engine's container in docs/TESTING.md. On SQL
+// Server that is sa, which the harness also needs for creating the test database.
 func defaultUserFor(driver string) string {
-	if driver == DriverMySQL {
+	switch driver {
+	case DriverMySQL:
 		return "root"
+	case DriverSQLServer:
+		return "sa"
+	default:
+		return "postgres"
 	}
-	return "postgres"
+}
+
+// defaultPasswordFor is the administrator's password in the engine's container.
+//
+// SQL Server's is not the others' "test" because SQL Server refuses a password below its
+// complexity policy, and its container then exits rather than start with one. The value is the
+// one CI, e2e/docker-compose.yml and the e2e suite use; TestTheSQLServerTestSettingsAgreeEverywhere
+// keeps them together.
+func defaultPasswordFor(driver string) string {
+	if driver == DriverSQLServer {
+		return "Gorgany-Test-1"
+	}
+	return "test"
+}
+
+// defaultSSLFor is GORGANY_TEST_SSL's default. Postgres's disable, which is also what every
+// other driver was given before SQL Server, would turn a SQL Server connection's encryption
+// off, so SQL Server gets its own default, encrypted.
+func defaultSSLFor(driver string) string {
+	if driver == DriverSQLServer {
+		return "true"
+	}
+	return "disable"
 }
 
 // resolved fills every zero field from the environment, then from the defaults, and
@@ -342,7 +456,7 @@ func guardTarget(database DatabaseConfig, allowAnyTarget bool) error {
 
 		switch database.Driver {
 		case DriverPostgres, DriverMySQL:
-		case driverSQLServer:
+		case DriverSQLServer:
 			if err := guardSQLServerDatabase(label, database.Database); err != nil {
 				return err
 			}
@@ -350,7 +464,7 @@ func guardTarget(database DatabaseConfig, allowAnyTarget bool) error {
 			return fmt.Errorf("testsupport: %s: driver %q is not one the harness supports (%s, %s "+
 				"or %s): isolation has to know how to empty its tables. Set %s=1 to use it anyway, "+
 				"with IsolateByRollback",
-				label, database.Driver, DriverPostgres, DriverMySQL, driverSQLServer, EnvAllowAnyTarget)
+				label, database.Driver, DriverPostgres, DriverMySQL, DriverSQLServer, EnvAllowAnyTarget)
 		}
 	}
 
@@ -484,7 +598,7 @@ func requireRegistered(database DatabaseConfig) error {
 // already import for the app's wiring, since a registration made only in the app's main
 // package is not linked into its test binaries.
 func registrationHint(name string) string {
-	if name == driverSQLServer {
+	if name == DriverSQLServer {
 		return `Add _ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver" to the test package, ` +
 			"or to pkg/provider/bootstrap.go if the tests import it: testsupport registers only " +
 			DriverPostgres + " and " + DriverMySQL + ", through driver/builtin"

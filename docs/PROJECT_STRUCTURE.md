@@ -568,8 +568,10 @@ func All() []core.IMigration {
   table and its version column, which `DbProvider.Boot` adds ahead of the app's list.
   `db:migrate` runs them only when `default` is configured without `external_schema` or
   `read_only`, and otherwise leaves them out and logs why (DEPLOYMENT.md, "More than one
-  datasource"). An integration suite
-  that exercises database-backed sessions adds `NewSessionsMigration()` and
+  datasource"). On a SQL Server `default` they create the table with Unicode types
+  (SQLSERVER.md, "Database sessions"), and the version column's `Down()` drops the column's
+  DEFAULT constraint before the column (SQLSERVER.md, "Migrations and seeders"). An
+  integration suite that exercises database-backed sessions adds `NewSessionsMigration()` and
   `NewSessionsVersionMigration()` from `github.com/osbits/gorgany/v2/db/migration` ahead of
   `migration.All()`. Up to and including v2.4.3, `db:migrate` never leaves them out, so with
   no `default` every `db:migrate` fails with `migration "create_sessions_table" targets
@@ -592,12 +594,14 @@ func All() []core.IMigration {
   share a database by hand. Up to and including v2.4.3, it diffs every registered domain, so
   another datasource's tables are drafted as new tables for the selected one. It refuses an
   `external_schema` or `read_only` datasource before anything else, and it runs on Postgres
-  datasources only. It finds the differences by running `CREATE TABLE` and `ALTER TABLE` in a
-  transaction and rolling it back, and MySQL commits DDL immediately, so it refuses a MySQL
-  datasource before it runs anything. Write that datasource's migrations by hand. Up to and
-  including v2.4.0 it ran anyway: it created the tables in the MySQL database it was
-  comparing, and the draft then failed there with "Table … already exists". Before committing
-  it:
+  and SQL Server datasources only, the dialects `dbCmd.TransactionalDDLDialects` lists. It
+  finds the differences by running `CREATE TABLE` and `ALTER TABLE` in a transaction and
+  rolling it back, which undoes them on both. MySQL commits DDL immediately, so it refuses a
+  MySQL datasource, and any other dialect not on the list, before it runs anything. Write that
+  datasource's migrations by hand. Up to and including v2.4.0 it ran anyway: it created the
+  tables in the MySQL database it was comparing, and the draft then failed there with "Table …
+  already exists". Up to and including v2.4.3, it runs on Postgres only. What a SQL Server
+  draft does differently is in SQLSERVER.md, "`db:diff`". Before committing it:
   - review every statement: they are what GORM would run to match the domains, not a
     considered migration;
   - rename the file and keep its `Name()`;
@@ -615,16 +619,20 @@ func All() []core.IMigration {
   changes meaning whenever the service does. Copy what it needs into the file.
 - **A failing migration exits non-zero, and later migrations do not run.** That is what lets a
   deploy stop at the migrate step (DEPLOYMENT.md). A migration and its row in `migrations`
-  commit together, so on PostgreSQL a failed migration leaves nothing behind. MySQL commits each
-  DDL statement implicitly, so there a migration that fails part-way keeps the statements before
-  the failure: give each MySQL migration one DDL statement. Up to and including v2.3.2, a
+  commit together, so on PostgreSQL and SQL Server, whose DDL is transactional, a failed
+  migration leaves nothing behind. On both, a statement that fails dooms the transaction, so a
+  migration that swallows the error fails rather than committing the statements around it: on
+  SQL Server because every connection runs `SET XACT_ABORT ON`. MySQL commits each DDL statement
+  implicitly, so there a migration that fails part-way keeps the statements before the failure:
+  give each MySQL migration one DDL statement. Up to and including v2.3.2, a
   migration whose COMMIT fails is recorded as applied anyway, one whose row cannot be written
   runs again on the next deploy, and both runs exit `0`.
 - **`Down()` either reverses the migration or returns an error that says it cannot.** It never
   returns `nil` for a no-op.
 - **Seeders in `All()` are reference data** that every environment needs, production included.
   Each runs once per `Name()`. A seeder's rows and its row in `seeders` commit together, so a
-  failed seeder leaves nothing behind, on MySQL too, and runs in full on the next `db:seed`. The
+  failed seeder leaves nothing behind, on every engine, MySQL included, and runs in full on the
+  next `db:seed`. The
   failure exits `1`, and the seeders after it do not run. Up to and including v2.4.1, a seeder
   that fails part-way keeps the rows it saved before the failure, and one whose row in `seeders`
   cannot be written exits `0`; either runs again on the next `db:seed`. On those versions

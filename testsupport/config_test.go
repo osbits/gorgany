@@ -1,7 +1,9 @@
 package testsupport
 
 import (
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,7 +26,9 @@ func TestFromEnvDefaultsToThePostgresContainer(t *testing.T) {
 	assert.Equal(t, "127.0.0.1", cfg.Databases[0].Host)
 	assert.Equal(t, 5433, cfg.Databases[0].Port)
 	assert.Equal(t, "postgres", cfg.Databases[0].User)
+	assert.Equal(t, "test", cfg.Databases[0].Password)
 	assert.Equal(t, "gorgany_test", cfg.Databases[0].Database)
+	assert.Equal(t, "disable", cfg.Databases[0].SSL)
 	assert.Equal(t, IsolateByTruncation, cfg.Isolation, "truncation is the safe default")
 }
 
@@ -37,6 +41,45 @@ func TestTheMySqlDefaultsFollowTheDriver(t *testing.T) {
 	cfg := FromEnv()
 	assert.Equal(t, 3307, cfg.Databases[0].Port)
 	assert.Equal(t, "root", cfg.Databases[0].User)
+	assert.Equal(t, "test", cfg.Databases[0].Password)
+	assert.Equal(t, "disable", cfg.Databases[0].SSL, "MySQL ignores it, and it is what MySQL was given before")
+}
+
+// TestTheSQLServerDefaultsFollowTheDriver to the container in docs/TESTING.md, so that
+// GORGANY_TEST_DRIVER is the only variable a developer sets to switch to it.
+func TestTheSQLServerDefaultsFollowTheDriver(t *testing.T) {
+	clearHarnessEnv(t)
+	t.Setenv(EnvDriver, DriverSQLServer)
+
+	cfg := FromEnv()
+	require.Len(t, cfg.Databases, 1)
+	database := cfg.Databases[0]
+
+	assert.Equal(t, DriverSQLServer, database.Driver)
+	assert.Equal(t, "127.0.0.1", database.Host)
+	assert.Equal(t, 14330, database.Port)
+	assert.Equal(t, "sa", database.User)
+	assert.Equal(t, "Gorgany-Test-1", database.Password, "SQL Server refuses the others' \"test\"")
+	assert.Equal(t, "gorgany_test", database.Database)
+	assert.Equal(t, "true", database.SSL, "Postgres's disable would turn SQL Server's encryption off")
+	assert.Empty(t, database.TrustServerCertificate, "empty means the default, which follows the host")
+}
+
+// TestAnExplicitPasswordStillWinsForSQLServer, the empty one included: the SQL Server default
+// is one more default an explicitly empty variable must not be replaced by.
+func TestAnExplicitPasswordStillWinsForSQLServer(t *testing.T) {
+	clearHarnessEnv(t)
+	t.Setenv(EnvDriver, DriverSQLServer)
+
+	t.Setenv(EnvPassword, "")
+	assert.Equal(t, "", FromEnv().Databases[0].Password)
+
+	t.Setenv(EnvPassword, "An0ther-Secret")
+	assert.Equal(t, "An0ther-Secret", FromEnv().Databases[0].Password)
+
+	t.Setenv(EnvSSL, "")
+	assert.Equal(t, "", FromEnv().Databases[0].SSL, "an explicitly empty SSL is the engine's own default")
+	assert.NotContains(t, FromEnv().Databases[0].datasourceConfig(), "ssl")
 }
 
 func TestEveryVariableIsHonoured(t *testing.T) {
@@ -52,6 +95,7 @@ func TestEveryVariableIsHonoured(t *testing.T) {
 	t.Setenv(EnvKeepData, "true")
 	t.Setenv(EnvMigrateDown, "1")
 	t.Setenv(EnvAllowAnyTarget, "true")
+	t.Setenv(EnvTrustServerCert, "false")
 
 	cfg := FromEnv()
 	assert.Equal(t, DriverMySQL, cfg.Databases[0].Driver)
@@ -65,6 +109,7 @@ func TestEveryVariableIsHonoured(t *testing.T) {
 	assert.True(t, cfg.KeepData)
 	assert.True(t, cfg.MigrateDown)
 	assert.True(t, cfg.AllowAnyTarget)
+	assert.Equal(t, "false", cfg.Databases[0].TrustServerCertificate)
 }
 
 // TestAnExplicitlyEmptyPasswordIsARealValue. Substituting the default for it would
@@ -171,6 +216,9 @@ func TestTheDefaultHarnessHonoursEveryVariable(t *testing.T) {
 		}},
 		{EnvAllowAnyTarget, "1", func(t *testing.T, cfg Config) {
 			assert.True(t, cfg.AllowAnyTarget)
+		}},
+		{EnvTrustServerCert, "false", func(t *testing.T, cfg Config) {
+			assert.Equal(t, "false", cfg.Databases[0].TrustServerCertificate)
 		}},
 	}
 
@@ -288,6 +336,112 @@ func TestTheDatasourceConfigMatchesWhatTheRegistryExpects(t *testing.T) {
 	assert.NotContains(t, mysql, "ssl", "MySQL has no sslmode; sending one would be a config error")
 }
 
+// TestTheDatasourceConfigIsUnchangedForPostgresAndMySQL. SQL Server's keys are added for SQL
+// Server alone: a Postgres or MySQL suite's connection must not change because the harness
+// learned another engine, and neither server accepts trust_server_certificate.
+func TestTheDatasourceConfigIsUnchangedForPostgresAndMySQL(t *testing.T) {
+	for _, trust := range []string{"", "true", "false"} {
+		pg := DatabaseConfig{
+			Driver: DriverPostgres, Host: "h", Port: 5432, User: "u", Password: "p", Database: "d",
+			TrustServerCertificate: trust,
+		}
+		assert.Equal(t, map[string]any{
+			"driver": DriverPostgres, "host": "h", "port": 5432,
+			"username": "u", "password": "p", "db": "d", "ssl": "disable",
+		}, pg.datasourceConfig())
+
+		mysql := DatabaseConfig{
+			Driver: DriverMySQL, Host: "h", Port: 3306, User: "u", Password: "p", Database: "d",
+			SSL: "disable", TrustServerCertificate: trust,
+		}
+		assert.Equal(t, map[string]any{
+			"driver": DriverMySQL, "host": "h", "port": 3306,
+			"username": "u", "password": "p", "db": "d",
+		}, mysql.datasourceConfig())
+	}
+}
+
+// TestTheSQLServerDatasourceConfigTrustsALocalContainer, whose certificate is self-signed, and
+// leaves the encryption the engine's default rather than Postgres's disable.
+func TestTheSQLServerDatasourceConfigTrustsALocalContainer(t *testing.T) {
+	local := localTarget(DriverSQLServer, "gorgany_test")
+	cfg := local.datasourceConfig()
+
+	assert.Equal(t, map[string]any{
+		"driver": DriverSQLServer, "host": "127.0.0.1", "port": 14330,
+		"username": "u", "password": "", "db": "gorgany_test",
+		"options": map[string]any{"trust_server_certificate": "true"},
+	}, cfg, "an empty SSL is left out, so the connection is encrypted")
+
+	parsed, err := dsconfig.Parse(cfg)
+	require.NoError(t, err, "the registry must accept what the harness renders")
+	assert.Equal(t, map[string]string{"trust_server_certificate": "true"}, parsed.Options)
+	assert.Empty(t, parsed.SSL)
+
+	local.SSL = "disable"
+	assert.Equal(t, "disable", local.datasourceConfig()["ssl"], "an SSL the caller set is the caller's")
+}
+
+// TestTrustServerCertIsNotAddedForAzureHosts. The engine refuses a trusted certificate from an
+// Azure SQL host, whose certificate always verifies, and with ssl strict, which verifies it by
+// definition, so the default must not put one there. A value the caller set is rendered as set,
+// for the engine to refuse where it must.
+func TestTrustServerCertIsNotAddedForAzureHosts(t *testing.T) {
+	trust := func(database DatabaseConfig) any {
+		options, _ := database.datasourceConfig()["options"].(map[string]any)
+		if options == nil {
+			return nil
+		}
+		return options["trust_server_certificate"]
+	}
+
+	for _, host := range []string{"example.database.windows.net", "tcp:example.database.windows.net,1433"} {
+		azure := localTarget(DriverSQLServer, "gorgany_test")
+		azure.Host = host
+		assert.Nil(t, trust(azure), host)
+	}
+
+	strict := localTarget(DriverSQLServer, "gorgany_test")
+	strict.SSL = "Strict"
+	assert.Nil(t, trust(strict), "ssl strict verifies the certificate")
+
+	for value, rendered := range map[string]string{"false": "false", "0": "false", "FALSE": "false", "true": "true", "1": "true"} {
+		explicit := localTarget(DriverSQLServer, "gorgany_test")
+		explicit.TrustServerCertificate = value
+		assert.Equal(t, rendered, trust(explicit), value)
+	}
+
+	explicitOnAzure := localTarget(DriverSQLServer, "gorgany_test")
+	explicitOnAzure.Host = "example.database.windows.net"
+	explicitOnAzure.TrustServerCertificate = "true"
+	assert.Equal(t, "true", trust(explicitOnAzure), "the caller's value is not second-guessed")
+
+	t.Run("from the environment", func(t *testing.T) {
+		clearHarnessEnv(t)
+		t.Setenv(EnvDriver, DriverSQLServer)
+		t.Setenv(EnvTrustServerCert, "false")
+
+		assert.Equal(t, "false", trust(FromEnv().Databases[0]), "the variable turns the default off")
+	})
+}
+
+// TestATrustServerCertificateThatIsNotABooleanIsAConfigError. The engine refuses it too, but on
+// every attempt to connect, so the harness would retry it for the whole engine wait and then
+// skip, reporting a typo as an engine that is not running.
+func TestATrustServerCertificateThatIsNotABooleanIsAConfigError(t *testing.T) {
+	database := localTarget(DriverSQLServer, "gorgany_test")
+	database.TrustServerCertificate = "maybe"
+
+	err := database.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `TrustServerCertificate "maybe" is not true or false`)
+	assert.Contains(t, err.Error(), EnvTrustServerCert)
+
+	pg := localTarget(DriverPostgres, "gorgany_test")
+	pg.TrustServerCertificate = "maybe"
+	assert.NoError(t, pg.Validate(), "Postgres ignores the setting, so it does not check it")
+}
+
 func TestALabelFallsBackToTheDriver(t *testing.T) {
 	assert.Equal(t, DriverMySQL, DatabaseConfig{Driver: DriverMySQL}.Label())
 	assert.Equal(t, "primary", DatabaseConfig{Name: "primary", Driver: DriverMySQL}.Label())
@@ -314,7 +468,7 @@ func TestTheHarnessRefusesAnAzureSQLHost(t *testing.T) {
 		t.Run(host, func(t *testing.T) {
 			clearHarnessEnv(t)
 
-			for _, driver := range []string{DriverPostgres, DriverMySQL, driverSQLServer} {
+			for _, driver := range []string{DriverPostgres, DriverMySQL, DriverSQLServer} {
 				target := localTarget(driver, "gorgany_test")
 				target.Host = host
 
@@ -388,7 +542,7 @@ func TestTheHarnessRefusesAnUnsupportedDriver(t *testing.T) {
 	_, err := Config{Databases: []DatabaseConfig{localTarget("oracle_gorm", "gorgany_test")}}.resolved()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `driver "oracle_gorm" is not one the harness supports`)
-	for _, supported := range []string{DriverPostgres, DriverMySQL, driverSQLServer} {
+	for _, supported := range []string{DriverPostgres, DriverMySQL, DriverSQLServer} {
 		assert.Contains(t, err.Error(), supported)
 	}
 	assert.Contains(t, err.Error(), EnvAllowAnyTarget)
@@ -411,7 +565,7 @@ func TestTheHarnessRefusesASQLServerDatabaseNotNamedForTests(t *testing.T) {
 	// "test" inside another word is not a name for tests: each of these could be a production
 	// database on a shared instance.
 	for _, name := range []string{"Example-db", "legacy", "orders", "Attestations", "LatestOrders", "Contests", "Protest", "testdb"} {
-		_, err := Config{Databases: []DatabaseConfig{localTarget(driverSQLServer, name)}}.resolved()
+		_, err := Config{Databases: []DatabaseConfig{localTarget(DriverSQLServer, name)}}.resolved()
 		require.Error(t, err, name)
 		assert.Contains(t, err.Error(), `refusing SQL Server database "`+name+`"`)
 		assert.Contains(t, err.Error(), `"test" in its name as a word of its own`)
@@ -421,11 +575,11 @@ func TestTheHarnessRefusesASQLServerDatabaseNotNamedForTests(t *testing.T) {
 	// This binary does not register the SQL Server driver, which a resolved config would also
 	// need, so the names that pass are checked against the name rule alone.
 	for _, name := range []string{"gorgany_test", "TestDb", "AppTests", "APITests", "e2e-testing", "test1", "orders.test", "TEST_orders"} {
-		assert.NoError(t, guardSQLServerDatabase(driverSQLServer, name), name)
+		assert.NoError(t, guardSQLServerDatabase(DriverSQLServer, name), name)
 	}
 
 	for _, name := range []string{"master", "MODEL", "msdb", "tempdb"} {
-		_, err := Config{Databases: []DatabaseConfig{localTarget(driverSQLServer, name)}}.resolved()
+		_, err := Config{Databases: []DatabaseConfig{localTarget(DriverSQLServer, name)}}.resolved()
 		require.Error(t, err, name)
 		assert.Contains(t, err.Error(), "a SQL Server system database", name)
 	}
@@ -462,7 +616,7 @@ func TestAnUnregisteredDriverNamesItsImport(t *testing.T) {
 	assert.Contains(t, err.Error(), DriverPostgres, "and says what is registered")
 	assert.Contains(t, err.Error(), "call driver.Register")
 
-	hint := registrationHint(driverSQLServer)
+	hint := registrationHint(DriverSQLServer)
 	assert.Contains(t, hint, `_ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver"`)
 	assert.Contains(t, hint, "driver/builtin", "why testsupport's own import does not cover it")
 }
@@ -490,7 +644,7 @@ func TestAllowAnyTargetOptsOut(t *testing.T) {
 
 			// Whether this binary registers SQL Server decides if this is an error at all;
 			// what it must not be, either way, is the name rule's refusal.
-			cfg.Databases = []DatabaseConfig{localTarget(driverSQLServer, "Example-db")}
+			cfg.Databases = []DatabaseConfig{localTarget(DriverSQLServer, "Example-db")}
 			_, err = cfg.resolved()
 			assert.NotContains(t, fmt.Sprint(err), "refusing", "the name rule is off")
 
@@ -559,22 +713,216 @@ func TestAConfigErrorFromConnectIsKept(t *testing.T) {
 }
 
 // TestTruncateRefusesAnUnknownDriver. It used to empty anything that was not Postgres as
-// though it were MySQL. Neither statement is sent here: the refusal comes before the handle,
-// which these fixtures leave nil, would be used.
+// though it were MySQL. No statement is sent here: the refusal comes before the handle, which
+// these fixtures leave nil, would be used.
 func TestTruncateRefusesAnUnknownDriver(t *testing.T) {
 	unknown := &Database{config: DatabaseConfig{Driver: "app_engine"}, tables: []string{"widgets"}}
 	err := unknown.truncate()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `cannot empty tables on driver "app_engine"`)
+	for _, implemented := range []string{DriverPostgres, DriverMySQL, DriverSQLServer} {
+		assert.Contains(t, err.Error(), implemented, "and names the engines it can empty")
+	}
 	assert.Contains(t, err.Error(), "IsolateByRollback", "and names the isolation that works")
-
-	sqlServer := &Database{config: DatabaseConfig{Driver: driverSQLServer}, tables: []string{"widgets"}}
-	err = sqlServer.truncate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "truncation is not implemented for SQL Server yet")
 
 	nothing := &Database{config: DatabaseConfig{Driver: "app_engine"}}
 	assert.NoError(t, nothing.truncate(), "with no tables there is nothing to refuse")
+}
+
+// ------------------------------------------------------------------ SQL Server
+
+// TestQuoteIdentifierUsesBracketsOnSQLServer, where a double quote is an identifier only under
+// QUOTED_IDENTIFIER ON, and a bracket always is. A closing bracket is the one character inside
+// that needs escaping.
+func TestQuoteIdentifierUsesBracketsOnSQLServer(t *testing.T) {
+	sqlServer := &Database{config: DatabaseConfig{Driver: DriverSQLServer}}
+	assert.Equal(t, "[ts_widgets]", sqlServer.quoteIdentifier("ts_widgets"))
+	assert.Equal(t, "[2024Orders]", sqlServer.quoteIdentifier("2024Orders"))
+	assert.Equal(t, "[odd]]name]", sqlServer.quoteIdentifier("odd]name"))
+	assert.Equal(t, "[it's [x]", sqlServer.quoteIdentifier("it's [x"), "an opening bracket needs no escape")
+
+	postgres := &Database{config: DatabaseConfig{Driver: DriverPostgres}}
+	assert.Equal(t, `"odd""name"`, postgres.quoteIdentifier(`odd"name`), "the other engines keep theirs")
+	mysql := &Database{config: DatabaseConfig{Driver: DriverMySQL}}
+	assert.Equal(t, "`odd``name`", mysql.quoteIdentifier("odd`name"))
+}
+
+// TestSQLServerTruncateStatements pins the sequence: constraints off, rows deleted in the order
+// given, identities reseeded where they have issued a value, constraints back on WITH CHECK.
+func TestSQLServerTruncateStatements(t *testing.T) {
+	plan, err := sqlServerTruncateStatements([]sqlServerTable{
+		{name: "ts_widget_notes"},
+		{name: "ts_counters", reseedTo: "0"},
+		{name: "it's]odd", reseedTo: "95"},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{
+		"ALTER TABLE [ts_widget_notes] NOCHECK CONSTRAINT ALL",
+		"ALTER TABLE [ts_counters] NOCHECK CONSTRAINT ALL",
+		"ALTER TABLE [it's]]odd] NOCHECK CONSTRAINT ALL",
+	}, plan.disable)
+	assert.Equal(t, []string{
+		"DELETE FROM [ts_widget_notes]",
+		"DELETE FROM [ts_counters]",
+		"DELETE FROM [it's]]odd]",
+		"DBCC CHECKIDENT (N'[ts_counters]', RESEED, 0) WITH NO_INFOMSGS",
+		"DBCC CHECKIDENT (N'[it''s]]odd]', RESEED, 95) WITH NO_INFOMSGS",
+	}, plan.empty, "a table without a used identity is not reseeded: Msg 7997, or a next id of 0")
+	assert.Equal(t, []string{
+		"ALTER TABLE [ts_widget_notes] WITH CHECK CHECK CONSTRAINT ALL",
+		"ALTER TABLE [ts_counters] WITH CHECK CHECK CONSTRAINT ALL",
+		"ALTER TABLE [it's]]odd] WITH CHECK CHECK CONSTRAINT ALL",
+	}, plan.restore, "one restore per disable, so a partial disable restores exactly what it switched off")
+
+	empty, err := sqlServerTruncateStatements(nil)
+	require.NoError(t, err)
+	assert.Empty(t, empty.disable)
+	assert.Empty(t, empty.empty)
+	assert.Empty(t, empty.restore)
+}
+
+// TestSQLServerTruncateStatementsRefuseAReseedThatIsNotAnInteger. The value comes from the
+// server's catalog, but it is written into SQL, so it is checked like anything else that is.
+func TestSQLServerTruncateStatementsRefuseAReseedThatIsNotAnInteger(t *testing.T) {
+	for _, value := range []string{"0; DROP TABLE x", "1.5", "0x10", " 0", "-"} {
+		_, err := sqlServerTruncateStatements([]sqlServerTable{{name: "ts_counters", reseedTo: value}})
+		require.Error(t, err, value)
+		assert.Contains(t, err.Error(), "not an integer", value)
+	}
+
+	plan, err := sqlServerTruncateStatements([]sqlServerTable{{name: "t", reseedTo: "-2"}})
+	require.NoError(t, err, "IDENTITY(-1, 1) reseeds to -2")
+	assert.Contains(t, plan.empty, "DBCC CHECKIDENT (N'[t]', RESEED, -2) WITH NO_INFOMSGS")
+}
+
+// TestTheHarnessCreatesItsDatabaseOnlyOnALocalSQLServer. The Postgres and MySQL images create
+// theirs from their environment, and creating one on Azure SQL provisions a billable database.
+func TestTheHarnessCreatesItsDatabaseOnlyOnALocalSQLServer(t *testing.T) {
+	assert.True(t, createsItsDatabase(localTarget(DriverSQLServer, "gorgany_test")))
+
+	azure := localTarget(DriverSQLServer, "gorgany_test")
+	azure.Host = "example.database.windows.net"
+	assert.False(t, createsItsDatabase(azure))
+
+	assert.False(t, createsItsDatabase(localTarget(DriverPostgres, "gorgany_test")))
+	assert.False(t, createsItsDatabase(localTarget(DriverMySQL, "gorgany_test")))
+}
+
+// TestTheCreateDatabaseBatchSetsSnapshotReadsOnlyOnWhatItCreates: an existing database's read
+// behaviour is its owner's, and switching it needs every other connection gone.
+func TestTheCreateDatabaseBatchSetsSnapshotReadsOnlyOnWhatItCreates(t *testing.T) {
+	statement, err := sqlServerCreateDatabaseSQL("gorgany_test")
+	require.NoError(t, err)
+	assert.Equal(t, "IF DB_ID(N'gorgany_test') IS NULL BEGIN CREATE DATABASE [gorgany_test]; "+
+		"ALTER DATABASE [gorgany_test] SET READ_COMMITTED_SNAPSHOT ON; END", statement)
+
+	statement, err = sqlServerCreateDatabaseSQL("2024_test")
+	require.NoError(t, err)
+	assert.Contains(t, statement, "CREATE DATABASE [2024_test]", "a name starting with a digit is bracketed")
+}
+
+// TestEnsureDatabaseRejectsUnsafeNames before it connects anywhere: CREATE DATABASE cannot take
+// the name as a parameter, so it is written into the SQL, and only a name that cannot be
+// anything but a name is.
+func TestEnsureDatabaseRejectsUnsafeNames(t *testing.T) {
+	refuseToOpen := func(dsconfig.DataSource) (dbCore.IDataSource, error) {
+		t.Fatal("an unsafe name must be refused before connecting to master")
+		return nil, nil
+	}
+
+	for _, name := range []string{
+		"e2e-testing",
+		"gorgany test",
+		"gorgany_test]; DROP DATABASE [orders",
+		"gorgany_test'); DROP DATABASE orders; --",
+		"tést",
+		"",
+		strings.Repeat("t", 129),
+	} {
+		_, err := sqlServerCreateDatabaseSQL(name)
+		require.Error(t, err, name)
+		assert.Contains(t, err.Error(), "letters, digits and underscores", name)
+		assert.Contains(t, err.Error(), "create it yourself", "an existing database of that name still works")
+
+		assert.Error(t, ensureSQLServerDatabase(localTarget(DriverSQLServer, name), refuseToOpen), name)
+	}
+
+	_, err := sqlServerCreateDatabaseSQL(strings.Repeat("t", 128))
+	assert.NoError(t, err, "128 characters is SQL Server's limit, and allowed")
+}
+
+// TestLookingForADatabaseTakesAnyNameThroughMaster: whether a database exists is asked of
+// master with the name bound as an argument, so a name CREATE DATABASE is never given, such as
+// one with a hyphen, can still be looked for, and a failure to reach master is reported as
+// that, for waitForEngine to retry.
+func TestLookingForADatabaseTakesAnyNameThroughMaster(t *testing.T) {
+	errStub := errors.New("stub: no server")
+	var opened []dsconfig.DataSource
+	open := func(cfg dsconfig.DataSource) (dbCore.IDataSource, error) {
+		opened = append(opened, cfg)
+		return nil, errStub
+	}
+
+	exists, err := sqlServerDatabaseExists(localTarget(DriverSQLServer, "e2e-testing"), open)
+
+	require.ErrorIs(t, err, errStub)
+	assert.False(t, exists)
+	assert.Contains(t, err.Error(), "connecting to master to look for database e2e-testing")
+	require.Len(t, opened, 1, "the name is not refused before connecting")
+	assert.Equal(t, "master", opened[0].Database)
+}
+
+// TestEnsureDatabaseUsesMasterWithoutTrippingTheTargetGuard. The database is created through
+// master, which the guard refuses as a system database; the connection is a copy of the target
+// the guard already accepted, pointed at master, and never passes through the guard itself.
+func TestEnsureDatabaseUsesMasterWithoutTrippingTheTargetGuard(t *testing.T) {
+	target := DatabaseConfig{
+		Name: "primary", Driver: DriverSQLServer, Host: "db.internal", Port: 14331,
+		User: "sa", Password: "Gorgany-Test-1", Database: "gorgany_test", SSL: "true",
+	}
+	require.Error(t, guardSQLServerDatabase(target.Label(), "master"),
+		"the guard refuses master, which is why the bootstrap must not go through it")
+
+	errStub := errors.New("stub: no server")
+	var opened []dsconfig.DataSource
+	open := func(cfg dsconfig.DataSource) (dbCore.IDataSource, error) {
+		opened = append(opened, cfg)
+		return nil, errStub
+	}
+
+	err := ensureSQLServerDatabase(target, open)
+	require.ErrorIs(t, err, errStub, "the error is the connection's, not the guard's")
+	assert.NotContains(t, err.Error(), "refusing")
+	assert.Contains(t, err.Error(), "connecting to master to create database gorgany_test")
+
+	require.Len(t, opened, 1)
+	master := opened[0]
+	assert.Equal(t, "master", master.Database)
+	assert.Equal(t, DriverSQLServer, master.Driver)
+	assert.Equal(t, "db.internal", master.Host)
+	assert.Equal(t, 14331, master.Port)
+	assert.Equal(t, "sa", master.Username)
+	assert.Equal(t, "Gorgany-Test-1", master.Password)
+	assert.Equal(t, "true", master.SSL)
+	assert.Equal(t, map[string]string{"trust_server_certificate": "true"}, master.Options,
+		"master is reached with the target's TLS settings")
+
+	assert.Equal(t, "gorgany_test", target.Database, "the target itself is not changed")
+	bootstrap := sqlServerBootstrapConfig(target)
+	bootstrap.Database = target.Database
+	assert.Equal(t, target, bootstrap, "the bootstrap differs from the target in its database alone")
+}
+
+// TestAConnectionErrorInEnsureDatabaseKeepsTheDriversRefusal, so waitForEngine can return a
+// refused setting at once, as it does for the target.
+func TestAConnectionErrorInEnsureDatabaseKeepsTheDriversRefusal(t *testing.T) {
+	refusal := dbCore.Unsupported("sqlserver", "search_path", "no search path")
+	err := ensureSQLServerDatabase(localTarget(DriverSQLServer, "gorgany_test"),
+		func(dsconfig.DataSource) (dbCore.IDataSource, error) { return nil, refusal })
+
+	require.Error(t, err)
+	assert.True(t, isRefusal(err))
 }
 
 // clearHarnessEnv unsets every variable the harness reads, so a developer's own
@@ -585,6 +933,7 @@ func clearHarnessEnv(t *testing.T) {
 	for _, name := range []string{
 		EnvDriver, EnvHost, EnvPort, EnvUser, EnvPassword, EnvDatabase,
 		EnvSSL, EnvIsolation, EnvEngineWait, EnvKeepData, EnvMigrateDown, EnvAllowAnyTarget,
+		EnvTrustServerCert,
 	} {
 		t.Setenv(name, "")
 		require.NoError(t, unset(name))

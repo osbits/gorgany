@@ -71,7 +71,7 @@ func (thiz SeedCommand) Execute(ctx context.Context) {
 		return
 	}
 
-	err = gormInstance.AutoMigrate(&db.Seeder{})
+	err = migrateBookkeepingTable(gormInstance, &db.Seeder{}, "seeders")
 	if err != nil {
 		panic(fmt.Errorf("unable to migrate table `seeders` on datasource %q: %w", datasource, err))
 	}
@@ -119,8 +119,8 @@ func (thiz SeedCommand) applyPending(gormInstance *gorm.DB, seeders []core.ISeed
 // failing on a unique constraint. Now the models commit with the row or not at all, and a
 // failure fails the run.
 //
-// A seeder only saves rows, which PostgreSQL and InnoDB both roll back, so unlike a
-// migration on MySQL a failed seeder leaves nothing behind on either engine.
+// A seeder only saves rows, which PostgreSQL, InnoDB and SQL Server all roll back, so unlike
+// a migration on MySQL a failed seeder leaves nothing behind on any of them.
 func applySeeder(gormInstance *gorm.DB, seeder core.ISeeder) error {
 	models := seeder.CollectInsertModels()
 

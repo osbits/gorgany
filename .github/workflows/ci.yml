@@ -43,17 +43,18 @@ jobs:
     name: live PostgreSQL, MySQL and SQL Server
     runs-on: ubuntu-latest
 
-    # Ports and credentials are the ones the live tests use: e2e/tests/live_db_test.go
-    # defaults to them, and testsupport/live_test.go hardcodes them with no override, so
-    # these services must publish exactly 5433 and 3307 as postgres/test and root/test, and
-    # 14330 as sa/Gorgany-Test-1. SQL Server refuses a password below its complexity policy,
-    # so it cannot share the others' "test".
+    # Ports and credentials are the ones the live tests use: e2e/tests defaults to them, and so
+    # does testsupport/live_test.go, which this job runs without the E2E_* variables that would
+    # redirect it, so these services must publish exactly 5433 and 3307 as postgres/test and
+    # root/test, and 14330 as sa/Gorgany-Test-1. SQL Server refuses a password below its
+    # complexity policy, so it cannot share the others' "test". testsupport/drift_test.go
+    # fails when the SQL Server port, password or image here stops matching the tests and docs.
     #
     # Service containers cannot take a command, so MySQL runs without the compose file's
     # --character-set-server flags. mysql:8 already defaults to utf8mb4, and the datasource
     # sets utf8mb4_unicode_ci on every connection it opens. Nor can the SQL Server image
-    # create a database from its environment, so the SQL Server cases create gorgany_test
-    # through master themselves.
+    # create a database from its environment, so the SQL Server cases, and the testsupport
+    # harness, create gorgany_test through master themselves.
     #
     # The SQL Server image is the one e2e/docker-compose.yml pins, a cumulative update rather
     # than 2022-latest, so a new CU reaches these cases only in a commit that says so.
@@ -149,6 +150,9 @@ jobs:
                 echo TestSQLServerConnectsWithSQLLogin
                 echo TestSQLServerQueriesRoundTripThroughTheDialect
                 echo TestExternalSchemaRefusesMigrateSeedAndDiffOnSQLServer
+                echo TestT15_SessionsMigrationOnSQLServer
+                echo TestT17_SessionsMigrationsRollBackThroughDbMigrateOnSQLServer
+                echo TestDiffRollsBackAndItsDraftRunsOnSQLServer
                 ;;
             esac
           }
@@ -167,15 +171,14 @@ jobs:
           done
 
       # testsupport has no E2E_REQUIRE_LIVE: an unreachable engine skips its subtest and the
-      # run still exits 0. So both engines must show a pass, and the only skip allowed is
-      # the case that points at a closed port on purpose. SQL Server is not in the loop: the
-      # harness cannot truncate it yet (see truncate in testsupport/database.go), so its live
-      # suite has no SQL Server subtest to pass.
+      # run still exits 0. So every engine must show a pass, and the only skip allowed is
+      # the case that points at a closed port on purpose, which also fails a SQL Server
+      # subtest that skipped because the mssql service was not reached.
       - name: run the testsupport live suite
         run: |
           set -o pipefail
           go test -tags=livedb ./testsupport/ -count=1 -v 2>&1 | tee testsupport-live.log
-          for engine in postgres mysql; do
+          for engine in postgres mysql sqlserver; do
             if ! grep -q -- "--- PASS: TestTheHarnessMigratesAndConnects/$engine " testsupport-live.log; then
               echo "::error::testsupport never ran against $engine"
               exit 1

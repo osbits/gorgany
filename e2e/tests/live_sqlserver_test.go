@@ -1615,6 +1615,8 @@ func TestSQLServerReadOnlyRefusesWritesThroughEveryPath(t *testing.T) {
 	driver, err := readOnly.GetDriver()
 	require.NoError(t, err)
 	assert.ErrorIs(t, driver.(*gorm.DB).Exec("UPDATE ro_probe SET [Name] = 'x' WHERE [Id] = 1").Error, dbCore.ErrReadOnly)
+	assert.ErrorIs(t, driver.(*gorm.DB).Table("ro_probe").Create(map[string]any{"Name": "x"}).Error, dbCore.ErrReadOnly,
+		"gorm's own Create on the handle GetDriver returns is refused as well")
 
 	type roProbe struct {
 		orm.BaseEntity
@@ -1794,18 +1796,20 @@ func TestSeedCommitsEachSeederWithItsRecordOnSQLServer(t *testing.T) {
 	ds := mssqlDataSource(t, mssqlConfig())
 	gormDb := gormOf(t, ds)
 
-	t.Run("mssql-succeeds", func(t *testing.T) {
-		prepareSeedScenario(t, gormDb, "mssql-succeeds")
+	for _, scenario := range []string{"mssql-succeeds", "mssql-one-connection"} {
+		t.Run(scenario, func(t *testing.T) {
+			prepareSeedScenario(t, gormDb, scenario)
 
-		code, output := runSeedInChild(t, "mssql-succeeds")
-		require.Equal(t, 0, code, "the seeder must succeed:\n%s", output)
-		assert.Equal(t, []string{"one", "two"}, probeLabels(t, gormDb))
-		assert.True(t, isSeeded(t, gormDb, "probe_seeds"))
+			code, output := runSeedInChild(t, scenario)
+			require.Equal(t, 0, code, "the seeder must succeed:\n%s", output)
+			assert.Equal(t, []string{"one", "two"}, probeLabels(t, gormDb))
+			assert.True(t, isSeeded(t, gormDb, "probe_seeds"))
 
-		code, output = runSeedInChild(t, "mssql-succeeds")
-		require.Equal(t, 0, code, "a second run must succeed:\n%s", output)
-		assert.Equal(t, []string{"one", "two"}, probeLabels(t, gormDb))
-	})
+			code, output = runSeedInChild(t, scenario)
+			require.Equal(t, 0, code, "a second run must succeed:\n%s", output)
+			assert.Equal(t, []string{"one", "two"}, probeLabels(t, gormDb))
+		})
+	}
 
 	for _, scenario := range []string{"mssql-save-fails", "mssql-record-fails"} {
 		t.Run(scenario, func(t *testing.T) {

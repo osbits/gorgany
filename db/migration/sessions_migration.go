@@ -61,9 +61,108 @@ type sessionsSchema struct {
 // TableName pins the table this migration manages.
 func (sessionsSchema) TableName() string { return "sessions" }
 
+// sessionsSchemaSQLServer is sessionsSchema for SQL Server: the same columns, keys and
+// indexes, with the two string types SQL Server needs.
+//
+// sessionsSchema pins varchar(255) and text in its tags, and on SQL Server both are the wrong
+// type. varchar is not Unicode there: it stores the code page of the column's collation, so a
+// user id outside it would be written back with question marks in it, and would no longer
+// match the session it belongs to. text is deprecated as well, and cannot be compared or
+// indexed. A tag cannot differ by dialect, so SQL Server gets its own snapshot, chosen by
+// SessionsTableModelFor.
+//
+// The keys are nvarchar(255), the same length as on the other engines. That is 510 bytes, well
+// inside the 900 a clustered primary key may hold; nvarchar(max) could not be a key at all.
+// The attribute bag is nvarchar(max), the Unicode type of text's capacity. The timestamps are
+// left to GORM, which makes them datetimeoffset: an instant with its offset, so comparing
+// expiry with SYSDATETIMEOFFSET() in the sweep is right whatever time zone the server is on.
+//
+// Postgres and MySQL keep sessionsSchema, so what this migration creates on them is unchanged.
+type sessionsSchemaSQLServer struct {
+	ID           string    `gorm:"column:id;type:nvarchar(255);primaryKey"`
+	UserID       string    `gorm:"column:user_id;type:nvarchar(255);index:idx_sessions_user_id"`
+	Expiry       time.Time `gorm:"column:expiry;not null;index:idx_sessions_expiry"`
+	CreatedAt    time.Time `gorm:"column:created_at;not null"`
+	LastActivity time.Time `gorm:"column:last_activity;not null"`
+	Attributes   *string   `gorm:"column:attributes;type:nvarchar(max)"`
+}
+
+// TableName pins the table this migration manages.
+func (sessionsSchemaSQLServer) TableName() string { return "sessions" }
+
+// sqlServerDialect is the name gorm's SQL Server dialector reports (gorm.Dialector.Name()).
+//
+// The migrations compare it as a string rather than import gorm.io/driver/sqlserver: the
+// provider links this package, and an app that never speaks SQL Server must not link
+// go-mssqldb.
+const sqlServerDialect = "sqlserver"
+
+// dialectOf returns the name of db's dialector, or "" for a handle without one.
+func dialectOf(db *gorm.DB) string {
+	if db == nil || db.Config == nil || db.Dialector == nil {
+		return ""
+	}
+	return db.Dialector.Name()
+}
+
+// sessionsTable is the table both sessions migrations manage.
+const sessionsTable = "sessions"
+
+// hasTable reports whether table, the table of model, exists where the migrations' unqualified
+// DDL finds it.
+//
+// On Postgres and MySQL that is what gorm's migrator answers, and it is asked. On SQL Server it
+// is not. There HasTable counts the tables of that name in INFORMATION_SCHEMA in every schema of
+// the database, and HasColumn the columns of that name in every such table, and the default
+// collation folds case. An owned default may hold other schemas beside gorgany's, an externally
+// owned (EF) one among them, so a Sessions table in one of those made Up skip CREATE TABLE and
+// then fail creating an index on a sessions table that was not there, and made the version
+// migration's Up do nothing and its Down drop a column that was not there. OBJECT_ID and
+// COL_LENGTH resolve an unqualified name as the DDL after them does, in the login's default
+// schema and then dbo.
+func hasTable(db *gorm.DB, model any, table string) (bool, error) {
+	if dialectOf(db) != sqlServerDialect {
+		return db.Migrator().HasTable(model), nil
+	}
+	return sqlServerAnswers(db, "SELECT CASE WHEN OBJECT_ID(?, N'U') IS NULL THEN 0 ELSE 1 END", table)
+}
+
+// hasColumn reports whether column, a column name, exists on table, the table of model, where
+// the migrations' unqualified DDL finds it. See hasTable for why SQL Server is asked apart.
+func hasColumn(db *gorm.DB, model any, table, column string) (bool, error) {
+	if dialectOf(db) != sqlServerDialect {
+		return db.Migrator().HasColumn(model, column), nil
+	}
+	return sqlServerAnswers(db, "SELECT CASE WHEN COL_LENGTH(?, ?) IS NULL THEN 0 ELSE 1 END", table, column)
+}
+
+// sqlServerAnswers runs query, which selects 1 for yes and 0 for no, and reports the answer.
+// Unlike gorm's own checks it reports an error rather than read it as no, which would send the
+// migration on to DDL its guard was there to prevent.
+func sqlServerAnswers(db *gorm.DB, query string, args ...any) (bool, error) {
+	var answer int
+	if err := db.Raw(query, args...).Row().Scan(&answer); err != nil {
+		return false, err
+	}
+	return answer == 1, nil
+}
+
 // SessionsTableModel returns the schema snapshot this migration operates on, so
 // callers and tests can address the same model the migration uses.
+//
+// It is the Postgres and MySQL snapshot. SessionsTableModelFor returns the one for a given
+// dialect, which differs on SQL Server.
 func SessionsTableModel() any { return &sessionsSchema{} }
+
+// SessionsTableModelFor returns the schema snapshot this migration operates on for the
+// dialect named dialect (gorm.Dialector.Name()): the SQL Server one for "sqlserver", and
+// SessionsTableModel's for any other name.
+func SessionsTableModelFor(dialect string) any {
+	if dialect == sqlServerDialect {
+		return &sessionsSchemaSQLServer{}
+	}
+	return &sessionsSchema{}
+}
 
 // Up creates the sessions table and its two indexes.
 //
@@ -77,9 +176,13 @@ func (m *SessionsMigration) Up() core.MigrationClosure {
 		}
 
 		migrator := db.Migrator()
-		model := &sessionsSchema{}
+		model := SessionsTableModelFor(dialectOf(db))
 
-		if !migrator.HasTable(model) {
+		exists, err := hasTable(db, model, sessionsTable)
+		if err != nil {
+			return fmt.Errorf("sessions migration: cannot tell whether the table exists: %w", err)
+		}
+		if !exists {
 			// CreateTable emits the declared indexes along with the table.
 			if err := migrator.CreateTable(model); err != nil {
 				return fmt.Errorf("sessions migration: cannot create table: %w", err)
@@ -107,14 +210,17 @@ func (m *SessionsMigration) Down() core.MigrationClosure {
 			return fmt.Errorf("sessions migration: no database handle")
 		}
 
-		migrator := db.Migrator()
-		model := &sessionsSchema{}
+		model := SessionsTableModelFor(dialectOf(db))
 
-		if !migrator.HasTable(model) {
+		exists, err := hasTable(db, model, sessionsTable)
+		if err != nil {
+			return fmt.Errorf("sessions migration: cannot tell whether the table exists: %w", err)
+		}
+		if !exists {
 			return nil
 		}
 
-		if err := migrator.DropTable(model); err != nil {
+		if err := db.Migrator().DropTable(model); err != nil {
 			return fmt.Errorf("sessions migration: cannot drop table: %w", err)
 		}
 		return nil

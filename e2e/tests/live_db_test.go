@@ -518,20 +518,39 @@ func TestT16_MigrateTargetsOnlyTheSelectedDatasource(t *testing.T) {
 	pg := waitForDatasource(t, func() (dbCore.IDataSource, error) { return pgv2.NewDataSource(pgConfig()) })
 	t.Cleanup(func() { pg.Close() })
 
-	secondary, _ := secondaryConfig(t)
+	secondary, secondaryDialect := secondaryConfig(t)
 	my := secondaryDataSource(t, secondary)
 	t.Cleanup(func() { my.Close() })
 
-	pgGorm := gormOf(t, pg)
-	myGorm := gormOf(t, my)
+	assertMigrateTargetsOnlyTheSelectedDatasource(t,
+		migrateTarget{config: pgConfig(), gorm: gormOf(t, pg), engine: "postgres"},
+		migrateTarget{config: secondary, gorm: gormOf(t, my), engine: secondaryDialect})
+}
 
-	for _, g := range []*gorm.DB{pgGorm, myGorm} {
+// migrateTarget is one of the two datasources assertMigrateTargetsOnlyTheSelectedDatasource
+// migrates: its config, a handle on its database that is not the command's, and its dialect's
+// name, which the messages say it by.
+type migrateTarget struct {
+	config map[string]any
+	gorm   *gorm.DB
+	engine string
+}
+
+// assertMigrateTargetsOnlyTheSelectedDatasource configures def as `default` and creatio as
+// `creatio`, runs `db:migrate up --datasource=creatio` and then `--datasource=default` with one
+// migration aimed at each, and asserts that each run created its own migration's table in its
+// own database and nothing in the other, and that each database records only what ran there.
+func assertMigrateTargetsOnlyTheSelectedDatasource(t *testing.T, def, creatio migrateTarget) {
+	t.Helper()
+
+	both := []*gorm.DB{def.gorm, creatio.gorm}
+	for _, g := range both {
 		require.NoError(t, g.Exec(`DROP TABLE IF EXISTS creatio_only`).Error)
 		require.NoError(t, g.Exec(`DROP TABLE IF EXISTS default_only`).Error)
 		require.NoError(t, g.Migrator().DropTable(&db.Migration{}))
 	}
 	t.Cleanup(func() {
-		for _, g := range []*gorm.DB{pgGorm, myGorm} {
+		for _, g := range both {
 			assert.NoError(t, g.Exec(`DROP TABLE IF EXISTS creatio_only`).Error)
 			assert.NoError(t, g.Exec(`DROP TABLE IF EXISTS default_only`).Error)
 			assert.NoError(t, g.Migrator().DropTable(&db.Migration{}))
@@ -540,36 +559,42 @@ func TestT16_MigrateTargetsOnlyTheSelectedDatasource(t *testing.T) {
 
 	previous := viper.Get("databases")
 	viper.Set("databases", map[string]any{
-		"default": pgConfig(),
-		"creatio": secondary,
+		"default": def.config,
+		"creatio": creatio.config,
 	})
 	t.Cleanup(func() { viper.Set("databases", previous) })
 
-	// Run `db:migrate up --datasource=creatio`.
-	runMigrateUp(t, "creatio",
+	migrations := []core.IMigration{
 		scopedMigration{name: "creatio_table", target: "creatio", table: "creatio_only"},
 		scopedMigration{name: "default_table", target: "default", table: "default_only"},
-	)
+	}
 
-	assert.True(t, myGorm.Migrator().HasTable("creatio_only"),
-		"the creatio-scoped migration must have run on MySQL")
-	assert.False(t, myGorm.Migrator().HasTable("default_only"),
-		"the default-scoped migration must NOT have run on MySQL")
-	assert.False(t, pgGorm.Migrator().HasTable("creatio_only"),
-		"nothing must have been applied to Postgres")
-	assert.False(t, pgGorm.Migrator().HasTable("default_only"),
+	// Run `db:migrate up --datasource=creatio`.
+	runMigrateUp(t, "creatio", migrations...)
+
+	assert.True(t, creatio.gorm.Migrator().HasTable("creatio_only"),
+		"the creatio-scoped migration must have run on %s", creatio.engine)
+	assert.False(t, creatio.gorm.Migrator().HasTable("default_only"),
+		"the default-scoped migration must NOT have run on %s", creatio.engine)
+	assert.False(t, def.gorm.Migrator().HasTable("creatio_only"),
+		"nothing must have been applied to %s", def.engine)
+	assert.False(t, def.gorm.Migrator().HasTable("default_only"),
 		"the default-scoped migration must not run when creatio is selected")
 
 	// Now the default run.
-	runMigrateUp(t, "default",
-		scopedMigration{name: "creatio_table", target: "creatio", table: "creatio_only"},
-		scopedMigration{name: "default_table", target: "default", table: "default_only"},
-	)
+	runMigrateUp(t, "default", migrations...)
 
-	assert.True(t, pgGorm.Migrator().HasTable("default_only"),
-		"the default-scoped migration must have run on Postgres")
-	assert.False(t, pgGorm.Migrator().HasTable("creatio_only"),
-		"the creatio-scoped migration must never touch Postgres")
+	assert.True(t, def.gorm.Migrator().HasTable("default_only"),
+		"the default-scoped migration must have run on %s", def.engine)
+	assert.False(t, def.gorm.Migrator().HasTable("creatio_only"),
+		"the creatio-scoped migration must never touch %s", def.engine)
+
+	// Each database keeps its own bookkeeping, which is what makes a later run on either one
+	// skip only what ran there.
+	assert.True(t, isApplied(t, creatio.gorm, "creatio_table"))
+	assert.False(t, isApplied(t, creatio.gorm, "default_table"))
+	assert.True(t, isApplied(t, def.gorm, "default_table"))
+	assert.False(t, isApplied(t, def.gorm, "creatio_table"))
 }
 
 // ---------------------------------------------------------------- MySQL usable
@@ -811,7 +836,14 @@ func TestT17_MigrateDownActuallyRollsBack(t *testing.T) {
 	})
 	t.Cleanup(func() { ds.Close() })
 
-	gormDb := gormOf(t, ds)
+	assertMigrateDownActuallyRollsBack(t, gormOf(t, ds), pgConfig)
+}
+
+// assertMigrateDownActuallyRollsBack is TestT17_MigrateDownActuallyRollsBack on the engine
+// config describes, as `default`, with gormDb a handle on the same database.
+func assertMigrateDownActuallyRollsBack(t *testing.T, gormDb *gorm.DB, config func() map[string]any) {
+	t.Helper()
+
 	reset := func() {
 		assert.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS step_one`).Error)
 		assert.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS step_two`).Error)
@@ -821,7 +853,7 @@ func TestT17_MigrateDownActuallyRollsBack(t *testing.T) {
 	t.Cleanup(reset)
 
 	previous := viper.Get("databases")
-	viper.Set("databases", map[string]any{"default": pgConfig()})
+	viper.Set("databases", map[string]any{"default": config()})
 	t.Cleanup(func() { viper.Set("databases", previous) })
 
 	one := scopedMigration{name: "step_one", target: "default", table: "step_one"}
@@ -867,7 +899,14 @@ func TestT17_StepsRollsBackSeveralAtOnce(t *testing.T) {
 	})
 	t.Cleanup(func() { ds.Close() })
 
-	gormDb := gormOf(t, ds)
+	assertStepsRollsBackSeveralAtOnce(t, gormOf(t, ds), pgConfig)
+}
+
+// assertStepsRollsBackSeveralAtOnce is TestT17_StepsRollsBackSeveralAtOnce on the engine
+// config describes.
+func assertStepsRollsBackSeveralAtOnce(t *testing.T, gormDb *gorm.DB, config func() map[string]any) {
+	t.Helper()
+
 	reset := func() {
 		assert.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS step_one`).Error)
 		assert.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS step_two`).Error)
@@ -877,7 +916,7 @@ func TestT17_StepsRollsBackSeveralAtOnce(t *testing.T) {
 	t.Cleanup(reset)
 
 	previous := viper.Get("databases")
-	viper.Set("databases", map[string]any{"default": pgConfig()})
+	viper.Set("databases", map[string]any{"default": config()})
 	t.Cleanup(func() { viper.Set("databases", previous) })
 
 	one := scopedMigration{name: "step_one", target: "default", table: "step_one"}
@@ -900,7 +939,14 @@ func TestT17_RollbackIsTransactional(t *testing.T) {
 	})
 	t.Cleanup(func() { ds.Close() })
 
-	gormDb := gormOf(t, ds)
+	assertRollbackIsTransactional(t, gormOf(t, ds), pgConfig)
+}
+
+// assertRollbackIsTransactional is TestT17_RollbackIsTransactional on the engine config
+// describes.
+func assertRollbackIsTransactional(t *testing.T, gormDb *gorm.DB, config func() map[string]any) {
+	t.Helper()
+
 	reset := func() {
 		assert.NoError(t, gormDb.Exec(`DROP TABLE IF EXISTS step_one`).Error)
 		assert.NoError(t, gormDb.Migrator().DropTable(&db.Migration{}))
@@ -909,7 +955,7 @@ func TestT17_RollbackIsTransactional(t *testing.T) {
 	t.Cleanup(reset)
 
 	previous := viper.Get("databases")
-	viper.Set("databases", map[string]any{"default": pgConfig()})
+	viper.Set("databases", map[string]any{"default": config()})
 	t.Cleanup(func() { viper.Set("databases", previous) })
 
 	good := scopedMigration{name: "step_one", target: "default", table: "step_one"}
@@ -1264,13 +1310,23 @@ var seedScenarios = map[string]seedScenario{
 	"mysql-save-fails":   {mysqlConfig, probeSeeder{name: "probe_save_fails", labels: []string{"one", "refused"}}, refuseProbeLabel},
 	"mysql-record-fails": {mysqlConfig, probeSeeder{name: "probe_record_fails", labels: []string{"one", "two"}}, refuseSeederRows},
 
-	"mssql-succeeds":     {mssqlConfig, probeSeeder{name: "probe_seeds", labels: []string{"one", "two"}}, nil},
-	"mssql-save-fails":   {mssqlConfig, probeSeeder{name: "probe_save_fails", labels: []string{"one", "refused"}}, refuseProbeLabel},
-	"mssql-record-fails": {mssqlConfig, probeSeeder{name: "probe_record_fails", labels: []string{"one", "two"}}, refuseSeederRows},
+	"mssql-succeeds":       {mssqlConfig, probeSeeder{name: "probe_seeds", labels: []string{"one", "two"}}, nil},
+	"mssql-one-connection": {mssqlOneConnectionConfig, probeSeeder{name: "probe_seeds", labels: []string{"one", "two"}}, nil},
+	"mssql-save-fails":     {mssqlConfig, probeSeeder{name: "probe_save_fails", labels: []string{"one", "refused"}}, refuseProbeLabel},
+	"mssql-record-fails":   {mssqlConfig, probeSeeder{name: "probe_record_fails", labels: []string{"one", "two"}}, refuseSeederRows},
 }
 
 func pgOneConnectionConfig() map[string]any {
 	cfg := pgConfig()
+	cfg["properties"] = map[string]any{"maxOpenConnections": 1}
+	return cfg
+}
+
+// mssqlOneConnectionConfig is pgOneConnectionConfig on SQL Server. With one connection in the
+// pool, a statement db:seed sent on the pool while a seeder's transaction held that connection
+// would wait for it for good, on any engine.
+func mssqlOneConnectionConfig() map[string]any {
+	cfg := mssqlConfig()
 	cfg["properties"] = map[string]any{"maxOpenConnections": 1}
 	return cfg
 }
@@ -2175,7 +2231,7 @@ func TestTheUpsertOptInWorksThroughTheConfig(t *testing.T) {
 	}), "a transaction's builder must honour the opt-in too")
 }
 
-// ------------------------------------- I3: the sweep must batch, on both engines
+// ------------------------------------- I3: the sweep must batch, on every engine
 
 // I3. DbSessionRepository.DeleteExpired used to be one statement:
 //
@@ -2228,11 +2284,18 @@ func countSessions(t *testing.T, gormDb *gorm.DB) int64 {
 // runBatchedSweep executes the framework's own batched statement the way DeleteExpired does,
 // through the session executor, and returns how many batches it took.
 //
-// It drives the real SQL and the real loop condition rather than calling DeleteExpired, whose
-// container-injected dbContext is not available here — so what is verified is that the
-// statement both engines have to accept does batch, and terminates.
+// It drives the real SQL and the real loop condition itself rather than calling DeleteExpired,
+// so that it can count the batches: what is verified is that the statement each engine has to
+// accept does batch, and terminates. The statement is the one DeleteExpired picks for the
+// datasource's dialect: BatchedExpiredDeleteSQL on Postgres and MySQL, byte for byte, and the
+// T-SQL one on SQL Server. TestDeleteExpiredPicksTSQLThroughTheRealRepository covers the real
+// repository's path, with the dbContext the container injects.
 func runBatchedSweep(t *testing.T, ds dbCore.IDataSource, batch int) int {
 	t.Helper()
+
+	aware, ok := ds.(interface{ Dialect() dbCore.SQLDialect })
+	require.True(t, ok, "datasource must expose its dialect")
+	statement := auth.BatchedExpiredDeleteSQLFor(aware.Dialect().Name())
 
 	session, err := ds.NewSession()
 	require.NoError(t, err)
@@ -2240,7 +2303,7 @@ func runBatchedSweep(t *testing.T, ds dbCore.IDataSource, batch int) int {
 
 	batches := 0
 	for {
-		result := session.Executor().ExecRaw(ctxBackground(), auth.BatchedExpiredDeleteSQL, batch)
+		result := session.Executor().ExecRaw(ctxBackground(), statement, batch)
 		require.NoError(t, result.Error, "the batched delete must be valid on this engine")
 		batches++
 

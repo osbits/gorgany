@@ -2,7 +2,8 @@
 
 The `sqlserver_gorm` driver connects to SQL Server 2016 or newer and to Azure SQL Database. It
 signs in with a SQL login, or with Microsoft Entra ID (formerly Azure Active Directory). This
-document covers connecting and signing in. What the dialect refuses and translates is in
+document covers connecting, signing in, and SQL Server as the `default` gorgany owns. What the
+dialect refuses and translates is in
 [DIALECTS.md](DIALECTS.md#what-sql-server-refuses-and-translates), and how a second datasource
 is deployed is in [DEPLOYMENT.md](DEPLOYMENT.md#more-than-one-datasource).
 
@@ -417,3 +418,122 @@ shutdown deadline passes.
 `external_schema: true` keeps `db:migrate`, `db:seed` and `db:diff` away from the database.
 DEPLOYMENT.md, "More than one datasource", says what that datasource gets in deployment:
 no migrate or seed service.
+
+## SQL Server as the owned `default`
+
+SQL Server can be the database gorgany owns: the `default` that holds the app's tables, its
+`migrations` and `seeders` bookkeeping, and database sessions. Configure it like any other
+datasource, without `external_schema` and `read_only`:
+
+```yaml
+databases:
+  default:
+    driver: sqlserver_gorm
+    host: ${DB_HOST}
+    port: 1433
+    db: ${DB_NAME}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}           # or an auth block; see "Signing in"
+```
+
+The principal needs DDL rights in that database as well as reads and writes, since
+`db:migrate` creates tables: `db_ddladmin` with `db_datareader` and `db_datawriter`, or
+`db_owner`. That is the opposite of the advice for an externally owned database under "Azure
+notes", and the reason to keep the two apart.
+
+Up to and including v2.4.3 there is no SQL Server engine, so nothing below applies to them.
+
+### Migrations and seeders
+
+`db:migrate` and `db:seed` work as they do on Postgres (PROJECT_STRUCTURE.md, "Migrations and
+seeders"). SQL Server's DDL is transactional, so a migration and its row in `migrations` commit
+together or not at all, and `db:migrate down` drops a migration's schema and its row together.
+Every connection runs `SET XACT_ABORT ON`, so a statement that fails inside a migration dooms
+the transaction even if the migration swallows the error: the migration fails instead of
+committing the statements around it. A seeder's rows and its row in `seeders` commit together
+as well.
+
+`migrations` and `seeders` key each row by a unique name, which gorm declares as
+`nvarchar(256)`. `db:migrate` and `db:seed` look for those two tables, and the sessions
+migrations for `sessions`, where the unqualified names resolve: in the login's default schema,
+then `dbo`. A table of the same name in another schema of the database, in any case, such as
+one an externally owned schema keeps beside gorgany's, is neither read nor changed.
+
+Writing a migration by hand:
+
+- T-SQL has no `CREATE TABLE IF NOT EXISTS`. Guard it with `IF OBJECT_ID(N'<table>', N'U') IS
+  NULL`. `DROP TABLE IF EXISTS` works.
+- gorm's `Migrator().HasTable` and `HasColumn` find a table or column of that name in any
+  schema of the database, and the default collation ignores case. Where another schema may
+  use the same name, ask `OBJECT_ID(N'<table>', N'U')` and `COL_LENGTH(N'<table>',
+  N'<column>')` instead, which resolve the name as the unqualified DDL after them does.
+- A string column that a gorm model tags `uniqueIndex` needs a `size`. Without one gorm declares
+  it `nvarchar(max)`, which cannot be indexed, and the migration fails with Msg 1919. The
+  `unique` and `index` tags get `nvarchar(256)` without a size.
+- A column added with a default gets a DEFAULT constraint that SQL Server names itself, and
+  `ALTER TABLE … DROP COLUMN` is refused while it exists (Msg 5074, then 4922). A `Down()` that
+  drops such a column drops the constraint first. The framework's sessions version migration
+  does it with this batch, in `@sql` because `EXEC ( … )` cannot call `QUOTENAME`:
+
+  ```sql
+  DECLARE @df sysname, @sql nvarchar(max);
+  SELECT @df = dc.name FROM sys.default_constraints AS dc
+  JOIN sys.columns AS c ON c.object_id = dc.parent_object_id AND c.column_id = dc.parent_column_id
+  WHERE dc.parent_object_id = OBJECT_ID(N'sessions') AND c.name = N'version';
+  IF @df IS NOT NULL
+  BEGIN
+      SET @sql = N'ALTER TABLE [sessions] DROP CONSTRAINT ' + QUOTENAME(@df);
+      EXEC sp_executesql @sql;
+  END
+  ```
+
+  Pass it to `dbGorm.Exec` with no arguments. gorm then leaves `@df` and `@sql` as written.
+
+### `db:diff`
+
+`db:diff` runs on a SQL Server datasource. `command/db.TransactionalDDLDialects` lists it
+beside Postgres, because the `CREATE TABLE` and `ALTER TABLE` statements the diff runs to find
+differences roll back with its transaction there too. The draft differs from a Postgres one in
+two places:
+
+- The struct column of a domain another one extends is added as
+  `ALTER TABLE [<table>] ADD [<column>] nvarchar(255) NULL`.
+- gorm stores a column comment with `sp_addextendedproperty`, and binds the schema, table and
+  column names as arguments. The draft runs each statement without arguments, so the diff
+  writes those names into the statement as string literals. A statement that binds anything
+  other than a string stops the diff before it writes a draft, with an error that names the
+  statement; write that change by hand.
+
+The diff asks gorm's migrator whether each domain's table and columns exist, and on SQL Server
+the migrator finds them by name in any schema of the database. A domain whose table name
+another schema also uses can be compared with the other schema's table, so the draft can miss
+changes it needs, or the diff fails. Write that domain's migration by hand. Review the draft as
+PROJECT_STRUCTURE.md says.
+
+### Database sessions
+
+With `auth.session.storage: database` on a SQL Server `default`, the two sessions migrations
+create `sessions` with SQL Server's own types. `id` and `user_id` are `nvarchar(255)`, and the
+attribute bag is `nvarchar(max)`, because `varchar` and `text` store only the characters of
+the column collation's code page. The timestamps are `datetimeoffset`.
+`migration.SessionsTableModelFor("sqlserver")` returns the model the migration uses there.
+
+The expired-session sweep runs `auth.BatchedExpiredDeleteSQLServer`:
+
+```sql
+DELETE TOP (?) FROM [sessions] WHERE [expiry] < SYSDATETIMEOFFSET()
+```
+
+`SYSDATETIMEOFFSET()` carries its offset, so the sweep compares instants and the server's time
+zone does not matter. `auth.BatchedExpiredDeleteSQLFor(dialect)` returns the statement for a
+dialect name, for an app that sweeps from a job of its own. Postgres and MySQL keep
+`auth.BatchedExpiredDeleteSQL`.
+
+Several replicas run every job, the sweep included. DEPLOYMENT.md, "More than one instance",
+gives SQL Server's lock for a job that must run once.
+
+### Tests
+
+testsupport runs an app's integration tests against SQL Server. It creates the test database
+through `master`, empties tables with a sequence of its own, and needs the driver imported into
+the test binary. [TESTING.md](TESTING.md#sql-server) has the details.
