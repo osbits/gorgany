@@ -299,7 +299,11 @@ change what Postgres and MySQL apps see too. No existing interface gains a metho
     Entra ID method, and pings the server, trying five times over about fifteen seconds while
     Azure SQL answers that the database is resuming or busy (40613, 40501, 40197 and others),
     and failing at once on a failed login (18456) or a database the login cannot open (4060).
-    With `lazy_connect` it does neither, and the first query does both.
+    With `lazy_connect` it does neither, and the first query does both. Every connection takes
+    its token before it dials: go-mssqldb asks only after its prelogin, so a sign-in that waits
+    on a person, as the first under `lazy_connect` with `interactive` does, would leave the
+    connection idle until the Azure SQL gateway closed it, failing the query with "write:
+    broken pipe".
 
   docs/SQLSERVER.md, new, is the guide: the imports, the keys a DataGrip or SSMS connection maps
   to, signing in, adding an externally owned datasource to an app, mapping EF Core tables, SQL
@@ -1085,9 +1089,12 @@ owned `default`", covers each.
   its first run is the push of this release.
 - Microsoft Entra ID: every `auth.method` is tested with stand-in credentials, and the
   datasource end to end, through the engine, the token source and go-mssqldb's connector,
-  against an in-test server that speaks just enough TDS to take a login
-  (`azuread/data_source_test.go`). No method has signed in to a real Azure SQL Database for
-  this release. The manual test for that,
+  against an in-test server that speaks just enough TDS to take a login, and can close a
+  connection left idle after prelogin as the Azure SQL gateway does
+  (`azuread/data_source_test.go`). One method has signed in to a real Azure SQL Database for
+  this release: `interactive`, under `lazy_connect` with the in-memory token cache, from an
+  application built on this tree, as a principal that may only read. No other method has. The
+  manual test against a real database,
   `go test -tags=azuresql ./db/sql/driver/sqlserver/azuread -run AzureSQL -v` with the
   `GORGANY_AZURESQL_*` variables, is compiled by CI and has not been run. The persistent token
   cache's silent sign-in after a restart is tested with a stand-in cache; it has not been tried

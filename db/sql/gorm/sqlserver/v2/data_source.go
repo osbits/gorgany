@@ -63,8 +63,9 @@ func NewDataSource(config map[string]any) (dbCore.IDataSource, error) {
 //
 // Without lazy_connect it then signs in and connects, retrying the errors Azure SQL returns
 // while it resumes or fails over, and an unreachable server or a failed login fails the
-// constructor. With lazy_connect it opens nothing, and the first query makes the first
-// connection, signing in then.
+// constructor. With lazy_connect it opens nothing, and the first query signs in and then makes
+// the first connection. Every connection takes its token before it dials (see
+// tokenFirstConnector).
 //
 // No error contains the DSN, a password, a secret or a token: they name the server as
 // host:port/db (see describe) and the sign-in method.

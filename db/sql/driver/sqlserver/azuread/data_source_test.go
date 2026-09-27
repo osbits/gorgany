@@ -48,14 +48,22 @@ type fakeTDS struct {
 	// certPath is the server's certificate as a PEM file, which options.certificate verifies
 	// the connection against.
 	certPath string
-	wg       sync.WaitGroup
+	// idle, when set, is how long the fake waits for the login after its prelogin reply before it
+	// closes the connection, as the Azure SQL gateway closes one that sits idle.
+	idle time.Duration
+	wg   sync.WaitGroup
 
-	mu     sync.Mutex
-	logins [][]byte
-	wire   []byte
+	mu         sync.Mutex
+	logins     [][]byte
+	wire       []byte
+	idleClosed int
 }
 
-func startFakeTDS(t *testing.T) *fakeTDS {
+func startFakeTDS(t *testing.T) *fakeTDS { return startGateway(t, 0) }
+
+// startGateway is startFakeTDS closing each connection that sends no login within idle of the
+// prelogin reply.
+func startGateway(t *testing.T, idle time.Duration) *fakeTDS {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -65,6 +73,7 @@ func startFakeTDS(t *testing.T) *fakeTDS {
 		listener: listener,
 		tls:      &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"tds/8.0"}},
 		certPath: writeFile(t, "server.pem", certPEM),
+		idle:     idle,
 	}
 	server.wg.Add(1)
 	go server.serve()
@@ -155,7 +164,16 @@ func (f *fakeTDS) handle(raw net.Conn) {
 	if writeTDS(conn, tdsReply, preloginReply()) != nil {
 		return
 	}
+	if f.idle > 0 {
+		_ = raw.SetReadDeadline(time.Now().Add(f.idle))
+	}
 	kind, login, err := readTDS(conn)
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		f.mu.Lock()
+		f.idleClosed++
+		f.mu.Unlock()
+	}
 	if err != nil || kind != tdsLogin7 {
 		return
 	}
@@ -169,6 +187,13 @@ func (f *fakeTDS) loginCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.logins)
+}
+
+// idleCloses is how many connections the fake closed for sending no login within idle.
+func (f *fakeTDS) idleCloses() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.idleClosed
 }
 
 // wireCarries reports whether token crossed the wire in clear, and how many bytes the wire
@@ -368,6 +393,37 @@ func TestLazyConnectDefersTheSignInToTheFirstConnection(t *testing.T) {
 	assert.Equal(t, 1, authenticates, "the first connection signed in")
 	assert.Equal(t, 1, getTokens)
 	assert.Equal(t, []bool{true, true}, server.loginTokens("token-1"), "both connections used the one token")
+}
+
+// TestASlowSignInDoesNotStrandTheConnection: the first connection under lazy_connect signs the
+// person in, which takes as long as they take, MFA included. Had it dialled first, the
+// connection would sit idle through the sign-in, the gateway would close it, and the login would
+// be written to a closed socket: "write: broken pipe". It signs in first and then dials, so the
+// login follows the prelogin at once.
+func TestASlowSignInDoesNotStrandTheConnection(t *testing.T) {
+	const idle = 200 * time.Millisecond
+	server := startGateway(t, idle)
+	cred := &fakeCredential{clock: newClock(), authenticate: func(ctx context.Context) error {
+		select {
+		case <-time.After(5 * idle):
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}}
+	useCredential(t, cred)
+
+	cfg := interactiveAt(server)
+	cfg.LazyConnect = true
+	ds, err := sqlserver.NewDataSourceWithConfig(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, ds.Close()) })
+
+	err = sqlDBOf(t, ds).PingContext(context.Background())
+	require.Error(t, err, "the fake server refuses every login")
+	assert.Contains(t, err.Error(), "Login failed", "the login reached a connection still open")
+	assert.Zero(t, server.idleCloses(), "no connection sat idle through the sign-in")
+	assert.Equal(t, []bool{true}, server.loginTokens("token-1"), "one connection, with the sign-in's token")
 }
 
 // TestCloseAbandonsALazySignInInFlight: a lazy interactive sign-in waits on a person under a

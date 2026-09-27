@@ -46,8 +46,8 @@ type signInCredential interface {
 
 // cachingTokenSource is the one sqlserver.TokenSource of one datasource, over its one credential.
 //
-// go-mssqldb asks for a token for every physical connection it opens, under the context of the
-// dial, and a pool of ten opening together asks ten times at once. azidentity keeps an in-memory
+// The engine asks for a token for every physical connection it opens, before it dials and under
+// the context of the dial, and a pool of ten opening together asks ten times at once. azidentity keeps an in-memory
 // cache per credential, but not every credential: the Azure CLI's runs `az` on every call. So the
 // source keeps the token itself, and has one acquisition in flight at a time, which every caller
 // that arrives meanwhile shares.

@@ -70,10 +70,10 @@ func loginTimeoutFor(method string, configured time.Duration) time.Duration {
 
 // TokenSource hands out the access token a connection signs in with.
 //
-// go-mssqldb calls Token for every physical connection it opens, with the context of the
-// dial, so a pool of ten asks ten times: an implementation caches its token and shares one
-// acquisition between callers that arrive together. It must return promptly once ctx is
-// done. Its errors must never contain the token or a secret.
+// The datasource calls Token for every physical connection it opens, before it dials and with
+// the context of the dial, so a pool of ten asks ten times: an implementation caches its token
+// and shares one acquisition between callers that arrive together. It must return promptly
+// once ctx is done. Its errors must never contain the token or a secret.
 type TokenSource interface {
 	Token(ctx context.Context) (string, error)
 }
@@ -119,7 +119,7 @@ type AuthRequest struct {
 //
 // The engine wraps an error it returns with the method and the database, so the error says
 // only what is wrong. The TokenSource's errors are not wrapped that way on every path, since
-// go-mssqldb reports them to whichever query opened the connection, so they name the database
+// they reach whichever query opened the connection as they are, so they name the database
 // themselves, as AuthRequest.Target does.
 type Authenticator func(AuthRequest) (TokenSource, error)
 

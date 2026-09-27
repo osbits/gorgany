@@ -62,12 +62,97 @@ func TestSessionInitSQLSetsXactAbort(t *testing.T) {
 
 	connector, err := newConnector(dsn, nil)
 	require.NoError(t, err)
-	assert.Equal(t, "SET XACT_ABORT ON", connector.SessionInitSQL)
+	assert.Equal(t, "SET XACT_ABORT ON", connector.(*mssql.Connector).SessionInitSQL)
 
 	tokens := &datasourceTokens{source: staticTokens("t"), root: context.Background(), cancel: func() {}}
 	connector, err = newConnector(dsn, tokens)
 	require.NoError(t, err)
-	assert.Equal(t, "SET XACT_ABORT ON", connector.SessionInitSQL)
+	assert.Equal(t, "SET XACT_ABORT ON", connector.(*tokenFirstConnector).connector.SessionInitSQL)
+}
+
+// connectSteps is a token source and a go-mssqldb Dialer that record, in order, each token
+// request and each dial, with the token the dial's context carries to the login and what that
+// context prints. It refuses every dial.
+type connectSteps struct {
+	mu      sync.Mutex
+	steps   []string
+	printed string
+}
+
+// Token hands out token-<n>, n counting the steps so far.
+func (s *connectSteps) Token(context.Context) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.steps = append(s.steps, "token")
+	return fmt.Sprintf("token-%d", len(s.steps)), nil
+}
+
+func (s *connectSteps) DialContext(ctx context.Context, _, _ string) (net.Conn, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	token, _ := tokenTaken(ctx)
+	s.steps = append(s.steps, "dial with "+token)
+	s.printed = fmt.Sprint(ctx)
+	return nil, &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}
+}
+
+func (s *connectSteps) seen() ([]string, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.steps, s.printed
+}
+
+// recordedConnector is the connector newConnector makes over tokens, dialling through steps to
+// the unreachable server's IP, which go-mssqldb dials without a DNS lookup.
+func recordedConnector(t *testing.T, tokens *datasourceTokens, steps *connectSteps) driver.Connector {
+	t.Helper()
+	dsn, err := BuildDSN(unreachable())
+	require.NoError(t, err)
+	connector, err := newConnector(dsn, tokens)
+	require.NoError(t, err)
+	connector.(*tokenFirstConnector).connector.Dialer = steps
+	return connector
+}
+
+// TestAConnectionTakesItsTokenBeforeItDials: go-mssqldb asks for the token only after it has
+// dialled and exchanged prelogin, so a sign-in that waits on a person would leave the connection
+// idle until the gateway closed it. The connector asks first, and the token rides the context
+// go-mssqldb dials under, which is the one its login asks with, so the login sends that token.
+func TestAConnectionTakesItsTokenBeforeItDials(t *testing.T) {
+	steps := &connectSteps{}
+	tokens := &datasourceTokens{source: steps, root: context.Background(), cancel: func() {}}
+
+	_, err := recordedConnector(t, tokens, steps).Connect(ctx)
+	require.ErrorIs(t, err, syscall.ECONNREFUSED)
+	seen, printed := steps.seen()
+	assert.Equal(t, []string{"token", "dial with token-1"}, seen)
+	assert.NotEmpty(t, printed)
+	assert.NotContains(t, printed, "token-1", "a logger that prints the context does not print the token")
+
+	steps = &connectSteps{}
+	failing := &datasourceTokens{source: failingTokens{errors.New("no browser to open")}, root: context.Background(), cancel: func() {}}
+	_, err = recordedConnector(t, failing, steps).Connect(ctx)
+	require.EqualError(t, err, "no browser to open")
+	seen, _ = steps.seen()
+	assert.Empty(t, seen, "a connection without a token is never dialled")
+}
+
+// TestTheLoginPrefersTheTokenTakenForIt: loginToken, which go-mssqldb's login calls, answers
+// with the token the connector took without asking the source again, whether or not the source
+// caches, and asks the source only when the context carries none.
+func TestTheLoginPrefersTheTokenTakenForIt(t *testing.T) {
+	steps := &connectSteps{}
+	tokens := &datasourceTokens{source: steps, root: context.Background(), cancel: func() {}}
+
+	token, err := tokens.loginToken(context.WithValue(ctx, takenTokenKey{}, &takenToken{token: "taken"}))
+	require.NoError(t, err)
+	assert.Equal(t, "taken", token)
+	seen, _ := steps.seen()
+	assert.Empty(t, seen, "the source was not asked again")
+
+	token, err = tokens.loginToken(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "token-1", token, "a login without one asks the source")
 }
 
 type timeoutError struct{}

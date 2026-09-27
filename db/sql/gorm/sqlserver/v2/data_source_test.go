@@ -181,7 +181,8 @@ func TestAFakeAuthenticatorIsCalledOnceAndWarmedUp(t *testing.T) {
 	assert.Contains(t, err.Error(), "(auth: azure_cli)")
 
 	assert.Equal(t, 1, c.calls)
-	assert.Equal(t, 1, c.tokens, "the warm-up asked once, and the refused dial never got as far as signing in")
+	assert.Equal(t, 2, c.tokens, "the warm-up asked, and the connection asked again before its dial was refused, "+
+		"of a source that caches nothing")
 	assert.Equal(t, AuthMethodAzureCLI, c.request.Method)
 	assert.Equal(t, "127.0.0.1", c.request.Host)
 	assert.Equal(t, "Example-db", c.request.Database)
@@ -244,7 +245,7 @@ func TestCloseAbandonsATokenRequestInFlight(t *testing.T) {
 
 	requested := make(chan error, 1)
 	go func() {
-		// What go-mssqldb calls while it signs a new connection in.
+		// What a new connection asks before it dials.
 		_, err := ds.tokens.token(context.Background())
 		requested <- err
 	}()

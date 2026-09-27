@@ -87,7 +87,10 @@ type clock struct {
 	now time.Time
 }
 
-func newClock() *clock { return &clock{now: time.Date(2026, 9, 27, 9, 0, 0, 0, time.UTC)} }
+// newClock starts at the real time. A source the engine builds, as the datasource tests use,
+// judges its tokens by time.Now, not by the clock that stamped them, so tokens stamped from a
+// fixed date would all be expired once that date had passed.
+func newClock() *clock { return &clock{now: time.Now()} }
 
 func (c *clock) Now() time.Time {
 	c.mu.Lock()

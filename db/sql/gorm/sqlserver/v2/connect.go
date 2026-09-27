@@ -3,6 +3,7 @@ package v2
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"io"
@@ -65,24 +66,79 @@ func applyPool(db *sql.DB, p dsconfig.Pool) {
 	db.SetConnMaxLifetime(p.ConnectionMaxLifetime)
 }
 
-// newConnector returns go-mssqldb's connector for dsn: a SQL login's when tokens is nil, and
-// one that signs in with tokens' tokens otherwise. Either runs sessionInitSQL on every
-// connection.
-func newConnector(dsn string, tokens *datasourceTokens) (*mssql.Connector, error) {
-	var (
-		connector *mssql.Connector
-		err       error
-	)
+// newConnector returns the connector for dsn: go-mssqldb's for a SQL login when tokens is nil,
+// and otherwise one that takes a token from tokens before each dial (see tokenFirstConnector).
+// Either runs sessionInitSQL on every connection.
+func newConnector(dsn string, tokens *datasourceTokens) (driver.Connector, error) {
 	if tokens == nil {
-		connector, err = mssql.NewConnector(dsn)
-	} else {
-		connector, err = mssql.NewConnectorWithAccessTokenProvider(dsn, tokens.token)
+		connector, err := mssql.NewConnector(dsn)
+		if err != nil {
+			return nil, err
+		}
+		connector.SessionInitSQL = sessionInitSQL
+		return connector, nil
 	}
+
+	connector, err := mssql.NewConnectorWithAccessTokenProvider(dsn, tokens.loginToken)
 	if err != nil {
 		return nil, err
 	}
 	connector.SessionInitSQL = sessionInitSQL
-	return connector, nil
+	return &tokenFirstConnector{connector: connector, tokens: tokens}, nil
+}
+
+// tokenFirstConnector is go-mssqldb's connector for an Entra ID sign-in, asking for the token
+// before it dials.
+//
+// go-mssqldb itself dials, completes TLS and exchanges prelogin, and only then asks for the
+// token, just before it sends the login. A token that takes a while leaves that connection idle
+// for as long: the first under lazy_connect with interactive or device_code waits on a person,
+// MFA included, and the Azure SQL gateway closes an idle connection long before they are done.
+// The login is then written to a closed socket, and the query fails with "write: broken pipe"
+// though the sign-in worked. Taken first, the token is in hand when the connection opens, and
+// the login follows the prelogin at once.
+//
+// The token rides the dial's context to the login (see loginToken), so the connection signs in
+// with the token taken for it, without asking the source again.
+type tokenFirstConnector struct {
+	connector *mssql.Connector
+	tokens    *datasourceTokens
+}
+
+func (c *tokenFirstConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	token, err := c.tokens.token(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.connector.Connect(context.WithValue(ctx, takenTokenKey{}, &takenToken{token: token}))
+}
+
+func (c *tokenFirstConnector) Driver() driver.Driver { return c.connector.Driver() }
+
+// takenTokenKey is the context key under which tokenFirstConnector hands its token to the
+// login, as a *takenToken. A context prints the values it carries, a string as it is and a
+// pointer to a struct as its type alone, so a logger that prints the context go-mssqldb hands
+// it never prints the token.
+type takenTokenKey struct{}
+
+type takenToken struct{ token string }
+
+// tokenTaken returns the token tokenFirstConnector took for the connection ctx opens.
+func tokenTaken(ctx context.Context) (string, bool) {
+	taken, ok := ctx.Value(takenTokenKey{}).(*takenToken)
+	if !ok {
+		return "", false
+	}
+	return taken.token, true
+}
+
+// loginToken is the token go-mssqldb's login asks for: the one tokenFirstConnector took before
+// the dial, or a fresh one from the source should a connection arrive without it.
+func (t *datasourceTokens) loginToken(ctx context.Context) (string, error) {
+	if token, ok := tokenTaken(ctx); ok {
+		return token, nil
+	}
+	return t.token(ctx)
 }
 
 // retryPolicy is how often, and how patiently, pingWithRetry tries.
