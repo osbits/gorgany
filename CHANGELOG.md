@@ -374,6 +374,65 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `e2e/tests/live_sqlserver_test.go`, and the ORM cases that run on every engine gain a
   `sqlserver` subtest; docs/TESTING.md says how to run them, under Rosetta on Apple Silicon.
 
+- `orm.TableWithTriggers`, `interface{ TableHasTriggers() bool }`. A model whose table has an
+  enabled DML trigger that blocks `RETURNING` returns true, and `Create` and `Update` then read
+  generated columns back without it. SQL Server refuses the `OUTPUT` clause `RETURNING` becomes
+  on a table with a trigger on the statement's own action (Msg 334): a trigger on INSERT refuses
+  every `Create`, one on UPDATE every `Update` of a model with `grgorm:"readback"` fields, and
+  one on DELETE nothing the ORM sends. The hint Msg 334 carries now names this interface.
+  `Create` then inserts through the executor's `ExecInsert`, which on SQL Server reads the key
+  with `SCOPE_IDENTITY()` in the same batch, the INSERT's own key and never one a trigger's
+  INSERT made, and reads any other generated column with a `SELECT` keyed on it; `Update`
+  re-reads the read-back fields with a `SELECT`. `SCOPE_IDENTITY()` reports only an `IDENTITY`
+  key, so on such a table a key from a default or a sequence, a `NEWSEQUENTIALID()` key, and
+  any key under an `INSTEAD OF INSERT` trigger has to be assigned by the entity; `VerifyModel`
+  says so. It is asked only where the dialect reports that triggers block its `RETURNING`
+  (`core.ReturningBlockedByTriggers`), so a model shared with Postgres keeps `RETURNING` there.
+- `grgorm:"readback"` (`core.GorganyORMReadBack`) marks a field whose column the server sets,
+  such as a rowversion, a computed column or a default the app never writes. `Create` reads it
+  back with the generated key, and `Update` reads it back after a write that succeeded, so the
+  entity holds the row's value and the next update guarded on it matches. Where the dialect's
+  `RETURNING` can be used, it is read in the statement itself: `UPDATE … RETURNING` on Postgres,
+  and on SQL Server `UPDATE … SET … OUTPUT INSERTED.… WHERE …`, whose rows are the rows the
+  UPDATE matched, so a guard still tells a lost write from a row that is gone. On MySQL, and on
+  a table whose model implements `TableWithTriggers`, it is a `SELECT` by every key column after
+  the INSERT or UPDATE, a statement of its own: a write another session commits between the two
+  is what it reads, so the entity can take that write's rowversion without its values, and a
+  guard on the rowversion then matches over it. On such a table, `Refresh` the entity before a
+  guarded update that must not overwrite a write it has not seen. The tag does not stop a field
+  being written, so a server-set column is usually tagged `gorm:"->"` too. It is matched as one
+  whole comma-separated value.
+- `orm.VerifyModel(ctx, session, model)`, which compares a hand-written model with the table
+  it maps and returns an `orm.ModelProblem` (`Table`, `Column`, `Kind`, `Detail`) for each
+  disagreement: a mapped column the table does not have, a NULLable column mapped to a Go type
+  that cannot hold NULL (which a full-row `Update` overwrites with the zero value), a computed
+  column a write would send, an IDENTITY column `Create` would send, an `autoIncrement` key
+  nothing on the server generates (gorm makes every single integer key one unless it is tagged
+  `autoIncrement:false`), a server default `Create` overrides (`grgorm:"readback"` is no
+  exemption, since it does not stop the write), triggers that block the `RETURNING` of a
+  statement the ORM sends without `TableHasTriggers`, a server-generated key `Create` cannot
+  read back without `RETURNING`, and a primary key that is not the table's. The kinds are the
+  `orm.Problem*` constants. It only reads, generates nothing and runs on a `read_only` and an
+  `external_schema` datasource. On a datasource that reports its table traits (below), which
+  the SQL Server one does, every check reads that one catalog query, which finds the table as
+  the server resolves the name in the ORM's own statements: gorm's migrator is not asked, since
+  for an unqualified name gorm.io/driver/sqlserver mixes in the columns of every schema's table
+  of that name, and it cannot read a bracketed name. On one that does not, the column checks use
+  gorm's migrator, and the trigger, computed-column and key-generation checks are skipped. It is
+  meant to be run once per model mapped onto a schema another system owns, before the first
+  write.
+- `core.TableTraits` (the columns and which allow NULL, the enabled triggers that fire on INSERT,
+  those of them that are `INSTEAD OF`, and those that fire on UPDATE, the IDENTITY column, the
+  computed, rowversion and `GENERATED ALWAYS` columns, the defaulted columns, the primary key)
+  and `core.TableTraitsReporter`, an optional datasource interface that reads them from the
+  catalog. The SQL Server datasource implements it with one read-only `SELECT` over
+  `sys.columns`, `sys.triggers` and `sys.trigger_events`, `sys.identity_columns`,
+  `sys.default_constraints` and the primary key index, keyed by `OBJECT_ID` of the name
+  bracketed as the dialect writes it, so `dbo.2024Orders`, `[dbo].[2024Orders]` and an
+  unqualified `Orders2024`, in the login's default schema, resolve to the table the ORM writes;
+  a three- or four-part name, another database's table, is refused. Postgres and MySQL do not
+  implement it.
+
 ### Changed
 
 - `db:migrate`, `db:seed` and `db:diff` refuse a datasource with `external_schema: true` or
@@ -567,6 +626,78 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   **Upgrade note:** a branch protection rule that requires the check `live PostgreSQL and
   MySQL` has to require the new name instead.
 
+- The ORM writes what gorm's permission tags allow. An INSERT leaves out a field gorm will not
+  create and an UPDATE one it will not update: `gorm:"->"` (and `->:false`), `<-:false`,
+  `<-:create` on an update, `<-:update` on an insert, and `-:all`. The walks read only the
+  column name from the schema before, so a model could not map a column the server refuses to
+  be written, such as a rowversion (Msg 272). A field without a permission tag is written as
+  before: `TestExistingFixturesKeepTheirColumnLists` pins the INSERT and UPDATE lists of every
+  model the ORM's tests use. A zero primary key is left to the server when gorm's schema calls
+  it auto-increment — an `autoIncrement` tag, or the single integer key gorm makes one by
+  default — rather than by the tag heuristic that took every integer `primaryKey` for one.
+
+  **Upgrade note:** a field tagged `->` or `<-:…` is no longer written where the tag says it is
+  not; drop the tag if the column has to be written. Three zero keys are written differently:
+  an integer `ID` field without a `primaryKey` or `autoIncrement` tag (gorm's default
+  auto-increment key), whatever other tag it has, such as `gorm:"column:id"`, is left to the
+  server, where it was written as `0`; a key tagged `autoIncrement:false`, and the first column
+  of a composite integer key, are written even when zero, where they were left out; and a nil
+  pointer key gorm calls auto-increment is left out, where it was written as NULL. Tag a key the
+  server generates `autoIncrement`, and one the caller assigns `autoIncrement:false`.
+- A generated key `Create` cannot read back is an error: `orm: the INSERT into <table> succeeded
+  but the generated key could not be read back ([<columns>]); the row exists: the INSERT left
+  primary key column "<column>" to the server, which did not report the value it generated`. It
+  was a warning in the log and a nil error, which left the entity with a zero key that every
+  relation saved against it then stored, and a retry wrote the row twice. A key column the
+  INSERT wrote is now keyed on the value the entity holds, zero included, since that is the
+  row's key, so a key the caller assigned, such as a GUID, keys the read-back of the other
+  generated columns, which it never did; and the read-back is keyed by every key column. A model
+  with several auto-increment key columns is refused before its INSERT is sent rather than
+  after. A model without a primary key has nothing to select its row by and no key to lose, so
+  its defaulted columns are still only warned about, and its `Create` succeeds.
+
+  **Upgrade note:** the error says the row was written; do not retry the `Create`. It is
+  reached only where `RETURNING` is not used — MySQL, and a SQL Server table with
+  `TableHasTriggers` — and only for a key column the INSERT left to the server, an
+  auto-increment key left zero or a `gorm:"->"` key, that the server did not report: a table
+  whose key is not its auto-increment column behind a model that says it is, or on SQL Server a
+  key from a default or a sequence, a `NEWSEQUENTIALID()` key, or any key under an `INSTEAD OF
+  INSERT` trigger. `VerifyModel` reports each of these before the first write.
+- A many-to-many load joins the related table on the column the join row references, its
+  primary key or the column a `references:` tag names, where it compared the join column with a
+  column called `id`. The `ON` is still built from `?.` identifier placeholders, now four, so
+  Postgres and MySQL send the names as written, a digit-leading or non-ASCII table name
+  included, and for a related table keyed by `id` send the SQL they did; SQL Server's rendering
+  brackets each name. The batch load's select list is two items instead of one string.
+
+  **Upgrade note:** a many-to-many relation to a table keyed by anything but `id` loads now,
+  where it failed on an unknown column or joined the wrong rows.
+- The batch relation loads behind `Preload`/`With` split an `IN` list that does not fit the
+  dialect's bind-parameter limit (`core.BindParameterLimit`) into several queries and merge
+  their rows, and order a preload condition map's columns by name. Postgres and MySQL declare
+  no limit, so there it is one query, as before. `Preload` does not reach these loads today for
+  a model whose key field is not named like its column, such as `ID` for `id`: it reads the
+  parent's key through `meta.PrimaryKey`, a column name, as a Go field name, finds nothing and
+  loads nothing. That defect predates this release and is not changed by it; the split takes
+  effect once it is fixed. The stale-row `DELETE` of a many-to-many `Save` cannot be split,
+  since each statement would delete what the others keep, so a relation that keeps more related
+  rows than one statement can bind beside the owner's key is refused, before anything is
+  written: on SQL Server, more than 2097.
+
+  **Upgrade note:** only SQL Server declares a limit, so nothing that worked on Postgres or
+  MySQL changes.
+- The hint on SQL Server's Msg 334 names `TableHasTriggers() returning true`
+  (`orm.TableWithTriggers`) for an ORM model, before `ExecInsert`.
+
+  **Upgrade note:** the text of the hint changed; match on the error number.
+- `Create` of a model gorm cannot parse is refused with `cannot create domain: orm: cannot read
+  the primary key of <type>: <gorm's error>` before its `BeforeSave` and `BeforeCreate` hooks
+  run and before anything is sent, as `Update` and `Delete` already were. It used to be inserted
+  all the same, with the Go field names standing in for the columns the schema could not name,
+  and the server's refusal of that INSERT was the only error.
+
+  **Upgrade note:** such a model's hooks no longer run on `Create`; fix what gorm's error names.
+
 ### Fixed
 
 - The Postgres and MySQL executors' `ExecInsert` sent its INSERT on the handle's pool,
@@ -726,6 +857,20 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   either side can no longer be saved with that relation set, or loaded and cleared. Write its
   join rows with the query builder, and leave the relation nil and unloaded on the entity you
   save.
+- A field tagged `gorm:"-:all"` was written by `Create` and `Update` under an empty column name,
+  which no engine parses. It is left out, as `gorm:"-"` always was.
+- `Create` matched the generated columns an engine reported to the model's columns by exact
+  name only, so a column Postgres folds, such as `RETURNING Id` coming back as `id`, was silently
+  left unset. A name that differs only in case now matches when no exact one does.
+- Where `Create` reads generated columns without `RETURNING` — MySQL, and now a SQL Server table
+  with `TableHasTriggers` — the generated key the executor reported replaced the key column the
+  INSERT had just written. The reported value is the table's auto-increment or `IDENTITY`
+  column's, which need not be the key: on a table keyed by a caller-assigned column beside a
+  separate `IDENTITY`, the read-back selected another row, and the entity came back with that
+  row's key and rowversion, so its next guarded `Update` overwrote that row. The reported value
+  now keys only an auto-increment key column the INSERT left out; a key the INSERT wrote stays
+  the entity's. `VerifyModel` reports such a key as `autoincrement_without_identity`: tag it
+  `autoIncrement:false`.
 
 ---
 

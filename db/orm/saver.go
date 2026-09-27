@@ -5,7 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
-	"sync"
+	"sort"
+	"strings"
 
 	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
 	"github.com/osbits/gorgany/v2/log"
@@ -148,7 +149,18 @@ func (o *ORM[T]) Delete(entity T) error {
 	return nil
 }
 
-// createEntity handles the actual creation logic for an domain
+// createEntity handles the actual creation logic for an domain.
+//
+// A model gorm cannot parse is refused before its hooks run and before anything is sent. Its
+// schema names the key and the generated columns to read back. The model used to be inserted
+// all the same, with the Go field names for columns wherever the schema could not name them,
+// so the server refused the INSERT, or worse, took it.
+//
+// The generated columns — the key, every column with a default and every field tagged
+// grgorm:"readback" — are read back with the INSERT's RETURNING where the dialect has one and
+// the table allows it (see TableWithTriggers), and otherwise by insertAndReadBack. Each is
+// matched to its field by exact column name first and then ignoring case, since an engine may
+// report a name folded: Postgres returns RETURNING Id as id.
 func (o *ORM[T]) createEntity(entity T) error {
 	meta := entity.GetMeta()
 	if meta == nil {
@@ -161,10 +173,11 @@ func (o *ORM[T]) createEntity(entity T) error {
 		entity.SetMeta(meta)
 	}
 
-	// Try to use schema.Parse to get primary key information
-	schemaCache := &sync.Map{}
-	entitySchema, err := schema.Parse(entity, schemaCache, schema.NamingStrategy{})
-	if err == nil && len(entitySchema.PrimaryFieldDBNames) > 0 {
+	entitySchema, err := keySchema(entity)
+	if err != nil {
+		return fmt.Errorf("cannot create domain: %w", err)
+	}
+	if len(entitySchema.PrimaryFieldDBNames) > 0 {
 		// Update primary key in meta
 		meta.PrimaryKey = entitySchema.PrimaryFieldDBNames[0]
 	}
@@ -203,14 +216,16 @@ func (o *ORM[T]) createEntity(entity T) error {
 
 	// Refused before the INSERT is sent, so a Save whose cascade is refused writes nothing at
 	// all rather than the entity's own row and then an error (see checkCascade).
-	if entitySchema != nil {
-		if err := o.checkCascade(entity, entitySchema, val); err != nil {
-			return err
-		}
+	if err := o.checkCascade(entity, entitySchema, val); err != nil {
+		return err
 	}
 
 	// Extract field values using our new function that supports embedded structs
 	columns, values := extractFieldsForInsert(val, meta)
+	inserted := make(map[string]bool, len(columns))
+	for _, column := range columns {
+		inserted[column] = true
+	}
 
 	builder = builder.Columns(columns...).Values(values...)
 
@@ -231,6 +246,14 @@ func (o *ORM[T]) createEntity(entity T) error {
 			}
 		}
 	}
+	readback := map[string]bool{}
+	for _, f := range readbackFields(entitySchema) {
+		readback[f.DBName] = true
+		if _, ok := seen[f.DBName]; !ok {
+			returningCols = append(returningCols, f.DBName)
+			seen[f.DBName] = struct{}{}
+		}
+	}
 
 	// Read the server-generated columns back.
 	//
@@ -239,8 +262,16 @@ func (o *ORM[T]) createEntity(entity T) error {
 	// with MySQL error 1064 for the whole of v2. Which path to take is decided by
 	// asking the dialect, not by naming an engine, so a third dialect gets the right
 	// behaviour without touching this code.
+	//
+	// A dialect can also say that a trigger on the table makes the server refuse its
+	// RETURNING, as SQL Server's OUTPUT is refused (Msg 334), and a model on such a table
+	// says it has one (see TableWithTriggers). Both have to hold: the model's word alone
+	// changes nothing on an engine whose RETURNING triggers do not block, so a model shared
+	// with Postgres keeps RETURNING there.
+	destVal := reflect.Indirect(reflect.ValueOf(entity))
+
 	generated := map[string]interface{}{}
-	if dbCore.SupportsReturning(o.dialect()) {
+	if o.canReturn(entity) {
 		builder = builder.Returning(returningCols...)
 
 		queryRes := o.db.Executor().Find(context.Background(), builder, &generated)
@@ -249,18 +280,24 @@ func (o *ORM[T]) createEntity(entity T) error {
 		}
 	} else {
 		var err error
-		generated, err = o.insertAndReadBack(builder, entitySchema, returningCols)
+		generated, err = o.insertAndReadBack(builder, entitySchema, returningCols, destVal, inserted)
 		if err != nil {
 			return err
 		}
 	}
 
-	destVal := reflect.Indirect(reflect.ValueOf(entity))
 	for _, col := range returningCols {
-		if val, ok := generated[col]; ok {
+		if val, ok := columnValue(generated, col); ok {
 			if sf := entitySchema.LookUpField(col); sf != nil {
-				// Set — это schema.Field.Set, он правильно обходит вложенные поля
-				sf.Set(context.Background(), destVal, val)
+				// Set is schema.Field.Set, which reaches a field of an embedded struct too. A key
+				// or a read-back column that cannot be set is an error, as one that cannot be
+				// read is: the entity would carry a key, or a version, that is not the row's.
+				// Any other default column is left as it was when it cannot be, as it always
+				// has been.
+				if err := sf.Set(context.Background(), destVal, val); err != nil && (sf.PrimaryKey || readback[col]) {
+					return fmt.Errorf("orm: the INSERT into %s succeeded but its column %s could not be "+
+						"set on the entity; the row exists: %w", tableName, col, err)
+				}
 			}
 		}
 	}
@@ -413,8 +450,23 @@ func (o *ORM[T]) updateEntity(entity T, requireRow bool) error {
 		builder = builder.Where(guard)
 	}
 
-	// Execute the query
-	queryRes := o.db.Executor().Exec(context.Background(), builder)
+	// The columns the server changes on this write — its grgorm:"readback" fields — are read in
+	// the UPDATE itself where the dialect's RETURNING can be used on this table, so the entity
+	// holds the values this write produced. A separate SELECT afterwards would take a later
+	// write's values if another session committed one in between, and a guard on the column
+	// would then match over that write (see rereadReadbackFields for where that SELECT is still
+	// used). The rows RETURNING yields are the rows the UPDATE matched, so the guard logic below
+	// reads its count just as it reads Exec's.
+	readback := readbackFields(entitySchema)
+	returned := map[string]interface{}{}
+	returning := len(readback) > 0 && o.canReturn(entity)
+	var queryRes dbCore.QueryResult
+	if returning {
+		builder = builder.Returning(fieldColumns(readback)...)
+		queryRes = o.db.Executor().Find(context.Background(), builder, &returned)
+	} else {
+		queryRes = o.db.Executor().Exec(context.Background(), builder)
+	}
 	if queryRes.Error != nil {
 		return fmt.Errorf("failed to update domain: %w", queryRes.Error)
 	}
@@ -434,6 +486,19 @@ func (o *ORM[T]) updateEntity(entity T, requireRow bool) error {
 		// described above, and must not be reported as a failure.
 		if len(meta.UpdateGuard) > 0 {
 			return fmt.Errorf("%w: %s where %s", ErrRowConflict, tableName, describeKey(key))
+		}
+	}
+
+	// The columns the server changed on this write replace the entity's copies, which are the
+	// values from before it: from the UPDATE's RETURNING when it had one, and otherwise re-read.
+	switch {
+	case returning && queryRes.Found:
+		if err := setReadbackFields(tableName, readback, returned, val); err != nil {
+			return err
+		}
+	case !returning && len(readback) > 0:
+		if err := o.rereadReadbackFields(tableName, readback, key, val); err != nil {
+			return err
 		}
 	}
 
@@ -516,18 +581,53 @@ func (o *ORM[T]) rowExists(tableName string, keyColumns []string, conditions []d
 	return queryRes.Found, nil
 }
 
-// insertAndReadBack performs an INSERT on an engine that has no RETURNING clause,
-// then reads the server-generated columns back.
+// canReturn reports whether a write of entity may read columns back with the dialect's
+// RETURNING: the dialect has one, and it is not one a trigger blocks on a table whose model
+// says it has triggers (see TableWithTriggers). Both have to hold for the model's word to
+// matter: on an engine whose RETURNING triggers do not block, a model shared with it keeps
+// RETURNING there.
+func (o *ORM[T]) canReturn(entity any) bool {
+	dialect := o.dialect()
+	return dbCore.SupportsReturning(dialect) &&
+		!(dbCore.ReturningBlockedByTriggers(dialect) && hasTriggers(entity))
+}
+
+// errNoKeyToSelectBy is readBackKey's answer for a model with no primary key column.
+var errNoKeyToSelectBy = errors.New("the model has no primary key column to select the row by")
+
+// insertAndReadBack performs an INSERT without a RETURNING clause, then reads the
+// server-generated columns back. It is how Create reads them on an engine that has no
+// RETURNING, and on a table whose triggers make the server refuse the dialect's RETURNING
+// (see TableWithTriggers).
 //
-// The generated key comes from the driver's own sql.Result for the INSERT — see
-// core.LastInsertIDExecutor for why a separate `SELECT LAST_INSERT_ID()` would be
-// unsafe against a connection pool. Any remaining generated columns (defaults,
-// computed values) are then fetched with one SELECT keyed on the primary key, so
-// the cost on MySQL is one extra round trip and none on Postgres.
+// The generated key comes from the executor's ExecInsert — the driver's own sql.Result for the
+// INSERT, or on SQL Server SCOPE_IDENTITY() read in the same batch — see
+// core.LastInsertIDExecutor for why a separate `SELECT LAST_INSERT_ID()` would be unsafe against
+// a connection pool. Any remaining generated columns (defaults, computed values, read-back
+// fields) are then fetched with one SELECT keyed on every primary key column, so the cost is one
+// extra round trip, and none when the key was the only generated column. That SELECT is a
+// statement of its own: a write another session commits to the new row between the two is
+// what it reads, and only a transaction around both would keep that write out.
+//
+// inserted holds the columns the INSERT wrote. The reported key is taken only for an
+// auto-increment key column the INSERT left out, which is the only one the server chose. A key
+// the INSERT wrote is the row's as the entity holds it, zero included — a GUID the caller
+// assigned, say — and the read-back is keyed on it. The reported value is not that key's even
+// then: it is the value of the table's IDENTITY or auto-increment column, which need not be
+// the key, and taking it for the key used to key the read-back on another row, take that
+// row's rowversion and key, and hand them to the next guarded Update.
+//
+// A generated key that still cannot be read back — the INSERT left it to the server, which did
+// not report it — is an error that says the row exists. It used to be a warning and a Create
+// that returned nil, leaving the entity with a zero key — which every relation saved against
+// it then stored — and a caller that retried wrote the row twice. A model with no primary key
+// is still only warned about: no key is lost there, and none can select its row.
 func (o *ORM[T]) insertAndReadBack(
 	builder dbCore.IQueryBuilder,
 	entitySchema *schema.Schema,
 	returningCols []string,
+	entityVal reflect.Value,
+	inserted map[string]bool,
 ) (map[string]interface{}, error) {
 	generated := map[string]interface{}{}
 
@@ -537,17 +637,13 @@ func (o *ORM[T]) insertAndReadBack(
 		// auto-increment value, and silently returning a zero id would corrupt every
 		// relation saved against this entity.
 		return nil, fmt.Errorf(
-			"orm: %s does not support RETURNING and its executor (%T) cannot report a "+
+			"orm: %s cannot use RETURNING here and its executor (%T) cannot report a "+
 				"generated key, so a created row's primary key cannot be read back",
 			o.dialect().Name(), o.db.Executor())
 	}
 
-	res := executor.ExecInsert(context.Background(), builder)
-	if res.Error != nil {
-		return nil, fmt.Errorf("failed to create domain: %w", res.Error)
-	}
-
-	// Identify the single auto-increment primary key, if there is one.
+	// Identify the single auto-increment primary key, if there is one. Refused before the
+	// INSERT is sent: afterwards the row would exist with a key nobody can name.
 	autoIncrementPK := ""
 	for _, f := range entitySchema.PrimaryFields {
 		if f.AutoIncrement {
@@ -562,36 +658,46 @@ func (o *ORM[T]) insertAndReadBack(
 		}
 	}
 
-	if res.HasLastInsertID && autoIncrementPK != "" {
+	res := executor.ExecInsert(context.Background(), builder)
+	if res.Error != nil {
+		return nil, fmt.Errorf("failed to create domain: %w", res.Error)
+	}
+
+	if res.HasLastInsertID && autoIncrementPK != "" && !inserted[autoIncrementPK] {
 		generated[autoIncrementPK] = res.LastInsertID
 	}
 
+	key, keyErr := readBackKey(entitySchema, generated, entityVal, inserted)
+
 	// Fetch any other generated columns in one read, keyed on the primary key we now
-	// know. Skipped entirely when the only generated column was the key itself.
+	// know. Skipped entirely when the only generated columns were key columns whose values
+	// are already known.
+	known := map[string]bool{}
+	if keyErr == nil {
+		for _, f := range entitySchema.PrimaryFields {
+			known[f.DBName] = true
+		}
+	}
 	remaining := make([]string, 0, len(returningCols))
 	for _, col := range returningCols {
-		if _, have := generated[col]; !have {
+		if _, have := columnValue(generated, col); !have && !known[col] {
 			remaining = append(remaining, col)
 		}
 	}
 	if len(remaining) == 0 {
 		return generated, nil
 	}
-
-	keyColumn, keyValue, err := o.readBackKey(entitySchema, generated, autoIncrementPK)
-	if err != nil {
-		// Nothing to key the read on. The insert succeeded, so report what is known
-		// rather than failing the whole Create.
-		log.Log().Warnf(
-			"orm: created a row in %s but cannot read back %v: %v",
-			entitySchema.Table, remaining, err)
+	if errors.Is(keyErr, errNoKeyToSelectBy) {
+		log.Log().Warnf("orm: created a row in %s but cannot read back %v: %v",
+			entitySchema.Table, remaining, keyErr)
 		return generated, nil
 	}
+	if keyErr != nil {
+		return nil, fmt.Errorf("orm: the INSERT into %s succeeded but the generated key could not be "+
+			"read back (%v); the row exists: %w", entitySchema.Table, remaining, keyErr)
+	}
 
-	sql, args, err := o.newBuilder().
-		Select(remaining...).
-		From(entitySchema.Table).
-		Eq(keyColumn, keyValue).
+	sql, args, err := whereAll(o.newBuilder().Select(remaining...).From(entitySchema.Table), key).
 		Limit(1).
 		ToSQL()
 	if err != nil {
@@ -601,7 +707,8 @@ func (o *ORM[T]) insertAndReadBack(
 	fetched := map[string]interface{}{}
 	queryRes := o.db.Executor().FindRaw(context.Background(), &fetched, sql, args...)
 	if queryRes.Error != nil {
-		return nil, fmt.Errorf("orm: cannot read back generated columns: %w", queryRes.Error)
+		return nil, fmt.Errorf("orm: the INSERT into %s succeeded but its generated columns could not "+
+			"be read back; the row exists: %w", entitySchema.Table, queryRes.Error)
 	}
 	for col, value := range fetched {
 		generated[col] = value
@@ -610,26 +717,142 @@ func (o *ORM[T]) insertAndReadBack(
 	return generated, nil
 }
 
-// readBackKey picks the column and value to key the generated-column read-back on:
-// the auto-increment key just reported, or otherwise a primary key the caller
-// supplied itself.
-func (o *ORM[T]) readBackKey(
+// readBackKey returns the conditions that address the row an INSERT just wrote: one equality
+// per primary key column. A column the INSERT wrote (inserted) is keyed on the value the entity
+// holds, zero included, since that is the value the row now holds. A column it left out is
+// keyed on the value the server reported for it in generated.
+//
+// A left-out key column the server reported nothing for is an error. So is a model without a
+// primary key (errNoKeyToSelectBy): there is nothing to select the row by. A pointer key is
+// bound by the value it points at, as pkPredicate binds it, and a nil one, which the INSERT
+// wrote as NULL, keys nothing.
+//
+// A zero key the INSERT wrote used to count as no key at all. On the engines that read the key
+// back without RETURNING, a Create with a zero client-assigned key, or with a zero part of a
+// composite key, then wrote its row and returned an error, where the same Create through
+// RETURNING succeeded.
+func readBackKey(
 	entitySchema *schema.Schema,
 	generated map[string]interface{},
-	autoIncrementPK string,
-) (string, interface{}, error) {
-	if autoIncrementPK != "" {
-		if value, ok := generated[autoIncrementPK]; ok {
-			return autoIncrementPK, value, nil
-		}
+	entityVal reflect.Value,
+	inserted map[string]bool,
+) ([]dbCore.Condition, error) {
+	if len(entitySchema.PrimaryFields) == 0 {
+		return nil, fmt.Errorf("%s: %w", entitySchema.Table, errNoKeyToSelectBy)
 	}
 
-	// A client-assigned primary key is just as good to select on.
+	entityVal = reflect.Indirect(entityVal)
+	key := make([]dbCore.Condition, 0, len(entitySchema.PrimaryFields))
 	for _, f := range entitySchema.PrimaryFields {
-		if value, ok := generated[f.DBName]; ok {
-			return f.DBName, value, nil
+		var value interface{}
+		if inserted[f.DBName] {
+			if !entityVal.IsValid() {
+				return nil, fmt.Errorf("the entity's value for primary key column %q cannot be read", f.DBName)
+			}
+			held, _ := f.ValueOf(context.Background(), entityVal)
+			if pointer := reflect.ValueOf(held); pointer.Kind() == reflect.Ptr {
+				if pointer.IsNil() {
+					return nil, fmt.Errorf("the INSERT wrote NULL for primary key column %q", f.DBName)
+				}
+				held = pointer.Elem().Interface()
+			}
+			value = held
+		} else {
+			reported, ok := columnValue(generated, f.DBName)
+			if !ok || reported == nil {
+				return nil, fmt.Errorf("the INSERT left primary key column %q to the server, which did not "+
+					"report the value it generated", f.DBName)
+			}
+			value = reported
+		}
+		key = append(key, &dbCore.BinaryCondition{Left: f.DBName, Operator: "=", Right: value})
+	}
+	return key, nil
+}
+
+// columnValue returns the value row holds for column: under exactly that name, else under a
+// name equal to it ignoring case, the first in sorted order when several are.
+//
+// Engines report names as they store them, and that is not always how a model spells them:
+// Postgres folds an unquoted RETURNING Id to id, and a collation may report a name in another
+// case than the model's tag. A generated column matched only exactly was silently left unset.
+func columnValue(row map[string]interface{}, column string) (interface{}, bool) {
+	if value, ok := row[column]; ok {
+		return value, true
+	}
+	var folded []string
+	for name := range row {
+		if strings.EqualFold(name, column) {
+			folded = append(folded, name)
 		}
 	}
+	if len(folded) == 0 {
+		return nil, false
+	}
+	sort.Strings(folded)
+	return row[folded[0]], true
+}
 
-	return "", nil, fmt.Errorf("no known primary key value")
+// fieldColumns returns the columns of fields, in order.
+func fieldColumns(fields []*schema.Field) []string {
+	columns := make([]string, len(fields))
+	for i, f := range fields {
+		columns[i] = f.DBName
+	}
+	return columns
+}
+
+// setReadbackFields sets each of fields on entityVal from the row the UPDATE of tableName
+// returned or a re-read selected. A column the row does not hold is left as it was.
+func setReadbackFields(tableName string, fields []*schema.Field, row map[string]interface{},
+	entityVal reflect.Value) error {
+	for _, f := range fields {
+		value, ok := columnValue(row, f.DBName)
+		if !ok {
+			continue
+		}
+		if err := f.Set(context.Background(), entityVal, value); err != nil {
+			return fmt.Errorf("orm: the UPDATE of %s succeeded but its read-back column %s could not be "+
+				"set on the entity: %w", tableName, f.DBName, err)
+		}
+	}
+	return nil
+}
+
+// rereadReadbackFields selects the entity's grgorm:"readback" columns from its row after an
+// UPDATE that could not read them with RETURNING, and sets them on entityVal.
+//
+// Such a column is one the server changes on every write — a rowversion, a computed column, one
+// a trigger maintains — so after an UPDATE the entity's copy is the value from before it, and an
+// update guarded on it would conflict with the entity's own write. The row is read by every key
+// column, as the UPDATE addressed it. A row that is not there any more, which an unguarded
+// UPDATE does not report, leaves the fields as they were.
+//
+// It is used only where RETURNING cannot be: on an engine without it, such as MySQL, and on a
+// table whose model says it has triggers (see TableWithTriggers). The SELECT is then a
+// statement of its own, and a write another session commits to the row between the UPDATE and
+// it is what it reads: the entity takes that write's rowversion without its values, and its
+// next update guarded on the rowversion matches over that write. Only a transaction around both
+// statements keeps such a write out, since the UPDATE's lock is then held until the SELECT has
+// run. On those tables, where another writer may interleave, Refresh the entity before a
+// guarded update that must not overwrite a write it has not seen.
+func (o *ORM[T]) rereadReadbackFields(tableName string, fields []*schema.Field, key []dbCore.Condition,
+	entityVal reflect.Value) error {
+	columns := fieldColumns(fields)
+
+	sql, args, err := whereAll(o.newBuilder().Select(columns...).From(tableName), key).Limit(1).ToSQL()
+	if err != nil {
+		return fmt.Errorf("orm: cannot render the read-back of %s: %w", tableName, err)
+	}
+
+	row := map[string]interface{}{}
+	queryRes := o.db.Executor().FindRaw(context.Background(), &row, sql, args...)
+	if queryRes.Error != nil {
+		return fmt.Errorf("orm: the UPDATE of %s succeeded but its read-back columns %v could not be "+
+			"read: %w", tableName, columns, queryRes.Error)
+	}
+	if !queryRes.Found {
+		return nil
+	}
+	return setReadbackFields(tableName, fields, row, entityVal)
 }

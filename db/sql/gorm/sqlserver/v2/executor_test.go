@@ -604,7 +604,7 @@ func TestFindWrapsServerErrors(t *testing.T) {
 // errors.As, and nothing else is touched.
 func TestServerErrorHints(t *testing.T) {
 	for number, want := range map[int32]string{
-		334:   "ExecInsert",
+		334:   "TableHasTriggers() returning true",
 		544:   "leave the key zero",
 		271:   `gorm:"->"`,
 		272:   `gorm:"->"`,

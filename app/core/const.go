@@ -25,6 +25,17 @@ const GorganyORMTag = "grgorm"
 const GorganyORMPreload = "preload"
 const GorganyORMExtends = "extends"
 
+// GorganyORMReadBack, as grgorm:"readback", marks a field whose column the server sets, such
+// as a rowversion, a computed column or a server default the app never writes. The ORM reads
+// it back after a Create, with the generated key, and after an Update, so the entity holds
+// what the row holds rather than what it held before the write. Where the dialect's RETURNING
+// can be used it is read in the statement itself; elsewhere — MySQL, and a table whose model
+// implements orm.TableWithTriggers — with a SELECT of its own, which reads a write another
+// session commits in between. The tag does not stop the field being written: tag it gorm:"->"
+// too, as a server-set column usually is. It is matched as a whole comma-separated value:
+// grgorm:"noreadback" does not carry it.
+const GorganyORMReadBack = "readback"
+
 const FullMessageInstanceContextKey = "fullMessageInstance"
 const MessageContextKey = "messageContext"
 const DbSessionContextKey = "dbSession"

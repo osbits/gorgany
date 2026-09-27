@@ -1,5 +1,7 @@
 package core
 
+import "context"
+
 // The capabilities below are optional interfaces a dialect may implement, each with a probe
 // that answers for any dialect. None of them is a method on SQLDialect: adding one there
 // would stop every dialect an app has written from compiling, for a question most engines
@@ -65,4 +67,78 @@ type TriggerSensitiveReturning interface {
 func ReturningBlockedByTriggers(d SQLDialect) bool {
 	sensitive, ok := d.(TriggerSensitiveReturning)
 	return ok && sensitive.ReturningBlockedByTriggers()
+}
+
+// TableTraits is what a database's catalog says about one table that decides how it may be
+// written: what the server fills in itself, and what makes one of the ORM's statements fail
+// there.
+//
+// It exists for tables gorgany does not own. A schema another system created — EF Core's, say
+// — carries triggers, IDENTITY keys, rowversion and computed columns and server defaults that a
+// hand-written model has to agree with, and every disagreement shows up only when a write
+// reaches the server: an OUTPUT clause refused because of a trigger (Msg 334), an explicit
+// value for an IDENTITY column (Msg 544), a write to a rowversion (Msg 272), or, silently, a
+// default the INSERT overrode with a zero value. orm.VerifyModel reads the traits once, before
+// the first write, and names each disagreement instead.
+//
+// The traits are read by the table's catalog identity, the object the server resolves the name
+// to for this login, so they describe the table the ORM's statements write, and never a table
+// of the same name in another schema. That is why they carry the columns themselves too.
+//
+// Every list holds column names as the catalog spells them, in the table's column order; the
+// primary key's in key order.
+type TableTraits struct {
+	// Columns are every column of the table.
+	Columns []string
+
+	// NullableColumns are the columns that allow NULL.
+	NullableColumns []string
+
+	// InsertTriggers is how many enabled DML triggers fire on INSERT, AFTER or INSTEAD OF. SQL
+	// Server refuses an INSERT's OUTPUT clause on such a table (Msg 334). A trigger that fires
+	// only on UPDATE or DELETE does not block it, and a disabled trigger neither fires nor
+	// blocks anything.
+	InsertTriggers int
+
+	// InsteadOfInsertTriggers is how many of InsertTriggers are INSTEAD OF triggers. The row
+	// is then written by the trigger's own INSERT, in the trigger's scope, so SCOPE_IDENTITY()
+	// after the statement is NULL and the key it generated cannot be read back by it.
+	InsteadOfInsertTriggers int
+
+	// UpdateTriggers is how many enabled DML triggers fire on UPDATE, which makes SQL Server
+	// refuse an UPDATE's OUTPUT clause as InsertTriggers make it refuse an INSERT's.
+	UpdateTriggers int
+
+	// IdentityColumn is the table's IDENTITY (or equivalent auto-increment) column, or "" when
+	// it has none. A table has at most one.
+	IdentityColumn string
+
+	// GeneratedColumns are the columns the server computes and refuses to be written: a
+	// rowversion, a computed column and a GENERATED ALWAYS (temporal period) column.
+	GeneratedColumns []string
+
+	// DefaultColumns are the columns with a server default. An INSERT that names one writes
+	// its own value, zero included, and the default never applies.
+	DefaultColumns []string
+
+	// PrimaryKey is the primary key's columns in key order, or nil when the table has none.
+	PrimaryKey []string
+}
+
+// TableTraitsReporter is implemented by datasources that can read a table's TableTraits from
+// their catalog.
+//
+// Unlike the capabilities above it is a datasource's, not a dialect's: the answer comes from a
+// query, so it needs a connection. It is optional for the same reason they are, and a caller
+// type-asserts it: a datasource that does not implement it simply cannot be asked, and
+// orm.VerifyModel then checks what gorm's migrator reports about the columns alone. The SQL
+// Server datasource implements it; Postgres and MySQL do not.
+//
+// An implementation must only read, in one statement, so it runs on a read_only datasource
+// and one whose schema is owned elsewhere. table is written the way a model's TableName()
+// writes it, such as 2024Orders, dbo.2024Orders or [dbo].[2024Orders], and resolved as the
+// server resolves that name in the ORM's own statements: an unqualified name in the login's
+// default schema. A table that does not exist is an error.
+type TableTraitsReporter interface {
+	TableTraits(ctx context.Context, table string) (TableTraits, error)
 }

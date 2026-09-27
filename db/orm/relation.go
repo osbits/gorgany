@@ -20,7 +20,8 @@ import (
 // It refuses, before writing anything, what checkCascade refuses: on an external_schema
 // datasource, a relation that holds something it would write, unless the entity implements
 // CascadingSaves and returns true (see CascadingSaves for why), and on any datasource a
-// many-to-many relation whose join table links a composite key.
+// many-to-many relation whose join table links a composite key, or that keeps more related
+// rows than the dialect lets one statement bind (see keptJoinRows).
 func (o *ORM[T]) SaveRelations(entity T) error {
 	if isNilValue(entity) {
 		return nil
@@ -240,11 +241,11 @@ func (o *ORM[T]) SaveRelations(entity T) error {
 					Right:    ownerPKValue.Interface(),
 				})
 			if len(keptRelatedPKs) > 0 {
-				deleteBuilder = deleteBuilder.Where(&dbCore.InCondition{
-					Field:  relatedFKCol,
-					Values: keptRelatedPKs,
-					Not:    true,
-				})
+				keep, err := o.keptJoinRows(relName, joinTable, relatedFKCol, keptRelatedPKs, 1)
+				if err != nil {
+					return err
+				}
+				deleteBuilder = deleteBuilder.Where(keep)
 			}
 			// If keptRelatedPKs is empty, no NOT IN clause is added and all rows for
 			// this owner are removed — which is the correct behaviour for a cleared slice.
@@ -287,7 +288,8 @@ func (e *cascadeRefusedError) Unwrap() error { return dbCore.ErrExternalSchema }
 //   - on an external_schema datasource, whether it opts in with CascadingSaves, if any of its
 //     relations would be written (see CascadingSaves);
 //   - on any datasource, whether a many-to-many relation that would be written is linked by a
-//     composite key (see joinReferences).
+//     composite key (see joinReferences), and whether it keeps more related rows than the one
+//     DELETE of its stale join rows can bind under the dialect's limit (see keptJoinRows).
 //
 // Relations are walked in name order, so the refusal names the same relation on every run. A
 // related entity is visited once, so a cycle ends the walk rather than looping. The walk is
@@ -295,7 +297,11 @@ func (e *cascadeRefusedError) Unwrap() error { return dbCore.ErrExternalSchema }
 // would find already stored, and therefore not save, is checked all the same.
 func (o *ORM[T]) checkCascade(entity EntityWithMeta, entitySchema *schema.Schema, entityValue reflect.Value) error {
 	external := o.db != nil && dbCore.IsExternalSchema(o.db.DataSource())
-	return checkCascadeFrom(entity, entitySchema, reflect.Indirect(entityValue), external, "", map[visitedEntity]bool{})
+	limit := 0
+	if o.db != nil {
+		limit = dbCore.BindParameterLimit(o.dialect())
+	}
+	return checkCascadeFrom(entity, entitySchema, reflect.Indirect(entityValue), external, limit, "", map[visitedEntity]bool{})
 }
 
 // visitedEntity identifies an entity the walk has reached. The type is part of it because a
@@ -306,9 +312,10 @@ type visitedEntity struct {
 }
 
 // checkCascadeFrom is checkCascade for one entity of the walk. path is the relation path
-// that reached it, ending in a dot, or "" for the entity Save was called on.
+// that reached it, ending in a dot, or "" for the entity Save was called on. limit is the
+// dialect's bind-parameter limit, 0 for none (see core.BindParameterLimit).
 func checkCascadeFrom(entity EntityWithMeta, entitySchema *schema.Schema, entityValue reflect.Value,
-	external bool, path string, visited map[visitedEntity]bool) error {
+	external bool, limit int, path string, visited map[visitedEntity]bool) error {
 	if entityValue.CanAddr() {
 		key := visitedEntity{entityValue.Type(), entityValue.Addr().Pointer()}
 		if visited[key] {
@@ -342,6 +349,16 @@ func checkCascadeFrom(entity EntityWithMeta, entitySchema *schema.Schema, entity
 			if _, _, err := joinReferences(relationPath, rel); err != nil {
 				return err
 			}
+			// The join rows it keeps are named in the one statement that deletes the others,
+			// so a relation holding more of them than that statement can bind is refused here,
+			// before the join rows are written, rather than half way (see keptJoinRows).
+			if kept := len(relatedEntities(rel, field)); kept > 0 && !fitsOneStatement(kept, limit, 1) {
+				joinTable := ""
+				if rel.JoinTable != nil {
+					joinTable = rel.JoinTable.Name
+				}
+				return tooManyKeptJoinRows(relationPath, joinTable, kept, limit)
+			}
 		}
 		for _, related := range relatedEntities(rel, field) {
 			relatedSchema, err := schema.Parse(related, &sync.Map{}, schema.NamingStrategy{})
@@ -351,7 +368,7 @@ func checkCascadeFrom(entity EntityWithMeta, entitySchema *schema.Schema, entity
 				continue
 			}
 			relatedValue := reflect.Indirect(reflect.ValueOf(related))
-			if err := checkCascadeFrom(related, relatedSchema, relatedValue, external, relationPath+".", visited); err != nil {
+			if err := checkCascadeFrom(related, relatedSchema, relatedValue, external, limit, relationPath+".", visited); err != nil {
 				return err
 			}
 		}
@@ -986,12 +1003,18 @@ func (o *ORM[T]) loadManyToManyRelation(
 		return fmt.Errorf("cannot load many-to-many relation '%s': join table information is missing", relationName)
 	}
 
-	// Extract join field names from relationship
+	// Extract join field names from relationship. relatedKeyName is the related table's column
+	// the join row's reference points at: its primary key, or the column a references: tag
+	// names.
+	var relatedKeyName string
 	for _, ref := range relationship.References {
 		if ref.OwnPrimaryKey {
 			joinFKName = ref.ForeignKey.DBName
 		} else {
 			referenceFKName = ref.ForeignKey.DBName
+			if ref.PrimaryKey != nil {
+				relatedKeyName = ref.PrimaryKey.DBName
+			}
 		}
 	}
 
@@ -1000,7 +1023,7 @@ func (o *ORM[T]) loadManyToManyRelation(
 		return fmt.Errorf("cannot load many-to-many relation '%s': join foreign key information is missing", relationName)
 	}
 
-	if referenceFKName == "" {
+	if referenceFKName == "" || relatedKeyName == "" {
 		return fmt.Errorf("cannot load many-to-many relation '%s': reference foreign key information is missing", relationName)
 	}
 
@@ -1045,10 +1068,7 @@ func (o *ORM[T]) loadManyToManyRelation(
 	builder := o.newBuilder().
 		Select(fmt.Sprintf("%s.*", relatedTableName)).
 		From(relatedTableName).
-		InnerJoin(joinTable, &dbCore.RawCondition{
-			SQL:  "?.id = ?.?",
-			Args: []any{relatedTableName, joinTable, referenceFKName},
-		}).
+		InnerJoin(joinTable, manyToManyJoinCondition(relatedTableName, relatedKeyName, joinTable, referenceFKName)).
 		Where(&dbCore.BinaryCondition{
 			Left:     fmt.Sprintf("%s.%s", joinTable, joinFKName),
 			Operator: "=",
@@ -1387,35 +1407,25 @@ func (o *ORM[T]) batchLoadHasRelation(entityMap map[interface{}]T, primaryKeys [
 
 	foreignKey := relationship.References[0].ForeignKey.DBName
 
-	// Build query to load all related entities at once
-	var builder dbCore.IQueryBuilder = o.newBuilder()
-	builder = builder.
-		Select("*").
-		From(tableName).
-		Where(&dbCore.InCondition{
-			Field:  foreignKey,
-			Values: primaryKeys,
-		})
-
-	// Add custom condition if provided
-	if condition != nil {
-		// This is a simplified condition handling - you might want to expand this
-		if condMap, ok := condition.(map[string]interface{}); ok {
-			for key, value := range condMap {
-				builder = builder.Where(&dbCore.BinaryCondition{
-					Left:     key,
-					Operator: "=",
-					Right:    value,
-				})
-			}
-		}
-	}
-
-	// Execute query to get all related entities
+	// Load all related entities, in as few queries as the dialect's bind-parameter limit
+	// allows (see chunkValues): one, unless it declares a limit the keys exceed.
+	extra := preloadConditions(condition)
 	var relatedEntities []interface{}
-	queryRes := o.db.Executor().Find(context.Background(), builder, &relatedEntities)
-	if queryRes.Error != nil {
-		return queryRes.Error
+	for _, chunk := range chunkValues(primaryKeys, dbCore.BindParameterLimit(o.dialect()), len(extra)) {
+		builder := whereAll(o.newBuilder().
+			Select("*").
+			From(tableName).
+			Where(&dbCore.InCondition{
+				Field:  foreignKey,
+				Values: chunk,
+			}), extra)
+
+		var loaded []interface{}
+		queryRes := o.db.Executor().Find(context.Background(), builder, &loaded)
+		if queryRes.Error != nil {
+			return queryRes.Error
+		}
+		relatedEntities = append(relatedEntities, loaded...)
 	}
 
 	// Group related entities by foreign key
@@ -1482,34 +1492,25 @@ func (o *ORM[T]) batchLoadBelongsToRelation(entityMap map[interface{}]T, primary
 		return nil
 	}
 
-	// Build query to load all related entities at once
-	var builder dbCore.IQueryBuilder = o.newBuilder()
-	builder = builder.
-		Select("*").
-		From(tableName).
-		Where(&dbCore.InCondition{
-			Field:  relationship.References[0].PrimaryKey.DBName,
-			Values: foreignKeyValues,
-		})
-
-	// Add custom condition if provided
-	if condition != nil {
-		if condMap, ok := condition.(map[string]interface{}); ok {
-			for key, value := range condMap {
-				builder = builder.Where(&dbCore.BinaryCondition{
-					Left:     key,
-					Operator: "=",
-					Right:    value,
-				})
-			}
-		}
-	}
-
-	// Execute query to get all related entities
+	// Load all related entities, in as few queries as the dialect's bind-parameter limit
+	// allows (see chunkValues).
+	extra := preloadConditions(condition)
 	var relatedEntities []interface{}
-	queryRes := o.db.Executor().Find(context.Background(), builder, &relatedEntities)
-	if queryRes.Error != nil {
-		return queryRes.Error
+	for _, chunk := range chunkValues(foreignKeyValues, dbCore.BindParameterLimit(o.dialect()), len(extra)) {
+		builder := whereAll(o.newBuilder().
+			Select("*").
+			From(tableName).
+			Where(&dbCore.InCondition{
+				Field:  relationship.References[0].PrimaryKey.DBName,
+				Values: chunk,
+			}), extra)
+
+		var loaded []interface{}
+		queryRes := o.db.Executor().Find(context.Background(), builder, &loaded)
+		if queryRes.Error != nil {
+			return queryRes.Error
+		}
+		relatedEntities = append(relatedEntities, loaded...)
 	}
 
 	// Create a map of related entities by their primary key
@@ -1554,17 +1555,21 @@ func (o *ORM[T]) batchLoadManyToManyRelation(entityMap map[interface{}]T, primar
 		return fmt.Errorf("cannot load many-to-many relation '%s': relationship reference information is missing", relationName)
 	}
 
-	// Extract join field names from relationship
-	var joinFKName, referenceFKName string
+	// Extract join field names from relationship, and the related table's column the join
+	// row's reference points at (see loadManyToManyRelation).
+	var joinFKName, referenceFKName, relatedKeyName string
 	for _, ref := range relationship.References {
 		if ref.OwnPrimaryKey {
 			joinFKName = ref.ForeignKey.DBName
 		} else {
 			referenceFKName = ref.ForeignKey.DBName
+			if ref.PrimaryKey != nil {
+				relatedKeyName = ref.PrimaryKey.DBName
+			}
 		}
 	}
 
-	if joinFKName == "" || referenceFKName == "" {
+	if joinFKName == "" || referenceFKName == "" || relatedKeyName == "" {
 		return fmt.Errorf("cannot load many-to-many relation '%s': join foreign key information is missing", relationName)
 	}
 
@@ -1574,37 +1579,28 @@ func (o *ORM[T]) batchLoadManyToManyRelation(entityMap map[interface{}]T, primar
 	}
 	relatedTableName := relationship.FieldSchema.Table
 
-	// Build query to load related entities through join table
-	var builder dbCore.IQueryBuilder = o.newBuilder()
-	builder = builder.Select(fmt.Sprintf("%s.*, %s.%s as _join_fk", relatedTableName, joinTable, joinFKName))
-	builder = builder.From(relatedTableName)
-	builder = builder.InnerJoin(joinTable, &dbCore.RawCondition{
-		SQL:  "?.id = ?.?",
-		Args: []any{relatedTableName, joinTable, referenceFKName},
-	})
-	builder = builder.Where(&dbCore.InCondition{
-		Field:  fmt.Sprintf("%s.%s", joinTable, joinFKName),
-		Values: primaryKeys,
-	})
-
-	// Add custom condition if provided
-	if condition != nil {
-		if condMap, ok := condition.(map[string]interface{}); ok {
-			for key, value := range condMap {
-				builder = builder.Where(&dbCore.BinaryCondition{
-					Left:     key,
-					Operator: "=",
-					Right:    value,
-				})
-			}
-		}
-	}
-
-	// Execute query to get all related entities with join information
+	// Load related entities through the join table, in as few queries as the dialect's
+	// bind-parameter limit allows (see chunkValues). The select list is two items, not one
+	// string holding both: a dialect that quotes the names it recognises sees each of them,
+	// where a combined "t.*, j.c as _join_fk" is an expression it can only emit as written.
+	extra := preloadConditions(condition)
 	var results []map[string]interface{}
-	queryRes := o.db.Executor().Find(context.Background(), builder, &results)
-	if queryRes.Error != nil {
-		return queryRes.Error
+	for _, chunk := range chunkValues(primaryKeys, dbCore.BindParameterLimit(o.dialect()), len(extra)) {
+		builder := whereAll(o.newBuilder().
+			Select(fmt.Sprintf("%s.*", relatedTableName), fmt.Sprintf("%s.%s as _join_fk", joinTable, joinFKName)).
+			From(relatedTableName).
+			InnerJoin(joinTable, manyToManyJoinCondition(relatedTableName, relatedKeyName, joinTable, referenceFKName)).
+			Where(&dbCore.InCondition{
+				Field:  fmt.Sprintf("%s.%s", joinTable, joinFKName),
+				Values: chunk,
+			}), extra)
+
+		var loaded []map[string]interface{}
+		queryRes := o.db.Executor().Find(context.Background(), builder, &loaded)
+		if queryRes.Error != nil {
+			return queryRes.Error
+		}
+		results = append(results, loaded...)
 	}
 
 	// Group related entities by the join foreign key
@@ -1870,4 +1866,112 @@ func (o *ORM[T]) With(relations ...string) *PreloadBuilder[T] {
 		builder = builder.With(relation)
 	}
 	return builder
+}
+
+// manyToManyJoinCondition is the ON of a many-to-many load: the related table's referenced
+// column equals the join table's column that references it.
+//
+// It used to be RawCondition{"?.id = ?.?"}, which compared the join column with a column
+// called id whatever the related table's key was, so a relation to a table keyed by anything
+// else, or one whose references: tag names another column, joined on a column that does not
+// exist or on the wrong one. It is still a RawCondition, with the key as a fourth "?."
+// identifier, because of how each dialect renders one. Postgres and MySQL emit the substituted
+// names as written, so for every name, one that starts with a digit or is not ASCII included,
+// they send what they did, with the key in place of id. A BinaryCondition would not do: rendered
+// without a context, as Postgres and MySQL render a JOIN's ON, an operand that is not a simple
+// ASCII identifier is bound as a value, so a join on 2024tags.id compared the join column with
+// the text '2024tags.id'. SQL Server's rendering context quotes each substituted name, so it
+// sends [2024tags].[code] = [order_tags].[tag_code].
+func manyToManyJoinCondition(relatedTable, relatedKey, joinTable, joinColumn string) dbCore.Condition {
+	return &dbCore.RawCondition{
+		SQL:  "?.? = ?.?",
+		Args: []any{relatedTable, relatedKey, joinTable, joinColumn},
+	}
+}
+
+// preloadConditions turns a preload condition, a map of column to value, into equality
+// conditions in column order.
+//
+// The map used to be ranged over in place, in Go's random order, which was harmless in one
+// statement; a load split into several statements (see chunkValues) now renders the same
+// conditions in each, so they are ordered once here.
+func preloadConditions(condition interface{}) []dbCore.Condition {
+	condMap, ok := condition.(map[string]interface{})
+	if !ok || len(condMap) == 0 {
+		return nil
+	}
+	columns := make([]string, 0, len(condMap))
+	for column := range condMap {
+		columns = append(columns, column)
+	}
+	sort.Strings(columns)
+	conditions := make([]dbCore.Condition, 0, len(columns))
+	for _, column := range columns {
+		conditions = append(conditions, &dbCore.BinaryCondition{
+			Left:     column,
+			Operator: "=",
+			Right:    condMap[column],
+		})
+	}
+	return conditions
+}
+
+// chunkValues splits the values of an IN list into lists that each fit in one statement
+// beside reserved other bind parameters, under a dialect limit of limit parameters per
+// statement.
+//
+// SQL Server refuses a request with more than 2100 parameters, and a relation load over a
+// large parent set reaches that with one IN list; its dialect reports the limit (see
+// core.BindParameterLimit). The loads run one query per chunk and merge what they return,
+// which is the same rows the one query would have: each chunk's query differs only in which
+// keys its IN names. A limit of 0 or less means the dialect declares none, and gives one chunk
+// holding every value, so on Postgres and MySQL, which declare none, a load is the one query
+// it always was. When reserved alone takes the whole limit a chunk still holds one value, and
+// the statement is refused by the parameter cap rather than never sent.
+func chunkValues(values []any, limit, reserved int) [][]any {
+	if limit <= 0 || len(values) <= limit-reserved {
+		return [][]any{values}
+	}
+	size := limit - reserved
+	if size < 1 {
+		size = 1
+	}
+	chunks := make([][]any, 0, (len(values)+size-1)/size)
+	for start := 0; start < len(values); start += size {
+		end := min(start+size, len(values))
+		chunks = append(chunks, values[start:end:end])
+	}
+	return chunks
+}
+
+// fitsOneStatement reports whether n values and reserved other bind parameters fit in one
+// statement under limit, 0 meaning no limit.
+func fitsOneStatement(n, limit, reserved int) bool {
+	return limit <= 0 || n+reserved <= limit
+}
+
+// keptJoinRows returns the condition that keeps the given related keys when Save deletes the
+// stale join rows of a many-to-many relation: column NOT IN values, for the one DELETE.
+//
+// Unlike a load, this cannot be split into several statements. Each DELETE would keep only its
+// own share of the keys and remove the rows every other share keeps, and splitting the list
+// into several NOT IN lists ANDed into one statement binds as many parameters as one list. So a
+// relation that keeps more rows than the statement can bind beside its reserved parameters is
+// refused. checkCascade, which SaveRelations and the Save that calls it ask first, refuses the
+// same before anything is written, so this refusal is a defensive second check.
+func (o *ORM[T]) keptJoinRows(relation, joinTable, column string, values []any, reserved int) (dbCore.Condition, error) {
+	limit := dbCore.BindParameterLimit(o.dialect())
+	if !fitsOneStatement(len(values), limit, reserved) {
+		return nil, tooManyKeptJoinRows(relation, joinTable, len(values), limit)
+	}
+	return &dbCore.InCondition{Field: column, Values: values, Not: true}, nil
+}
+
+// tooManyKeptJoinRows is the refusal of a many-to-many save whose kept join rows do not fit in
+// the one DELETE that removes the others.
+func tooManyKeptJoinRows(relation, joinTable string, kept, limit int) error {
+	return fmt.Errorf("orm: Save cannot rewrite the join rows of many-to-many relation %q: the %d "+
+		"related rows it keeps and the owner's key need %d bind parameters in the one DELETE of %s that "+
+		"removes the others, and the dialect allows %d per statement; write the join rows explicitly",
+		relation, kept, kept+1, joinTable, limit)
 }

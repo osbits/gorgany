@@ -16,7 +16,8 @@ import (
 var serverErrorHints = map[int32]string{
 	334: "the target table has an enabled trigger, and SQL Server refuses an OUTPUT clause without INTO " +
 		"there, which is what Returning, and the ORM's Create reading generated columns back, send; " +
-		"insert through the executor's ExecInsert instead, which reads the key with SCOPE_IDENTITY()",
+		"for an ORM model, implement TableHasTriggers() returning true (orm.TableWithTriggers), and " +
+		"otherwise insert through the executor's ExecInsert, which reads the key with SCOPE_IDENTITY()",
 	544: "a value was sent for an IDENTITY column; leave the key zero so the server assigns it",
 	271: "the column is computed; tag its field gorm:\"->\" so it is read and never written",
 	272: "the column is a rowversion (timestamp); tag its field gorm:\"->\" so it is read and never written",

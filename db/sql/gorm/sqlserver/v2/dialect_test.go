@@ -183,9 +183,10 @@ func TestFullSelectClauseOrder(t *testing.T) {
 	assert.Equal(t, []any{"paid", "north", 2}, args)
 }
 
-// TestEFShapes pins the statements an app pointed at an EF Core schema sends most: a
-// digit-leading table, a reserved-word table and column, and the ORM's lookups on them.
-func TestEFShapes(t *testing.T) {
+// TestEFShapesInTheBuilder pins the statements an app pointed at an EF Core schema sends most,
+// as the builder renders them: a digit-leading table, a reserved-word table and column, and the
+// ORM's lookups on them. TestEFShapes (ef_shapes_test.go) pins what the ORM itself sends.
+func TestEFShapesInTheBuilder(t *testing.T) {
 	sql, args := render(t, NewBuilder().From("dbo.2024Orders").Eq("Id", 7).Limit(1))
 	assert.Equal(t, "SELECT TOP (1) * FROM [dbo].[2024Orders] WHERE [Id] = ?", sql)
 	assert.Equal(t, []any{7}, args)
