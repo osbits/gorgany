@@ -45,10 +45,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     its policy, and its connection refuses DDL through the `db/sql/gorm/guard` guard below.
     `db:migrate`, `db:seed` and `db:diff` refuse such a datasource before they send any SQL,
     `db:migrate` leaves the sessions migrations out on such a `default`, and database session
-    storage refuses one (see Changed). Cascading saves are not refused yet. DDL the guard
-    cannot see is not refused either: what server code runs on a statement's behalf, such as
-    a `CALL`, or a function or procedure that runs DDL, and a statement sent on the `*sql.DB`
-    that `DB()` returns. Dynamic SQL, whose statement the guard cannot read, is refused
+    storage refuses one (see Changed). So is a `Save` that would cascade into related
+    entities. DDL the guard cannot see is not refused: what server code runs on a statement's
+    behalf, such as a `CALL`, or a function or procedure that runs DDL, and a statement sent on
+    the `*sql.DB` that `DB()` returns. Dynamic SQL, whose statement the guard cannot read, is refused
     instead: a Postgres `DO` block and MySQL's `PREPARE … FROM`. A principal without DDL rights
     is the guarantee.
   - `lazy_connect: true` works on both engines. The constructor opens no connection, so the
@@ -232,6 +232,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   domain's naming method panicked with; and the wrapper that has `db:migrate` run a migration
   only on a `default` that can take it, which `DbProvider.Boot` puts on the sessions
   migrations. `ResolveGorm` is unchanged and checks no policy.
+- `orm.CascadingSaves`, `interface{ CascadeSaves() bool }`. A model that returns true lets
+  `Save` cascade into its related entities on an `external_schema` datasource, which is
+  otherwise refused (see Changed). It is asked of each entity the cascade would reach, so a
+  related entity's own relations cascade only if that entity opts in too. It changes nothing on
+  a datasource gorgany owns.
 
 ### Changed
 
@@ -333,6 +338,45 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   as an unknown key. So this affects only an app that reads `databases` itself and keeps one of
   these two keys there under a placeholder. Set the variable in every environment, or move the
   key.
+- `orm.Find` returns the error of a query that failed. It checked the error from rendering the
+  query where it meant the result of running it, so a lost connection, a missing table or a
+  column the driver could not scan came back as a nil entity and no error, which reads as "not
+  found". A row that is not there is still not an error: `Find` returns nil for it. `Find` also
+  refuses a model with a composite primary key, with `orm: Find(id) cannot address the
+  composite primary key of <table> (<columns>); query by every key column`, and sends nothing.
+  One id cannot address one row there: it queried the first key column alone and returned
+  whichever row the server produced first. Query such a model with `FirstByQuery` and a
+  condition per key column.
+
+  **Upgrade note:** code that maps every `Find` error to "not found", as `docs/app-template`'s
+  `note_service.go` does, answers as before, but a real failure such as a lost connection now
+  hides behind that answer instead of never being seen. Code that treats an error as a failure
+  and a nil entity as a missing row now sees those errors. On Postgres that includes an id the
+  key column cannot hold, such as a non-numeric id for an integer key or a malformed one for a
+  `uuid` key (SQLSTATE 22P02): it used to read as "not found" and is now an error, so such a
+  handler answers a URL with a bad id with a 500 where it answered 404. MySQL still finds no row
+  for a non-numeric id, with a warning, and returns nil and no error. Parse or validate an id
+  taken from a request before passing it to `Find`.
+- On an `external_schema` datasource, `Save`, `Create`, `Update` and `UpdateExisting` refuse to
+  cascade into related entities unless the model implements `orm.CascadingSaves` and returns
+  true. The error is `orm: refusing to cascade Save into relation "<path>" on an
+  external_schema datasource; save related entities explicitly or implement CascadeSaves()`,
+  and it wraps `core.ErrExternalSchema`. Another system owns the related tables there too, and a
+  cascade writes into tables the caller never named. Before writing anything, `Save` walks every
+  related entity the cascade would save, however deep, and asks each one that holds a relation
+  the cascade would write whether it opts in. So a refused `Save` writes nothing, neither the
+  entity's own row nor a related entity's, also when the entity opted in and a related entity
+  did not. `<path>` names the relation from the saved entity, as `Items`, or `Items.Tags` for a
+  relation of a related entity. Only a relation the cascade would write counts: a nil has-one
+  or belongs-to, and an empty has-many, pass. A many-to-many slice that is set but empty, or
+  loaded and then set to nil, counts, because saving it deletes the entity's join rows. A
+  many-to-many element that the cascade would find already stored, and so not save, is checked
+  all the same. `SaveRelations` refuses the same way. A datasource gorgany owns cascades as
+  before.
+
+  **Upgrade note:** a model on an `external_schema` datasource whose `Save` relied on the
+  cascade now gets the refusal. Save the related entities with their own ORM, or implement
+  `CascadeSaves()` returning true once the related tables are known to be safe to write.
 
 ### Fixed
 
@@ -385,6 +429,114 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `default`, whatever is configured. `db:migrate` now leaves them out when there is no
   `default` (see Changed), so an app with only named datasources, and its sessions in memory,
   can migrate them.
+- `orm.All`, `orm.Count` and `Preload`'s loads read a model whose `TableName()` differs from
+  its type's default name from the default-named table. They have no entity to ask, so they
+  asked `var sample T`, a nil `*T` for a pointer model, and `GetTableName` answered a nil
+  pointer or a zero value from the naming strategy without calling `TableName()`. `Find` and
+  the `*ByQuery` methods asked gorm's schema and read the right table. `All` and `Count` now
+  ask the schema too, and `GetTableName` calls `TableName()` on a zero value of the type for a
+  nil pointer or a zero value, whichever receiver it has, as gorm does. A non-zero value whose
+  `TableName()` has a pointer receiver is now answered by it as well.
+- `orm.CountByQuery` counted the wrong thing in most shapes. It called
+  `Select("COUNT(*)").From(<model table>)` on the caller's builder, so:
+  - ORDER BY, LIMIT and OFFSET stayed, and a page's total was at most the page size;
+  - `Select` appends, so a builder that had selected columns counted with
+    `SELECT a, b, COUNT(*)`: a DISTINCT or UNION query, or a grouped one with a select list,
+    failed;
+  - `From` replaces the FROM clause, so the caller's own table or subquery was swapped for the
+    model's table.
+
+  A grouped query without a select list came out right only because gorm counts the rows a
+  count query returns when there is more than one, so one group was counted as the number of
+  rows in it.
+
+  It now works from a copy of `qb.Build()`, so the builder is unchanged, and renders through
+  the builder's dialect. ORDER BY, LIMIT and OFFSET are dropped, the select list is replaced
+  by `COUNT(*)`, and the model's table is used only when the builder has no FROM. A grouped,
+  DISTINCT or UNION query is counted as a derived table, `SELECT COUNT(*) FROM (…) AS
+  gorgany_count`, with any WITH moved to the outer query. A DISTINCT, including one written as
+  `Select("DISTINCT …")` or `Select("DISTINCT(…)")`, or a UNION keeps its columns, since they
+  are what make rows distinct. A grouped query keeps its columns when every one is named once,
+  since its GROUP BY may name a column by alias or position and a HAVING may name an alias on
+  MySQL. Otherwise, with no select list, a star, or an unnamed column such as a bare
+  `COUNT(*)`, they become `1 AS gorgany_one`, since the number of groups does not depend on
+  them; a star under GROUP BY is an error on Postgres and on MySQL's `ONLY_FULL_GROUP_BY`.
+
+  **Upgrade note:** a derived table needs every column named once, and MySQL refuses a
+  repeated name with error 1060. So a DISTINCT or UNION count whose columns are not all plain
+  or dotted identifiers, one in parentheses, or `expr AS alias`, or that repeat a name (the last
+  part or the alias, case-insensitively), is refused with `orm: CountByQuery cannot wrap a
+  DISTINCT/UNION query with unnamed or duplicate columns (…); alias them`. So is a star beside
+  a JOIN or another column. Alias the columns it names. A grouped count whose columns become
+  `1 AS gorgany_one` while its GROUP BY names a select-list alias or position is refused too,
+  with `orm: CountByQuery cannot wrap a grouped query whose GROUP BY refers to its select list
+  (…) while that list cannot be kept (…); alias its columns`, since the alias would be gone and
+  the position would group by the constant. A HAVING that names an alias beside such columns is
+  not detected, and fails on the server. A builder holding an INSERT, UPDATE or DELETE is
+  refused too; it used to be executed.
+
+  **Upgrade note:** `AllByQuery` and `FirstByQuery` still replace the builder's FROM with the
+  model's table. A builder whose FROM names another table or a subquery is now counted from
+  that source while its page is read from the model's table, so the two disagree. Leave the
+  FROM unset, or set it to the model's table, on a builder passed to both.
+- `orm.Delete` addressed the row by its primary key's Go field name, `WHERE UserID = ?` for a
+  column called `user_id`, and wrote that name into `meta.PrimaryKey`. It now uses the column
+  name for both.
+- On a composite primary key, `Update`, `UpdateExisting`, `Delete` and `Refresh` addressed the
+  row by the first key column only. `Update` rewrote, and `Delete` removed, every row sharing
+  that column, and `Update` wrote the other key columns back into the row.
+  `UpdateExisting`'s check for a row that is gone asked the first column only, so a sibling row
+  answered "still there". `Refresh` reloaded whichever row shared the first column. Every key
+  column is now in the WHERE, by column name, and none is in the SET list. A key column whose
+  value is zero is refused with `orm: primary key column "<column>" of <table> is zero`, as a
+  zero single key always was, and errors that name the key name every column. `Refresh` also
+  found the key field by comparing lowercased Go names with the column name, so a key such as
+  `UserID`/`user_id` was "not found", and a row that was gone panicked. It now returns
+  `orm.ErrRowGone` for that. A pointer key column is judged by the value it points at, so `&0`
+  is refused like `0` rather than sent, and messages print the value, not the pointer.
+
+  **Upgrade note:** `Update`, `UpdateExisting` and `Refresh` refuse an entity whose schema gorm
+  cannot parse, as `Delete` already did, instead of addressing it through a column called `id`.
+- `orm.Update`, `UpdateExisting` and `Save` wrote to the wrong row when a key column was changed
+  in memory and named in `meta.DirtyColumns`. The ORM does not remember the key a row was
+  loaded with, so the WHERE read the new key, and the key column was left out of the SET list:
+  the row holding the new key had its other columns overwritten with this entity's, the row the
+  entity was loaded from was left untouched, and no error was returned. Before the composite-key
+  fix above, such an update of a composite key rewrote every row that shared the first key
+  column instead. A dirty set that names a key column is now refused before anything is sent,
+  with `orm: cannot change primary key column "<column>" of <table> through Update; delete the
+  row and create it again`. A key changed in memory without being named in `DirtyColumns` still
+  addresses the row that holds the new key, as it always has.
+
+  **Upgrade note:** code that moved a row to a new key this way, on purpose, now gets the
+  refusal. Delete the row and create it under the new key, or run an UPDATE of the key column
+  with the query builder.
+- `orm.UpdateExisting`, and an `Update` guarded by `meta.UpdateGuard`, reported success without
+  checking the row for a model whose every column is a key column, such as a join row. Its
+  SET list is empty, so no statement is sent, and the check that follows the statement was
+  skipped with it. The check now runs without the statement, as a read of the key and any
+  guard, and when a guard misses, a second read of the key alone: a row that is gone is
+  `orm.ErrRowGone`, and one whose guard does not match is `orm.ErrRowConflict`.
+- `orm.Refresh` overwrote every relation field with nil, since it reads the row and not its
+  relations, while the meta still recorded the relations as loaded. The next `Save` read a
+  loaded many-to-many relation as cleared and deleted all of the entity's join rows. `Refresh`
+  now leaves relation fields as they were.
+- Saving a many-to-many relation addressed its join rows by one owner column and one related
+  column, picked by overwriting a variable in a loop over the relation's references. On a
+  composite key the stale-row DELETE for an owner keyed by (tenant, id) removed its join rows in
+  every tenant, and for a related entity keyed by (tenant, code) the tenant was written into the
+  code column and every join row of the owner was deleted, the one being kept included. Such a
+  relation is now refused on every datasource, before anything is written, with `orm: Save
+  cannot write many-to-many relation "<path>": its join table <table> links a composite key
+  (<columns>), which Save would address by one column; write its join rows explicitly`. The
+  join row's related column also stored the related entity's first key column whatever the
+  relation referenced. It now stores the referenced column, such as `Code` for a relation
+  tagged `references:Code`.
+
+  **Upgrade note:** a model with a many-to-many relation keyed by more than one column on
+  either side can no longer be saved with that relation set, or loaded and cleared. Write its
+  join rows with the query builder, and leave the relation nil and unloaded on the entity you
+  save.
 
 ---
 

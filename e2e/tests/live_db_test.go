@@ -1847,6 +1847,168 @@ func ormEngines(t *testing.T) []ormEngine {
 	return engines
 }
 
+// TestCountByQueryShapesOnBothEngines runs the queries CountByQuery wraps against real
+// engines, which is the only place the wrapped SQL is judged. CountByQuery used to append
+// COUNT(*) to the caller's select list and keep its ORDER BY and LIMIT, so a grouped,
+// DISTINCT or UNION query was counted as something else, and a page's total was capped at
+// the page size. It now counts a derived table, and a derived table is where the engines
+// disagree: MySQL refuses one with a repeated column name (error 1060), so the ORM must
+// either name every column once or refuse before sending — both are asserted here. The
+// grouped shapes pin which columns the derived table keeps: a star under GROUP BY is
+// refused by Postgres (42803) and by MySQL's ONLY_FULL_GROUP_BY (1055), so it is replaced,
+// while a GROUP BY that names a select-list alias or position needs that list kept.
+func TestCountByQueryShapesOnBothEngines(t *testing.T) {
+	for _, engine := range ormEngines(t) {
+		t.Run(engine.name, func(t *testing.T) {
+			gormDb := gormOf(t, engine.ds)
+			createOrmSchema(t, gormDb, engine.name)
+			t.Cleanup(func() { dropOrmSchema(t, gormDb) })
+
+			for _, row := range [][2]any{{"a", "x"}, {"a", "y"}, {"b", "x"}, {"b", "x"}, {"c", nil}} {
+				require.NoError(t, gormDb.Exec(
+					"INSERT INTO orm_widgets (name, label) VALUES (?, ?)", row[0], row[1]).Error)
+			}
+			for _, name := range []string{"a", "z"} {
+				require.NoError(t, gormDb.Exec("INSERT INTO orm_tags (name) VALUES (?)", name).Error)
+			}
+
+			session, err := engine.ds.NewSession()
+			require.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, session.Close()) })
+			widgets := orm.New[*ormWidget](session)
+
+			shapes := []struct {
+				name  string
+				build func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder
+				want  int64
+			}{
+				{
+					// The total of the second page of one, not the page itself.
+					name: "paged",
+					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+						return q.Neq("name", "c").OrderBy("name", "ASC").Limit(1).Offset(1)
+					},
+					want: 4,
+				},
+				{
+					name: "group by",
+					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+						return q.Select("name", "COUNT(*)").GroupBy("name").OrderBy("name", "ASC")
+					},
+					want: 3,
+				},
+				{
+					name: "group by with having",
+					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+						return q.Select("name", "COUNT(*) AS n").GroupBy("name").
+							Having(&dbCore.RawCondition{SQL: "COUNT(*) > ?", Args: []any{1}})
+					},
+					want: 2,
+				},
+				{
+					name: "group by with having and no select list",
+					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+						return q.GroupBy("name").Having(&dbCore.RawCondition{SQL: "COUNT(*) > ?", Args: []any{1}})
+					},
+					want: 2,
+				},
+				{
+					name: "group by with having and a star",
+					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+						return q.Select("*").GroupBy("name").
+							Having(&dbCore.RawCondition{SQL: "COUNT(*) > ?", Args: []any{1}})
+					},
+					want: 2,
+				},
+				{
+					name: "group by a select-list alias",
+					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+						return q.Select("UPPER(name) AS uname", "COUNT(*) AS n").GroupBy("uname")
+					},
+					want: 3,
+				},
+				{
+					name: "group by a select-list position",
+					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+						return q.Select("name").GroupBy("1")
+					},
+					want: 3,
+				},
+				{
+					name: "distinct",
+					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+						return q.Select("DISTINCT name, label").Limit(2)
+					},
+					want: 4,
+				},
+				{
+					name: "distinct written with parentheses",
+					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+						return q.Select("DISTINCT(name)")
+					},
+					want: 3,
+				},
+				{
+					name: "distinct written with parentheses beside another column",
+					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+						return q.Select("DISTINCT(name), label")
+					},
+					want: 4,
+				},
+				{
+					// Both columns are called name; aliasing one is what keeps MySQL from
+					// answering 1060 for the derived table.
+					name: "distinct across a join",
+					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+						return q.Select("DISTINCT orm_widgets.name", "orm_tags.name AS tag_name").
+							CrossJoin("orm_tags")
+					},
+					want: 6,
+				},
+				{
+					name: "union",
+					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+						tags := session.Query().Select("name").From("orm_tags").Build()
+						return q.Select("name").Union(tags).Limit(1)
+					},
+					want: 4,
+				},
+				{
+					name: "union all",
+					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+						tags := session.Query().Select("name").From("orm_tags").Build()
+						return q.Select("name").UnionAll(tags)
+					},
+					want: 7,
+				},
+				{
+					name: "common table expression",
+					build: func(q dbCore.IQueryBuilder) dbCore.IQueryBuilder {
+						labelled := session.Query().Select("name").From("orm_widgets").IsNotNull("label").Build()
+						return q.WithCTE("labelled", labelled).From("labelled").Select("DISTINCT name")
+					},
+					want: 2,
+				},
+			}
+			for _, shape := range shapes {
+				t.Run(shape.name, func(t *testing.T) {
+					total, err := widgets.CountByQuery(shape.build(session.Query()))
+					require.NoError(t, err, "CountByQuery must run on %s", engine.name)
+					assert.Equal(t, shape.want, total)
+				})
+			}
+
+			// Unaliased, the join's two name columns would reach MySQL as a derived table with
+			// a repeated column. The ORM refuses that itself, on every engine, before sending.
+			_, err = widgets.CountByQuery(session.Query().
+				Select("DISTINCT orm_widgets.name", "orm_tags.name").CrossJoin("orm_tags"))
+			require.Error(t, err)
+			assert.Equal(t, "orm: CountByQuery cannot wrap a DISTINCT/UNION query with unnamed or duplicate "+
+				"columns (name is not unique); alias them", err.Error())
+		})
+	}
+}
+
 // TestTheUpsertOptInWorksThroughTheConfig is H3 against a real MySQL 8.
 //
 // TestMySQLQueriesRoundTripThroughTheDialect above proves the opted-in SQL is accepted, but

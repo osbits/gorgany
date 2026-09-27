@@ -54,7 +54,34 @@ func (o *ORM[T]) dialect() dbCore.SQLDialect {
 	return o.newBuilder().Dialect()
 }
 
-// Find finds an domain by its ID and returns it
+// tableName returns the table T is stored in.
+//
+// It is the table gorm's schema names, which is what Find and the *ByQuery methods already
+// used, falling back to GetTableName for a T gorm cannot parse. All and Count used to call
+// GetTableName on `var sample T` directly, and for a pointer model that is a nil *T, which
+// GetTableName then named by the naming strategy without asking TableName(). A model whose
+// table is not its type's default name was read, and counted, from a table that does not
+// exist.
+func (o *ORM[T]) tableName() string {
+	var sample T
+	if entitySchema, err := schema.Parse(sample, &sync.Map{}, schema.NamingStrategy{}); err == nil && entitySchema.Table != "" {
+		return entitySchema.Table
+	}
+	return GetTableName(sample)
+}
+
+// Find finds an domain by its ID and returns it.
+//
+// id is the value of the single primary key column. A model with a composite key is
+// refused, since one value cannot address one row: querying by the first column alone
+// returns an arbitrary row among those that share it. Query such a model by every key
+// column with FirstByQuery.
+//
+// A row that is not there is not an error: for a pointer model Find returns nil and no
+// error. A query that failed is an error. Before, Find tested the error of rendering the
+// query a second time instead of the result of running it, so a failed query — a lost
+// connection, a missing table, a column the driver could not scan — came back as "not
+// found".
 func (o *ORM[T]) Find(id interface{}) (T, error) {
 	// Create a new domain
 	var entity T
@@ -68,6 +95,11 @@ func (o *ORM[T]) Find(id interface{}) (T, error) {
 	// Try to use schema.Parse to get primary key information
 	schemaCache := &sync.Map{}
 	entitySchema, err := schema.Parse(entity, schemaCache, schema.NamingStrategy{})
+	if err == nil && len(entitySchema.PrimaryFieldDBNames) > 1 {
+		return entity, fmt.Errorf(
+			"orm: Find(id) cannot address the composite primary key of %s (%s); query by every key column",
+			entitySchema.Table, strings.Join(entitySchema.PrimaryFieldDBNames, ", "))
+	}
 	if err == nil && len(entitySchema.PrimaryFieldDBNames) > 0 {
 		// Update primary key in meta
 		meta.PrimaryKey = entitySchema.PrimaryFieldDBNames[0]
@@ -107,8 +139,8 @@ func (o *ORM[T]) Find(id interface{}) (T, error) {
 
 	// Execute the query
 	queryResult := o.db.Executor().FindRaw(context.Background(), &entity, sql, args...)
-	if err != nil {
-		return entity, fmt.Errorf("failed to execute Find in ORM for %s: %w", indirectEntityType.Name(), err)
+	if queryResult.Error != nil {
+		return entity, fmt.Errorf("failed to execute Find in ORM for %s: %w", indirectEntityType.Name(), queryResult.Error)
 	}
 
 	// Only set metadata if the domain is not nil
@@ -141,7 +173,7 @@ func (o *ORM[T]) All() ([]T, error) {
 	indirectSampleType := util.IndirectType(rSample.Type())
 
 	// Get table name
-	tableName := GetTableName(sample)
+	tableName := o.tableName()
 
 	builder := o.db.Query()
 	if tableName != "" {
@@ -317,10 +349,7 @@ func (o *ORM[T]) RawQueryAll(query string, args ...interface{}) ([]T, error) {
 
 // Count returns the count of entities that match the query builder conditions
 func (o *ORM[T]) Count() (int64, error) {
-	// Create a sample domain to get metadata
-	var sample T
-
-	tableName := GetTableName(sample)
+	tableName := o.tableName()
 
 	// The builder is copy-on-write: every clause method returns a new builder and
 	// leaves the receiver untouched. The FROM used to be applied with its result
@@ -344,7 +373,14 @@ func (o *ORM[T]) Count() (int64, error) {
 	return count, nil
 }
 
-// Refresh reloads the domain from the database
+// Refresh reloads the domain from the database.
+//
+// The row is read by every primary key column, by column name (see pkPredicate), and one
+// that is gone is ErrRowGone. Refresh used to find the key field by comparing lowercased Go
+// field names with the first key's column name, so a key such as UserID/user_id was "not
+// found", and it then reloaded through Find, which on a composite key read whichever row
+// shared the first column. A row that was gone panicked, copying from the nil entity Find
+// returns for a row it did not find.
 func (o *ORM[T]) Refresh(entity T) error {
 	if isNilValue(entity) {
 		return errors.New("domain cannot be nil")
@@ -360,74 +396,65 @@ func (o *ORM[T]) Refresh(entity T) error {
 		entity.SetMeta(meta)
 	}
 
-	// Try to use schema.Parse to get primary key information
-	schemaCache := &sync.Map{}
-	entitySchema, err := schema.Parse(entity, schemaCache, schema.NamingStrategy{})
-	if err == nil && len(entitySchema.PrimaryFieldDBNames) > 0 {
-		// Update primary key in meta
+	entitySchema, err := keySchema(entity)
+	if err != nil {
+		return fmt.Errorf("cannot refresh domain: %w", err)
+	}
+	if len(entitySchema.PrimaryFieldDBNames) > 0 {
 		meta.PrimaryKey = entitySchema.PrimaryFieldDBNames[0]
 	}
 
 	// Get the table name
 	tableName := meta.TableName
 	if tableName == "" {
-		if entitySchema != nil {
-			tableName = entitySchema.Table
-		} else {
-			tableName = GetTableName(entity)
-		}
+		tableName = entitySchema.Table
 		meta.TableName = tableName
 	}
 
-	// Get the primary key and its value
-	primaryKey := meta.PrimaryKey
-	if primaryKey == "" {
-		primaryKey = "id"
-		meta.PrimaryKey = primaryKey
-	}
-
-	// Extract the primary key value using reflection
-	val := reflect.ValueOf(entity)
-	if val.Kind() == reflect.Ptr {
-		val = val.Elem()
-	}
-
-	// Find the field corresponding to the primary key
-	field := val.FieldByNameFunc(func(name string) bool {
-		// This is a simplified approach - in practice you'd use struct tags or other means
-		return strings.ToLower(name) == strings.ToLower(primaryKey)
-	})
-
-	if !field.IsValid() {
-		return fmt.Errorf("primary key field '%s' not found", primaryKey)
-	}
-
-	// Get the primary key value
-	pkValue := field.Interface()
-
-	// Find the domain by ID
-	refreshedEntity, err := o.Find(pkValue)
+	entityVal := reflect.Indirect(reflect.ValueOf(entity))
+	key, err := pkPredicate(entitySchema, entityVal)
 	if err != nil {
-		return err
+		return fmt.Errorf("cannot refresh domain: %w", err)
+	}
+
+	sql, args, err := whereAll(o.newBuilder().From(tableName), key).Limit(1).ToSQL()
+	if err != nil {
+		return fmt.Errorf("failed to render Refresh query in ORM for %s: %w", entitySchema.Name, err)
+	}
+
+	var refreshedEntity T
+	queryResult := o.db.Executor().FindRaw(context.Background(), &refreshedEntity, sql, args...)
+	if queryResult.Error != nil {
+		return fmt.Errorf("failed to execute Refresh in ORM for %s: %w", entitySchema.Name, queryResult.Error)
+	}
+	if !queryResult.Found || isNilValue(refreshedEntity) {
+		return fmt.Errorf("%w: %s where %s", ErrRowGone, tableName, describeKey(key))
 	}
 
 	// Copy the refreshed domain's data to the original domain
-	refreshedVal := reflect.ValueOf(refreshedEntity)
-	entityVal := reflect.ValueOf(entity)
+	refreshedVal := reflect.Indirect(reflect.ValueOf(refreshedEntity))
 
-	if refreshedVal.Kind() == reflect.Ptr {
-		refreshedVal = refreshedVal.Elem()
-	}
-	if entityVal.Kind() == reflect.Ptr {
-		entityVal = entityVal.Elem()
-	}
-
-	// Copy all fields except Meta
+	// Copy all fields except Meta. An unexported field cannot be set through reflection, and
+	// the scan did not fill it either, so it keeps the value the caller's entity holds.
+	//
+	// A relation field is not copied either: the scan reads the row, not its relations, so
+	// the fresh copy holds nil there. Copying that nil over a loaded relation, while the meta
+	// still records the relation as loaded, reads to SaveRelations as "loaded and then
+	// cleared", and the next Save deleted every join row of a many-to-many relation. The
+	// relations the caller loaded stay as they were.
 	for i := 0; i < refreshedVal.NumField(); i++ {
 		field := refreshedVal.Type().Field(i)
-		if field.Name != "Meta" && field.Name != "BaseEntity" {
-			entityVal.FieldByName(field.Name).Set(refreshedVal.Field(i))
+		if field.Name == "Meta" || field.Name == "BaseEntity" {
+			continue
 		}
+		if _, isRelation := entitySchema.Relationships.Relations[field.Name]; isRelation {
+			continue
+		}
+		target := entityVal.FieldByName(field.Name)
+		if !target.CanSet() {
+			continue
+		}
+		target.Set(refreshedVal.Field(i))
 	}
 
 	// Update metadata
@@ -560,9 +587,23 @@ func (o *ORM[T]) FirstByQuery(qb dbCore.IQueryBuilder) (T, error) {
 	return entity, nil
 }
 
-// CountByQuery executes the given query builder and returns the count
+// CountByQuery returns how many rows the given query builder's query matches.
+//
+// It counts every row the query matches, not the page it would return: ORDER BY, LIMIT and
+// OFFSET are dropped. The query is derived from a copy of qb.Build(), so qb itself is left
+// as it was, and rendered through qb's own dialect. See countQuery for how a grouped,
+// DISTINCT or UNION query is counted, and for the queries it refuses.
+//
+// The count reads from qb's own FROM when it has one, but AllByQuery and FirstByQuery still
+// replace the FROM with the model's table. A builder whose FROM names another source counts
+// that source while those two read the model's table, so a paginated list's total and its
+// page disagree. Leave the FROM unset, or set it to the model's table, for a builder that is
+// passed to both.
 func (o *ORM[T]) CountByQuery(qb dbCore.IQueryBuilder) (int64, error) {
-	// Set the builder to select COUNT(*)
+	if qb == nil {
+		return 0, errors.New("orm: CountByQuery needs a query builder")
+	}
+
 	var entity T
 
 	schemaCache := &sync.Map{}
@@ -571,15 +612,21 @@ func (o *ORM[T]) CountByQuery(qb dbCore.IQueryBuilder) (int64, error) {
 		return 0, fmt.Errorf("failed to parse domain schema in ORM: %w", err)
 	}
 
-	tableName := ""
-	if entitySchema != nil {
-		tableName = entitySchema.Table
-	} else {
+	tableName := entitySchema.Table
+	if tableName == "" {
 		tableName = GetTableName(entity)
 	}
 
-	qb = qb.Select("COUNT(*)").From(tableName)
-	sql, args, err := qb.ToSQL()
+	query, err := countQuery(qb.Build(), tableName)
+	if err != nil {
+		return 0, err
+	}
+
+	dialect := qb.Dialect()
+	if dialect == nil {
+		dialect = o.dialect()
+	}
+	sql, args, err := dialect.FormatQuery(query)
 	if err != nil {
 		return 0, fmt.Errorf("failed to render CountByQuery in ORM: %w", err)
 	}

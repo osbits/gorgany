@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -14,7 +15,12 @@ import (
 	"gorm.io/gorm/schema"
 )
 
-// SaveRelations saves all relations of the domain
+// SaveRelations saves all relations of the domain.
+//
+// It refuses, before writing anything, what checkCascade refuses: on an external_schema
+// datasource, a relation that holds something it would write, unless the entity implements
+// CascadingSaves and returns true (see CascadingSaves for why), and on any datasource a
+// many-to-many relation whose join table links a composite key.
 func (o *ORM[T]) SaveRelations(entity T) error {
 	if isNilValue(entity) {
 		return nil
@@ -29,6 +35,10 @@ func (o *ORM[T]) SaveRelations(entity T) error {
 	entityValue := reflect.ValueOf(entity)
 	if entityValue.Kind() == reflect.Ptr {
 		entityValue = entityValue.Elem()
+	}
+
+	if err := o.checkCascade(entity, entitySchema, entityValue); err != nil {
+		return err
 	}
 
 	for relName, rel := range entitySchema.Relationships.Relations {
@@ -139,19 +149,15 @@ func (o *ORM[T]) SaveRelations(entity T) error {
 			}
 			joinTable := rel.JoinTable.Name
 
-			var ownerFKCol, relatedFKCol string
-			var ownerPKField string
-			for _, ref := range rel.References {
-				if ref.OwnPrimaryKey {
-					ownerFKCol = ref.ForeignKey.DBName
-					ownerPKField = ref.PrimaryKey.Name
-				} else {
-					relatedFKCol = ref.ForeignKey.DBName
-				}
+			ownerRef, relatedRef, err := joinReferences(relName, rel)
+			if err != nil {
+				return err
 			}
-			if ownerFKCol == "" || relatedFKCol == "" {
+			if ownerRef == nil || relatedRef == nil {
 				continue
 			}
+			ownerFKCol, relatedFKCol := ownerRef.ForeignKey.DBName, relatedRef.ForeignKey.DBName
+			ownerPKField := ownerRef.PrimaryKey.Name
 
 			// Get the owner's PK value once
 			ownerPKValue := entityValue.FieldByName(ownerPKField)
@@ -196,17 +202,14 @@ func (o *ORM[T]) SaveRelations(entity T) error {
 					return err
 				}
 
-				// Resolve related entity's PK via schema
+				// The join row stores the column the relation references, which is the related
+				// entity's key unless the relation names another column. It used to store the
+				// related entity's first key column whatever the join column referenced.
 				relEntityValue := reflect.ValueOf(relEntity)
 				if relEntityValue.Kind() == reflect.Ptr {
 					relEntityValue = relEntityValue.Elem()
 				}
-				relSchemaCache := &sync.Map{}
-				relSchema, err := schema.Parse(relEntity, relSchemaCache, schema.NamingStrategy{})
-				if err != nil || len(relSchema.PrimaryFields) == 0 {
-					continue
-				}
-				relPKField := relEntityValue.FieldByName(relSchema.PrimaryFields[0].Name)
+				relPKField := relEntityValue.FieldByName(relatedRef.PrimaryKey.Name)
 				if !relPKField.IsValid() || isZeroValue(relPKField.Interface()) {
 					continue
 				}
@@ -252,6 +255,203 @@ func (o *ORM[T]) SaveRelations(entity T) error {
 		}
 	}
 	return nil
+}
+
+// cascadeRefusedError is the refusal SaveRelations returns on an external_schema datasource.
+//
+// It is a type rather than fmt.Errorf so that its text is the sentence an operator reads and
+// errors.Is still finds core.ErrExternalSchema behind it, as it does behind every other
+// external_schema refusal. relation is the path from the saved entity, such as "Items" or,
+// for a relation of a related entity, "Items.Tags".
+type cascadeRefusedError struct {
+	relation string
+}
+
+func (e *cascadeRefusedError) Error() string {
+	return fmt.Sprintf("orm: refusing to cascade Save into relation %q on an external_schema "+
+		"datasource; save related entities explicitly or implement CascadeSaves()", e.relation)
+}
+
+func (e *cascadeRefusedError) Unwrap() error { return dbCore.ErrExternalSchema }
+
+// checkCascade walks what Save would write through entity's relations and returns the first
+// refusal, before anything is written.
+//
+// createEntity and updateEntity ask it before sending the entity's own statement, and
+// SaveRelations asks it again for a caller that calls SaveRelations directly. The cascade
+// itself writes as it goes: the entity's row, then each related entity, whose own relations
+// are checked only when the cascade reaches it. Checking only there would leave the rows
+// written before a refusal in place while the Save reports failure, and a retry would write
+// them twice. So the walk descends into every related entity the cascade would save, however
+// deep, and asks each one:
+//   - on an external_schema datasource, whether it opts in with CascadingSaves, if any of its
+//     relations would be written (see CascadingSaves);
+//   - on any datasource, whether a many-to-many relation that would be written is linked by a
+//     composite key (see joinReferences).
+//
+// Relations are walked in name order, so the refusal names the same relation on every run. A
+// related entity is visited once, so a cycle ends the walk rather than looping. The walk is
+// conservative where the cascade decides at run time: a many-to-many item that the cascade
+// would find already stored, and therefore not save, is checked all the same.
+func (o *ORM[T]) checkCascade(entity EntityWithMeta, entitySchema *schema.Schema, entityValue reflect.Value) error {
+	external := o.db != nil && dbCore.IsExternalSchema(o.db.DataSource())
+	return checkCascadeFrom(entity, entitySchema, reflect.Indirect(entityValue), external, "", map[visitedEntity]bool{})
+}
+
+// visitedEntity identifies an entity the walk has reached. The type is part of it because a
+// struct and its first field share an address.
+type visitedEntity struct {
+	entityType reflect.Type
+	address    uintptr
+}
+
+// checkCascadeFrom is checkCascade for one entity of the walk. path is the relation path
+// that reached it, ending in a dot, or "" for the entity Save was called on.
+func checkCascadeFrom(entity EntityWithMeta, entitySchema *schema.Schema, entityValue reflect.Value,
+	external bool, path string, visited map[visitedEntity]bool) error {
+	if entityValue.CanAddr() {
+		key := visitedEntity{entityValue.Type(), entityValue.Addr().Pointer()}
+		if visited[key] {
+			return nil
+		}
+		visited[key] = true
+	}
+
+	optedIn := false
+	if opted, ok := any(entity).(CascadingSaves); ok {
+		optedIn = opted.CascadeSaves()
+	}
+
+	names := make([]string, 0, len(entitySchema.Relationships.Relations))
+	for name := range entitySchema.Relationships.Relations {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		rel := entitySchema.Relationships.Relations[name]
+		field := entityValue.FieldByName(name)
+		if !field.IsValid() || !relationWouldBeWritten(entity, name, rel, field) {
+			continue
+		}
+		relationPath := path + name
+		if external && !optedIn {
+			return &cascadeRefusedError{relation: relationPath}
+		}
+		if rel.Type == schema.Many2Many {
+			if _, _, err := joinReferences(relationPath, rel); err != nil {
+				return err
+			}
+		}
+		for _, related := range relatedEntities(rel, field) {
+			relatedSchema, err := schema.Parse(related, &sync.Map{}, schema.NamingStrategy{})
+			if err != nil {
+				// SaveRelations does not walk the relations of an entity whose schema it
+				// cannot parse either.
+				continue
+			}
+			relatedValue := reflect.Indirect(reflect.ValueOf(related))
+			if err := checkCascadeFrom(related, relatedSchema, relatedValue, external, relationPath+".", visited); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// relationWouldBeWritten reports whether SaveRelations writes anything through field.
+//
+// It follows SaveRelations case by case, so a nil or empty relation never refuses a Save
+// that would not have touched it. A many-to-many relation is the exception to "empty": a
+// slice that is set but empty, or one that was loaded and then set to nil, is how a caller
+// asks SaveRelations to delete the entity's join rows, so it is a write and is refused like
+// one.
+func relationWouldBeWritten(entity EntityWithMeta, name string, rel *schema.Relationship, field reflect.Value) bool {
+	switch rel.Type {
+	case schema.HasOne, schema.BelongsTo, schema.HasMany:
+		return len(relatedEntities(rel, field)) > 0
+	case schema.Many2Many:
+		if field.Kind() != reflect.Slice {
+			return false
+		}
+		return !field.IsNil() || isRelationExplicitlyLoaded(entity, name)
+	}
+	return false
+}
+
+// relatedEntities returns the entities SaveRelations saves through field, in order.
+//
+// A many-to-many element held by value is returned as a pointer to a copy, which is what
+// SaveRelations saves for it.
+func relatedEntities(rel *schema.Relationship, field reflect.Value) []EntityWithMeta {
+	var related []EntityWithMeta
+	add := func(v reflect.Value) {
+		if v.Kind() == reflect.Ptr && !v.IsNil() {
+			if entity, ok := v.Interface().(EntityWithMeta); ok {
+				related = append(related, entity)
+			}
+		}
+	}
+
+	switch rel.Type {
+	case schema.HasOne, schema.BelongsTo:
+		add(field)
+	case schema.HasMany, schema.Many2Many:
+		if field.Kind() != reflect.Slice {
+			return nil
+		}
+		for i := 0; i < field.Len(); i++ {
+			item := field.Index(i)
+			if rel.Type == schema.Many2Many && item.Kind() == reflect.Struct {
+				copied := reflect.New(item.Type())
+				copied.Elem().Set(item)
+				item = copied
+			}
+			add(item)
+		}
+	}
+	return related
+}
+
+// joinReferences returns the reference that links a many-to-many join row to its owner and
+// the one that links it to the related entity, or nils when the relation has no such pair, in
+// which case SaveRelations leaves it alone.
+//
+// Each side must be one column. SaveRelations writes and deletes join rows by one owner
+// column and one related column, so a composite key on either side was addressed by one of
+// its parts: an owner keyed by (tenant, id) deleted its join rows in every tenant, and a
+// related entity keyed by (tenant, code) had its tenant written into the code column, and
+// every join row of the owner deleted, the one being kept included. Such a relation is
+// refused, before anything is written, until join rows are addressed by every column.
+func joinReferences(relation string, rel *schema.Relationship) (owner, related *schema.Reference, err error) {
+	var owners, relateds []*schema.Reference
+	for _, ref := range rel.References {
+		if ref.PrimaryKey == nil || ref.ForeignKey == nil {
+			continue
+		}
+		if ref.OwnPrimaryKey {
+			owners = append(owners, ref)
+		} else {
+			relateds = append(relateds, ref)
+		}
+	}
+	if len(owners) > 1 || len(relateds) > 1 {
+		columns := make([]string, 0, len(owners)+len(relateds))
+		for _, ref := range append(owners, relateds...) {
+			columns = append(columns, ref.ForeignKey.DBName)
+		}
+		table := ""
+		if rel.JoinTable != nil {
+			table = rel.JoinTable.Name
+		}
+		return nil, nil, fmt.Errorf("orm: Save cannot write many-to-many relation %q: its join table %s "+
+			"links a composite key (%s), which Save would address by one column; write its join rows "+
+			"explicitly", relation, table, strings.Join(columns, ", "))
+	}
+	if len(owners) == 0 || len(relateds) == 0 {
+		return nil, nil, nil
+	}
+	return owners[0], relateds[0], nil
 }
 
 // LoadRelation loads a specific relation for an domain

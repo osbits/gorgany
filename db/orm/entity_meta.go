@@ -36,7 +36,8 @@ type EntityMeta struct {
 	// Nil or empty means "write every column", which is what every caller before this did and
 	// what Save still does — so an entity that never sets it is unaffected. Only updateEntity
 	// consults it; an INSERT writes the whole row by definition, and the primary key is never
-	// skipped because it is the WHERE, not a SET.
+	// skipped because it is the WHERE, not a SET. For the same reason a set that names a key
+	// column is refused rather than written: the ORM cannot move a row to a new key.
 	//
 	// It exists because a full-row UPDATE writes columns the caller never touched, using
 	// whatever the in-memory copy happens to hold. For an entity two processes share — a

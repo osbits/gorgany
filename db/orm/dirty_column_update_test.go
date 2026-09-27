@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // An UPDATE built from an entity writes every column the struct has, using whatever the
@@ -201,5 +203,60 @@ func TestAnUnguardedNoOpUpdateIsStillNotAConflict(t *testing.T) {
 	_, err := captureUpdate(t, dirtyTestEntity(), dbCore.QueryResult{RowsAffected: 0}, true)
 	if err != nil {
 		t.Fatalf("an unguarded update that matched nothing must not report an error: %v", err)
+	}
+}
+
+// TestADirtySetNeverPutsAKeyColumnOfACompositeKeyInTheSetList. Only the first key column used
+// to be kept out of the SET list, so an empty DirtyColumns wrote the second one back into the
+// row it was supposed to identify, and naming it wrote to whichever row held its new value.
+// A full-row write now leaves every key column out, and a dirty set that names one is refused
+// before anything is sent (see TestUpdateRefusesChangingAKeyColumn).
+func TestADirtySetNeverPutsAKeyColumnOfACompositeKeyInTheSetList(t *testing.T) {
+	refusal := func(column string) string {
+		return `orm: cannot change primary key column "` + column + `" of order_lines through Update; ` +
+			"delete the row and create it again"
+	}
+	cases := []struct {
+		name  string
+		dirty map[string]bool
+		// wantSQL and wantArgs are the one UPDATE sent. wantErr, when set, is the refusal, and
+		// then nothing may be sent.
+		wantSQL  string
+		wantArgs []any
+		wantErr  string
+	}{
+		{
+			name:     "every column",
+			wantSQL:  "UPDATE order_lines SET qty = ?, sku = ? WHERE order_id = ? AND line_no = ?",
+			wantArgs: []any{3, "sku-1", int64(7), 2},
+		},
+		{
+			name:     "a column that is not a key column",
+			dirty:    map[string]bool{"qty": true},
+			wantSQL:  "UPDATE order_lines SET qty = ? WHERE order_id = ? AND line_no = ?",
+			wantArgs: []any{3, int64(7), 2},
+		},
+		{name: "a key column named", dirty: map[string]bool{"line_no": true, "qty": true}, wantErr: refusal("line_no")},
+		{name: "only key columns named", dirty: map[string]bool{"order_id": true, "line_no": true}, wantErr: refusal("order_id")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockDS := NewMockDataSource()
+			recorder := recordStatements(t, mockDS)
+			line := loadedOrderLine(7, 2)
+			line.GetMeta().DirtyColumns = tc.dirty
+
+			err := New[*OrderLine](mockDS.session).Update(line)
+
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				assert.Equal(t, tc.wantErr, err.Error())
+				assert.Empty(t, recorder.statements, "a refused update must send nothing")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, []string{tc.wantSQL}, recorder.rendered)
+			assert.Equal(t, [][]any{tc.wantArgs}, recorder.args)
+		})
 	}
 }

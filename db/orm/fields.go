@@ -82,23 +82,37 @@ func extractFieldsFromStructSkipRelations(val reflect.Value, meta *EntityMeta, c
 	}
 }
 
-func extractFieldsForUpdate(val reflect.Value, meta *EntityMeta) (interface{}, map[string]interface{}) {
-	var pkValue interface{}
+// extractFieldsForUpdate returns the SET list for an UPDATE of val: every column it maps,
+// narrowed by meta.DirtyColumns, and never a primary key column.
+//
+// Only the first key column used to be left out, because it was the only one the WHERE
+// named. On a composite key the other parts were written back into the row as well — a
+// no-op at best, and on a key the server generates or a table whose key another system owns,
+// a write nobody asked for. Every key column is now left out, since pkPredicate puts every
+// one of them in the WHERE.
+func extractFieldsForUpdate(val reflect.Value, meta *EntityMeta) map[string]interface{} {
 	updateFields := make(map[string]interface{})
 	columnMap := make(map[string]bool)
 	schemaCache := &sync.Map{}
 	entitySchema, err := schema.Parse(val.Interface(), schemaCache, schema.NamingStrategy{})
 	relations := map[string]struct{}{}
+	keyColumns := map[string]bool{meta.PrimaryKey: true}
 	if err == nil && entitySchema != nil {
 		for relName := range entitySchema.Relationships.Relations {
 			relations[relName] = struct{}{}
 		}
+		if len(entitySchema.PrimaryFieldDBNames) > 0 {
+			keyColumns = make(map[string]bool, len(entitySchema.PrimaryFieldDBNames))
+			for _, column := range entitySchema.PrimaryFieldDBNames {
+				keyColumns[column] = true
+			}
+		}
 	}
-	extractUpdateFieldsFromStruct(val, meta, &pkValue, updateFields, columnMap, relations, entitySchema, err == nil)
-	return pkValue, updateFields
+	extractUpdateFieldsFromStruct(val, meta, keyColumns, updateFields, columnMap, relations, entitySchema, err == nil)
+	return updateFields
 }
 
-func extractUpdateFieldsFromStruct(val reflect.Value, meta *EntityMeta, pkValue *interface{}, updateFields map[string]interface{}, columnMap map[string]bool, relations map[string]struct{}, entitySchema *schema.Schema, hasSchema bool) {
+func extractUpdateFieldsFromStruct(val reflect.Value, meta *EntityMeta, keyColumns map[string]bool, updateFields map[string]interface{}, columnMap map[string]bool, relations map[string]struct{}, entitySchema *schema.Schema, hasSchema bool) {
 	for i := 0; i < val.NumField(); i++ {
 		field := val.Field(i)
 		fieldType := val.Type().Field(i)
@@ -109,7 +123,7 @@ func extractUpdateFieldsFromStruct(val reflect.Value, meta *EntityMeta, pkValue 
 			if fieldType.Name == "BaseEntity" || fieldType.Name == "Meta" || fieldType.Tag.Get("gorm") == "-" {
 				continue
 			}
-			extractUpdateFieldsFromStruct(field, meta, pkValue, updateFields, columnMap, relations, entitySchema, hasSchema)
+			extractUpdateFieldsFromStruct(field, meta, keyColumns, updateFields, columnMap, relations, entitySchema, hasSchema)
 			continue
 		}
 		if fieldType.Name == "Meta" || fieldType.Tag.Get("gorm") == "-" {
@@ -142,11 +156,12 @@ func extractUpdateFieldsFromStruct(val reflect.Value, meta *EntityMeta, pkValue 
 		if columnMap[columnName] {
 			continue
 		}
-		if columnName == meta.PrimaryKey {
-			// Never filtered by DirtyColumns: the primary key identifies the row rather than
-			// being written to it, and dropping it would leave the statement with no WHERE.
-			*pkValue = field.Interface()
-		} else if meta.isDirtyColumn(columnName) {
+		// A key column identifies the row rather than being written to it, so it is never in
+		// the SET list: the WHERE carries it instead. A DirtyColumns set that names one is
+		// refused before this is reached (see refuseKeyChange), since leaving the changed key
+		// out of the SET while the WHERE reads it would write to whichever row holds the new
+		// key.
+		if !keyColumns[columnName] && meta.isDirtyColumn(columnName) {
 			updateFields[columnName] = field.Interface()
 		}
 		columnMap[columnName] = true
@@ -247,38 +262,4 @@ func isNilValue(v interface{}) bool {
 	default:
 		return false
 	}
-}
-
-func findFieldValueInEmbedded(val reflect.Value, fieldName string) interface{} {
-	valType := val.Type()
-	for i := 0; i < valType.NumField(); i++ {
-		field := valType.Field(i)
-		if !field.Anonymous {
-			continue
-		}
-		if !val.Field(i).CanInterface() {
-			continue
-		}
-		if field.Name == "BaseEntity" || field.Name == "Meta" || field.Tag.Get("gorm") == "-" {
-			continue
-		}
-		embeddedVal := val.Field(i)
-		if embeddedVal.Kind() == reflect.Ptr {
-			if embeddedVal.IsNil() {
-				continue
-			}
-			embeddedVal = embeddedVal.Elem()
-		}
-		if embeddedVal.Kind() != reflect.Struct {
-			continue
-		}
-		fieldVal := embeddedVal.FieldByName(fieldName)
-		if fieldVal.IsValid() {
-			return fieldVal.Interface()
-		}
-		if result := findFieldValueInEmbedded(embeddedVal, fieldName); result != nil {
-			return result
-		}
-	}
-	return nil
 }

@@ -13,10 +13,11 @@ import (
 	"gorm.io/gorm/schema"
 )
 
-// ErrRowGone reports an update whose row no longer exists.
+// ErrRowGone reports that the row an entity addresses no longer exists.
 //
-// Only UpdateExisting returns it. Save and Update deliberately do not: see updateEntity for
-// why zero matched rows is not, on its own, evidence of anything.
+// UpdateExisting, an update guarded by EntityMeta.UpdateGuard, and Refresh return it. Save
+// and Update without a guard deliberately do not: see updateEntity for why zero matched rows
+// is not, on its own, evidence of anything.
 var ErrRowGone = errors.New("orm: the row this entity was loaded from no longer exists")
 
 // ErrRowConflict reports a guarded update whose guard did not match a row that is still there.
@@ -81,7 +82,12 @@ func (o *ORM[T]) UpdateExisting(entity T) error {
 	return o.updateEntity(entity, true)
 }
 
-// Delete deletes an domain
+// Delete deletes an domain.
+//
+// The row is addressed by every primary key column, by column name (see pkPredicate). It
+// used to be addressed by the first key's Go field name, which it also wrote into
+// meta.PrimaryKey, so `UserID` reached the server as the column name and a composite key
+// deleted every row that shared its first part.
 func (o *ORM[T]) Delete(entity T) error {
 	if isNilValue(entity) {
 		return errors.New("domain cannot be nil")
@@ -97,14 +103,12 @@ func (o *ORM[T]) Delete(entity T) error {
 		entity.SetMeta(meta)
 	}
 
-	pkValueFieldName := ""
-	// Try to use schema.Parse to get primary key information
-	schemaCache := &sync.Map{}
-	entitySchema, err := schema.Parse(entity, schemaCache, schema.NamingStrategy{})
-	if err == nil && len(entitySchema.PrimaryFieldDBNames) > 0 {
-		// Update primary key in meta
-		meta.PrimaryKey = entitySchema.PrimaryFields[0].Name
-		pkValueFieldName = entitySchema.PrimaryFields[0].Name
+	entitySchema, err := keySchema(entity)
+	if err != nil {
+		return fmt.Errorf("cannot delete domain: %w", err)
+	}
+	if len(entitySchema.PrimaryFieldDBNames) > 0 {
+		meta.PrimaryKey = entitySchema.PrimaryFieldDBNames[0]
 	}
 
 	// Execute hooks if domain implements them
@@ -114,12 +118,6 @@ func (o *ORM[T]) Delete(entity T) error {
 		}
 	}
 
-	// Extract domain information using reflection
-	val := reflect.ValueOf(entity)
-	if val.Kind() == reflect.Ptr {
-		val = val.Elem()
-	}
-
 	// Get table name
 	tableName := meta.TableName
 	if tableName == "" {
@@ -127,31 +125,12 @@ func (o *ORM[T]) Delete(entity T) error {
 		meta.TableName = tableName
 	}
 
-	// Find the primary key value, checking both the main struct and embedded structs
-	var pkValue any
-
-	// First try to find the field directly
-	pkField := val.FieldByName(pkValueFieldName)
-	if pkField.IsValid() {
-		pkValue = pkField.Interface()
-	} else {
-		// If not found directly, search in embedded structs
-		pkValue = findFieldValueInEmbedded(val, pkValueFieldName)
+	key, err := pkPredicate(entitySchema, reflect.ValueOf(entity))
+	if err != nil {
+		return fmt.Errorf("cannot delete domain: %w", err)
 	}
 
-	if pkValue == nil || isZeroValue(pkValue) {
-		return fmt.Errorf("cannot delete domain with zero primary key value")
-	}
-
-	// Create a builder for the DELETE query
-	builder := o.db.Query().Delete(tableName)
-
-	// Add WHERE clause for primary key
-	builder = builder.Where(&dbCore.BinaryCondition{
-		Left:     meta.PrimaryKey,
-		Operator: "=",
-		Right:    pkValue,
-	})
+	builder := whereAll(o.db.Query().Delete(tableName), key)
 
 	// Execute the query
 	queryRes := o.db.Executor().Exec(context.Background(), builder)
@@ -221,6 +200,14 @@ func (o *ORM[T]) createEntity(entity T) error {
 	builder = o.newBuilder()
 
 	builder = builder.Insert(tableName)
+
+	// Refused before the INSERT is sent, so a Save whose cascade is refused writes nothing at
+	// all rather than the entity's own row and then an error (see checkCascade).
+	if entitySchema != nil {
+		if err := o.checkCascade(entity, entitySchema, val); err != nil {
+			return err
+		}
+	}
 
 	// Extract field values using our new function that supports embedded structs
 	columns, values := extractFieldsForInsert(val, meta)
@@ -335,11 +322,13 @@ func (o *ORM[T]) updateEntity(entity T, requireRow bool) error {
 		entity.SetMeta(meta)
 	}
 
-	// Try to use schema.Parse to get primary key information
-	schemaCache := &sync.Map{}
-	entitySchema, err := schema.Parse(entity, schemaCache, schema.NamingStrategy{})
-	if err == nil && len(entitySchema.PrimaryFieldDBNames) > 0 {
-		// Update primary key in meta
+	// The key columns come from the schema. A schema gorm cannot parse is refused (see
+	// keySchema) rather than addressed through a guessed "id" column.
+	entitySchema, err := keySchema(entity)
+	if err != nil {
+		return fmt.Errorf("cannot update domain: %w", err)
+	}
+	if len(entitySchema.PrimaryFieldDBNames) > 0 {
 		meta.PrimaryKey = entitySchema.PrimaryFieldDBNames[0]
 	}
 
@@ -372,35 +361,51 @@ func (o *ORM[T]) updateEntity(entity T, requireRow bool) error {
 	// Create a builder for the UPDATE query
 	builder := o.db.Query().Update(tableName)
 
+	// Every key column identifies the row, so none of them is written: the SET list leaves
+	// them all out and the WHERE names them all.
+	key, err := pkPredicate(entitySchema, val)
+	if err != nil {
+		return fmt.Errorf("cannot update domain: %w", err)
+	}
+	if err := refuseKeyChange(entitySchema, meta); err != nil {
+		return err
+	}
+
 	// Extract field values using our new function that supports embedded structs
-	pkValue, updateFields := extractFieldsForUpdate(val, meta)
+	updateFields := extractFieldsForUpdate(val, meta)
 
 	// Add fields to SET clause
 	for columnName, value := range updateFields {
 		builder = builder.Set(columnName, value)
 	}
 
-	// Check primary key
-	if pkValue == nil || isZeroValue(pkValue) {
-		return fmt.Errorf("cannot update domain with zero primary key value")
-	}
-
-	// A DirtyColumns set that named nothing writable leaves no SET clause, and an UPDATE with
-	// no SET is a syntax error rather than a no-op. Nothing was asked for, so nothing is done —
-	// but the meta is still refreshed below, because the caller's view of the entity has not
-	// changed either.
+	// A DirtyColumns set that named nothing writable leaves no SET clause, and so does a model
+	// whose every column is a key column, such as a join row. An UPDATE with no SET is a syntax
+	// error rather than a no-op. Nothing was asked for, so nothing is written, but the meta is
+	// still refreshed below, because the caller's view of the entity has not changed either.
+	//
+	// A caller that asked for the row to be there, through UpdateExisting or a guard, still
+	// gets that answer: skipping the statement must not also skip the check that would have
+	// followed it, or a row that is gone reads as a success.
 	if len(updateFields) == 0 {
+		if requireRow || len(meta.UpdateGuard) > 0 {
+			if err := o.requireRowWithoutWrite(tableName, entitySchema.PrimaryFieldDBNames, key, meta.UpdateGuard); err != nil {
+				return err
+			}
+		}
 		meta.IsDirty = false
 		meta.IsLoaded = true
 		return nil
 	}
 
+	// Refused before the statement is sent, so a Save whose cascade is refused writes nothing
+	// at all rather than the entity's own row and then an error (see checkCascade).
+	if err := o.checkCascade(entity, entitySchema, val); err != nil {
+		return err
+	}
+
 	// Add WHERE clause for primary key
-	builder = builder.Where(&dbCore.BinaryCondition{
-		Left:     meta.PrimaryKey,
-		Operator: "=",
-		Right:    pkValue,
-	})
+	builder = whereAll(builder, key)
 
 	// And the caller's own guard, if it set one. Successive Where calls are ANDed, so this
 	// narrows the statement rather than replacing the key predicate.
@@ -416,19 +421,19 @@ func (o *ORM[T]) updateEntity(entity T, requireRow bool) error {
 	meta.QueryResult = &queryRes
 
 	if (requireRow || len(meta.UpdateGuard) > 0) && queryRes.RowsAffected == 0 {
-		exists, existsErr := o.rowExists(tableName, meta.PrimaryKey, pkValue)
+		exists, existsErr := o.rowExists(tableName, entitySchema.PrimaryFieldDBNames, key)
 		if existsErr != nil {
 			return existsErr
 		}
 		if !exists {
-			return fmt.Errorf("%w: %s where %s = %v", ErrRowGone, tableName, meta.PrimaryKey, pkValue)
+			return fmt.Errorf("%w: %s where %s", ErrRowGone, tableName, describeKey(key))
 		}
 		// The row is there and the statement still matched nothing, so it was the guard that
 		// refused. Only reachable when a guard was set: without one, zero matched rows against
 		// a row that exists is the ordinary MySQL "wrote the values it already held" case
 		// described above, and must not be reported as a failure.
 		if len(meta.UpdateGuard) > 0 {
-			return fmt.Errorf("%w: %s where %s = %v", ErrRowConflict, tableName, meta.PrimaryKey, pkValue)
+			return fmt.Errorf("%w: %s where %s", ErrRowConflict, tableName, describeKey(key))
 		}
 	}
 
@@ -457,15 +462,44 @@ func (o *ORM[T]) updateEntity(entity T, requireRow bool) error {
 	return nil
 }
 
-// rowExists reports whether a row with this primary key is still in the table.
+// requireRowWithoutWrite answers, for an update that had nothing to write, what the
+// statement's row count would have told UpdateExisting and a guarded update: ErrRowGone
+// when the row is not there, ErrRowConflict when it is there but the guard does not match
+// it, and nil otherwise.
 //
-// Keyed and limited to one row, and read through Find rather than a COUNT so it goes through
-// the same path createEntity's read-back uses on every engine.
-func (o *ORM[T]) rowExists(tableName, primaryKey string, pkValue any) (bool, error) {
-	sql, args, err := o.newBuilder().
-		Select(primaryKey).
-		From(tableName).
-		Eq(primaryKey, pkValue).
+// The first probe carries the guard, so the ordinary case costs one read. Only a miss is
+// asked again without it, to tell a row that is gone from one that has changed, as the
+// statement path does.
+func (o *ORM[T]) requireRowWithoutWrite(tableName string, keyColumns []string, key, guard []dbCore.Condition) error {
+	guarded := append(append([]dbCore.Condition{}, key...), guard...)
+	matched, err := o.rowExists(tableName, keyColumns, guarded)
+	if err != nil {
+		return err
+	}
+	if matched {
+		return nil
+	}
+	if len(guard) > 0 {
+		exists, err := o.rowExists(tableName, keyColumns, key)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return fmt.Errorf("%w: %s where %s", ErrRowConflict, tableName, describeKey(key))
+		}
+	}
+	return fmt.Errorf("%w: %s where %s", ErrRowGone, tableName, describeKey(key))
+}
+
+// rowExists reports whether a row matching conditions — the key, and for
+// requireRowWithoutWrite the guard too — is still in the table.
+//
+// Keyed on every key column and limited to one row, and read through Find rather than a
+// COUNT so it goes through the same path createEntity's read-back uses on every engine. It
+// used to key on the first column only, so on a composite key a sibling row sharing that
+// column answered "still there" for a row that was gone.
+func (o *ORM[T]) rowExists(tableName string, keyColumns []string, conditions []dbCore.Condition) (bool, error) {
+	sql, args, err := whereAll(o.newBuilder().Select(keyColumns...).From(tableName), conditions).
 		Limit(1).
 		ToSQL()
 	if err != nil {

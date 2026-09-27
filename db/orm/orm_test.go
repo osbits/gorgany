@@ -93,6 +93,10 @@ func (t TestEntityWithValueReceiverTableName) TableName() string {
 type MockSession struct {
 	executor *MockExecutor
 	ds       dbCore.IDataSource
+
+	// queryFn, when set, supplies the session's builders, so a test can run the ORM against
+	// another dialect. Unset, the session speaks Postgres.
+	queryFn func() dbCore.IQueryBuilder
 }
 
 func (m *MockSession) Executor() dbCore.IQueryExecutor {
@@ -100,6 +104,9 @@ func (m *MockSession) Executor() dbCore.IQueryExecutor {
 }
 
 func (m *MockSession) Query() dbCore.IQueryBuilder {
+	if m.queryFn != nil {
+		return m.queryFn()
+	}
 	return v2.NewBuilder()
 }
 
@@ -239,6 +246,15 @@ func (m *MockExecutor) FindRaw(ctx context.Context, dest interface{}, sql string
 // MockDataSource implements dbCore.IDataSource for testing
 type MockDataSource struct {
 	session *MockSession
+
+	// policy is what the datasource reports through core.PolicyReporter. The zero value is a
+	// datasource gorgany owns, which is what every test that does not set it expects.
+	policy dbCore.DataSourcePolicy
+}
+
+// Policy implements core.PolicyReporter.
+func (m *MockDataSource) Policy() dbCore.DataSourcePolicy {
+	return m.policy
 }
 
 func (m *MockDataSource) NewSession() (dbCore.ISession, error) {
@@ -989,6 +1005,14 @@ func TestCustomTableName(t *testing.T) {
 	nilTableName := GetTableName(nil)
 	if nilTableName != "" {
 		t.Errorf("Expected nil table name to be empty, got: %s", nilTableName)
+	}
+
+	// Test with a typed nil pointer: there is no entity, but the type still names its table,
+	// and `var sample T` is exactly this for a pointer model.
+	var typedNil *TestEntityWithCustomTableName
+	typedNilTableName := GetTableName(typedNil)
+	if typedNilTableName != "custom_table_name" {
+		t.Errorf("Expected typed nil table name: custom_table_name, got: %s", typedNilTableName)
 	}
 
 	// Test with zero value entity (should still call TableName() method since pointer is not nil)

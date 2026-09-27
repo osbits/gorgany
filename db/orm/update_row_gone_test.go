@@ -2,9 +2,13 @@ package orm
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // An UPDATE keyed on a primary key that no longer exists matches nothing. The
@@ -83,5 +87,105 @@ func TestUpdateExistingAcceptsANoOpUpdate(t *testing.T) {
 	orm := New[*TestEntity](mockDS.session)
 	if err := orm.UpdateExisting(loadedTestEntity()); err != nil {
 		t.Fatalf("a present row whose columns did not change is not a missing row: %v", err)
+	}
+}
+
+// TestUpdateExistingProbesACompositeKeyByEveryColumn. The existence probe keyed on the first
+// key column only, so when line 2 of order 7 was gone, line 1 answered "still there" and the
+// write with nowhere to land was reported as a success. The probe here answers the way such
+// a table would: a query that pins line_no finds nothing, one that does not finds the
+// sibling.
+func TestUpdateExistingProbesACompositeKeyByEveryColumn(t *testing.T) {
+	mockDS := NewMockDataSource()
+	mockDS.session.executor.execFunc = func(context.Context, dbCore.IQueryBuilder) dbCore.QueryResult {
+		return dbCore.QueryResult{RowsAffected: 0}
+	}
+	var probe string
+	var probeArgs []any
+	mockDS.session.executor.queryRawFunc = func(_ context.Context, _ interface{}, sql string, args ...interface{}) dbCore.QueryResult {
+		probe, probeArgs = sql, args
+		if strings.Contains(sql, "line_no = ?") {
+			return dbCore.QueryResult{Found: false}
+		}
+		return dbCore.QueryResult{Found: true, RowsAffected: 1}
+	}
+
+	err := New[*OrderLine](mockDS.session).UpdateExisting(loadedOrderLine(7, 2))
+
+	require.True(t, errors.Is(err, ErrRowGone), "expected ErrRowGone, got %v", err)
+	assert.Equal(t, "orm: the row this entity was loaded from no longer exists: "+
+		"order_lines where order_id = 7 AND line_no = 2", err.Error(),
+		"the message must name the whole key, not only its first column")
+	assert.Equal(t, "SELECT order_id, line_no FROM order_lines WHERE order_id = ? AND line_no = ? LIMIT 1", probe)
+	assert.Equal(t, []any{int64(7), 2}, probeArgs)
+}
+
+// LinkRow is a join row: every column it has is part of its key, so an update of it has
+// nothing to write.
+type LinkRow struct {
+	BaseEntity
+	LeftID  int64 `gorm:"primaryKey;autoIncrement:false;column:left_id"`
+	RightID int64 `gorm:"primaryKey;autoIncrement:false;column:right_id"`
+}
+
+// TestUpdateExistingChecksTheRowWhenThereIsNothingToWrite. Every key column is left out of
+// the SET list, so a model whose columns are all key columns has an empty one, and the
+// update returns before sending a statement. It used to return before the check that
+// statement would have been followed by, too, so UpdateExisting of a join row that was gone
+// reported success. The check now runs without the statement: the key and any guard in one
+// probe, and only a miss under a guard is probed again, to tell gone from changed.
+func TestUpdateExistingChecksTheRowWhenThereIsNothingToWrite(t *testing.T) {
+	loadedLink := func() *LinkRow {
+		link := &LinkRow{LeftID: 1, RightID: 2}
+		link.SetMeta(&EntityMeta{IsLoaded: true, LoadedColumns: map[string]bool{}})
+		return link
+	}
+	guard := &dbCore.BinaryCondition{Left: "left_id", Operator: ">", Right: 0}
+	const keyed = "SELECT left_id, right_id FROM link_rows WHERE left_id = ? AND right_id = ? LIMIT 1"
+	const guarded = "SELECT left_id, right_id FROM link_rows WHERE left_id = ? AND right_id = ? AND left_id > ? LIMIT 1"
+
+	cases := []struct {
+		name  string
+		call  func(*ORM[*LinkRow], *LinkRow) error
+		guard bool
+		// found answers each probe by its SQL.
+		found   map[string]bool
+		wantErr error
+		// wantProbes are the probes sent, in order.
+		wantProbes []string
+	}{
+		{name: "gone", call: (*ORM[*LinkRow]).UpdateExisting, found: map[string]bool{}, wantErr: ErrRowGone, wantProbes: []string{keyed}},
+		{name: "still there", call: (*ORM[*LinkRow]).UpdateExisting, found: map[string]bool{keyed: true}, wantProbes: []string{keyed}},
+		{name: "guard matches", call: (*ORM[*LinkRow]).Update, guard: true, found: map[string]bool{guarded: true}, wantProbes: []string{guarded}},
+		{name: "guard lost", call: (*ORM[*LinkRow]).Update, guard: true, found: map[string]bool{keyed: true}, wantErr: ErrRowConflict, wantProbes: []string{guarded, keyed}},
+		{name: "guarded and gone", call: (*ORM[*LinkRow]).Update, guard: true, found: map[string]bool{}, wantErr: ErrRowGone, wantProbes: []string{guarded, keyed}},
+		// Update without a guard never asked whether the row is there, and still does not.
+		{name: "plain update", call: (*ORM[*LinkRow]).Update, found: map[string]bool{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockDS := NewMockDataSource()
+			recorder := recordStatements(t, mockDS)
+			var probes []string
+			mockDS.session.executor.queryRawFunc = func(_ context.Context, _ interface{}, sql string, _ ...interface{}) dbCore.QueryResult {
+				probes = append(probes, sql)
+				return dbCore.QueryResult{Found: tc.found[sql]}
+			}
+			link := loadedLink()
+			if tc.guard {
+				link.GetMeta().UpdateGuard = []dbCore.Condition{guard}
+			}
+
+			err := tc.call(New[*LinkRow](mockDS.session), link)
+
+			if tc.wantErr == nil {
+				require.NoError(t, err)
+			} else {
+				require.True(t, errors.Is(err, tc.wantErr), "expected %v, got %v", tc.wantErr, err)
+				assert.Equal(t, tc.wantErr.Error()+": link_rows where left_id = 1 AND right_id = 2", err.Error())
+			}
+			assert.Equal(t, tc.wantProbes, probes)
+			assert.Empty(t, recorder.rendered, "there is nothing to write, so no UPDATE may be sent")
+		})
 	}
 }
