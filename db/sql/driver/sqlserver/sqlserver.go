@@ -12,9 +12,10 @@
 // surface they did not choose, which is the cost the per-engine split removed for MySQL.
 //
 // This package signs in with a SQL login only. The Microsoft Entra ID methods (interactive,
-// device_code, azure_cli, azure_default, service_principal) link the Azure identity SDK, MSAL
-// and a browser opener, so they register from a package of their own, which registers this
-// driver as well. An app that signs in with one imports that instead:
+// device_code, azure_cli, azure_default, service_principal, managed_identity,
+// workload_identity) link the Azure identity SDK, MSAL and a browser opener, so they register
+// from a package of their own, which registers this driver as well. An app that signs in with
+// one imports that instead:
 //
 //	import _ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver/azuread"
 package sqlserver

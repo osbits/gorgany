@@ -25,10 +25,12 @@ import (
 // sqlserver.RegisterAuthenticator), so this reads them as they are. The option builders below
 // are pure functions of req, so what each credential is told can be tested without it.
 //
-// Every credential that takes azcore.ClientOptions is told the cloud of the host, which decides
-// where it signs in: a token issued by the public cloud's authority is refused by a US
-// Government or China server, whatever its scope. The Azure CLI has no such option; it signs in
-// to the cloud `az cloud set` selected.
+// Every credential that signs in at an Entra ID authority is told the cloud of the host, which
+// decides where: a token issued by the public cloud's authority is refused by a US Government or
+// China server, whatever its scope. Two methods have no authority to choose. The Azure CLI signs
+// in to the cloud `az cloud set` selected, and a managed identity asks the platform's identity
+// endpoint, which issues tokens in the resource's own cloud, and only the scope it asks for
+// follows the host.
 //
 // Its errors say what is wrong and not which datasource it is: the engine wraps them with the
 // method and the database (see sqlserver.Authenticator), and a second prefix would name both
@@ -51,6 +53,10 @@ func newCredential(req sqlserver.AuthRequest) (azcore.TokenCredential, error) {
 		cred, err = credential(azidentity.NewDefaultAzureCredential(azureDefaultOptions(req, client)))
 	case sqlserver.AuthMethodServicePrincipal:
 		cred, err = servicePrincipal(req, client)
+	case sqlserver.AuthMethodManagedIdentity:
+		cred, err = managedIdentity(req, client)
+	case sqlserver.AuthMethodWorkloadIdentity:
+		cred, err = workloadIdentity(req, client)
 	default:
 		return nil, fmt.Errorf("azuread: auth.method %q is not a method this package signs in with", req.Method)
 	}
@@ -70,7 +76,8 @@ func credential[C azcore.TokenCredential](cred C, err error) (azcore.TokenCreden
 }
 
 // clientOptions are the client options of every credential that takes them: the cloud req's host
-// belongs to.
+// belongs to. A managed identity is handed them too, for its HTTP pipeline, and never reads the
+// cloud.
 func clientOptions(req sqlserver.AuthRequest) (azcore.ClientOptions, error) {
 	c, err := cloudConfig(req)
 	if err != nil {
@@ -179,6 +186,94 @@ func servicePrincipal(req sqlserver.AuthRequest, client azcore.ClientOptions) (a
 	}
 	return credential(azidentity.NewClientCertificateCredential(a.TenantID, a.ClientID, certs, key,
 		clientCertificateOptions(req, client)))
+}
+
+// managedIdentity signs in as a managed identity of the Azure resource the app runs on.
+func managedIdentity(req sqlserver.AuthRequest, client azcore.ClientOptions) (azcore.TokenCredential, error) {
+	opts, err := managedIdentityOptions(req, client)
+	if err != nil {
+		return nil, err
+	}
+	return credential(azidentity.NewManagedIdentityCredential(opts))
+}
+
+// managedIdentityOptions select the identity: the user-assigned one auth.client_id,
+// auth.resource_id or auth.object_id names, and when none is set, no ID at all, which leaves the
+// choice to the platform: the resource's default identity, usually its system-assigned one, and
+// on Azure ML the one DEFAULT_IDENTITY_CLIENT_ID names. The engine lets at most one through; a
+// request built without the engine and carrying more is refused here too, rather than left to
+// whichever azidentity would pick.
+//
+// Nothing here reads AZURE_CLIENT_ID, which only DefaultAzureCredential takes a managed
+// identity's client ID from. Which endpoint answers is the platform's to say, and MSAL finds it
+// in what the platform sets: IDENTITY_ENDPOINT and IDENTITY_HEADER on App Service, Functions and
+// Container Apps, and with IDENTITY_SERVER_THUMBPRINT on Service Fabric; MSI_ENDPOINT in Cloud
+// Shell, and with MSI_SECRET on Azure ML; IDENTITY_ENDPOINT and IMDS_ENDPOINT, or the Arc agent's
+// himds file on disk even with neither set, on Azure Arc; and the instance metadata service
+// everywhere else, a VM, a scale set or an AKS node. A platform that cannot select a
+// user-assigned identity the requested way refuses it when the credential is built.
+func managedIdentityOptions(req sqlserver.AuthRequest, client azcore.ClientOptions) (*azidentity.ManagedIdentityCredentialOptions, error) {
+	a := req.Auth
+	var ids []azidentity.ManagedIDKind
+	if a.ClientID != "" {
+		ids = append(ids, azidentity.ClientID(a.ClientID))
+	}
+	if a.ResourceID != "" {
+		ids = append(ids, azidentity.ResourceID(a.ResourceID))
+	}
+	if a.ObjectID != "" {
+		ids = append(ids, azidentity.ObjectID(a.ObjectID))
+	}
+
+	opts := &azidentity.ManagedIdentityCredentialOptions{ClientOptions: client}
+	switch len(ids) {
+	case 0:
+	case 1:
+		opts.ID = ids[0]
+	default:
+		return nil, errors.New("a managed identity is selected by at most one of auth.client_id, " +
+			"auth.resource_id and auth.object_id")
+	}
+	return opts, nil
+}
+
+// workloadIdentity signs in as the app registration or user-assigned managed identity a
+// Kubernetes service account is federated with, exchanging the service-account token Kubernetes
+// projects into the pod for an Entra ID token.
+//
+// Each of client_id, tenant_id and token_file_path the config leaves empty is azidentity's to
+// take from the environment, which the workload identity webhook fills in a pod labelled
+// azure.workload.identity/use: "true". One that neither supplies is refused here, in the config's
+// words: azidentity's own refusal tells the reader to set a field of its options, which is no key
+// they can find.
+func workloadIdentity(req sqlserver.AuthRequest, client azcore.ClientOptions) (azcore.TokenCredential, error) {
+	opts := workloadIdentityOptions(req, client)
+	const webhook = `the workload identity webhook sets it in a pod labelled azure.workload.identity/use: "true"`
+	for _, need := range []struct{ value, key, env, what, setBy string }{
+		{opts.ClientID, "auth.client_id", "AZURE_CLIENT_ID", "client ID",
+			webhook + " whose service account is annotated azure.workload.identity/client-id"},
+		{opts.TenantID, "auth.tenant_id", "AZURE_TENANT_ID", "tenant ID", webhook},
+		{opts.TokenFilePath, "auth.token_file_path", "AZURE_FEDERATED_TOKEN_FILE", "service-account token file", webhook},
+	} {
+		if need.value == "" && os.Getenv(need.env) == "" {
+			return nil, fmt.Errorf("a workload identity needs its %s: %s is empty and %s is not set; %s",
+				need.what, need.key, need.env, need.setBy)
+		}
+	}
+	return credential(azidentity.NewWorkloadIdentityCredential(opts))
+}
+
+// workloadIdentityOptions pass on what the config sets and leave the rest empty, for azidentity
+// to read from AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_FEDERATED_TOKEN_FILE. The authority is
+// the host's cloud's, as for every other method that signs in at one, so AZURE_AUTHORITY_HOST,
+// which the webhook sets too, is not read.
+func workloadIdentityOptions(req sqlserver.AuthRequest, client azcore.ClientOptions) *azidentity.WorkloadIdentityCredentialOptions {
+	return &azidentity.WorkloadIdentityCredentialOptions{
+		ClientOptions: client,
+		ClientID:      req.Auth.ClientID,
+		TenantID:      req.Auth.TenantID,
+		TokenFilePath: req.Auth.TokenFilePath,
+	}
 }
 
 // certificateReasons are the errors azidentity.ParseCertificates reports in words of its own,

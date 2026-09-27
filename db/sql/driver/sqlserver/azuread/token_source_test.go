@@ -545,6 +545,8 @@ func TestTheLoginTimeoutDefaultsByMethod(t *testing.T) {
 		sqlserver.AuthMethodAzureCLI:         time.Minute,
 		sqlserver.AuthMethodAzureDefault:     time.Minute,
 		sqlserver.AuthMethodServicePrincipal: time.Minute,
+		sqlserver.AuthMethodManagedIdentity:  2 * time.Minute,
+		sqlserver.AuthMethodWorkloadIdentity: time.Minute,
 	} {
 		s, _ := source(t, method, &fakeCredential{clock: c}, c)
 		assert.Equalf(t, want, s.loginTimeout, "method %s", method)

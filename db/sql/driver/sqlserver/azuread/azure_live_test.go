@@ -8,12 +8,9 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
-	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
-	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	dsconfig "github.com/osbits/gorgany/v2/db/sql/config"
 	sqlserver "github.com/osbits/gorgany/v2/db/sql/gorm/sqlserver/v2"
 	"github.com/stretchr/testify/assert"
@@ -33,8 +30,11 @@ import (
 // sign-in suggests, and when set, the login the server reports must be it. PROBE_TABLE, such as
 // dbo.__EFMigrationsHistory, is read with SELECT TOP (1) when set. A service principal takes
 // GORGANY_AZURESQL_TENANT_ID, _CLIENT_ID and _CLIENT_SECRET, or _CERTIFICATE_PATH and
-// _CERTIFICATE_PASSWORD, and interactive and the others take _TENANT_ID. They are not AZURE_*
-// names, which azidentity reads by itself.
+// _CERTIFICATE_PASSWORD, and interactive, device_code, azure_cli and azure_default take
+// _TENANT_ID. managed_identity takes one of _CLIENT_ID, _RESOURCE_ID and _OBJECT_ID, or none for
+// the resource's default identity, and workload_identity takes _TENANT_ID, _CLIENT_ID and
+// _TOKEN_FILE_PATH, each optional in a pod the workload identity webhook mutated. They are not
+// AZURE_* names, which azidentity reads by itself.
 //
 // The datasource is read_only and external_schema, and the test only reads. One datasource
 // serves every subtest, so interactive prompts once for the whole run.
@@ -69,6 +69,9 @@ func liveConfig(t *testing.T) dsconfig.DataSource {
 			ClientSecret:        liveEnv(t, "CLIENT_SECRET", false),
 			CertificatePath:     liveEnv(t, "CERTIFICATE_PATH", false),
 			CertificatePassword: liveEnv(t, "CERTIFICATE_PASSWORD", false),
+			ResourceID:          liveEnv(t, "RESOURCE_ID", false),
+			ObjectID:            liveEnv(t, "OBJECT_ID", false),
+			TokenFilePath:       liveEnv(t, "TOKEN_FILE_PATH", false),
 		},
 	}
 	if port := liveEnv(t, "PORT", false); port != "" {
@@ -77,22 +80,6 @@ func liveConfig(t *testing.T) dsconfig.DataSource {
 		cfg.Port = n
 	}
 	return cfg
-}
-
-// countingCredential counts what the real credential is asked.
-type countingCredential struct {
-	azcore.TokenCredential
-	getTokens, authenticates atomic.Int32
-}
-
-func (c *countingCredential) GetToken(ctx context.Context, opts policy.TokenRequestOptions) (azcore.AccessToken, error) {
-	c.getTokens.Add(1)
-	return c.TokenCredential.GetToken(ctx, opts)
-}
-
-func (c *countingCredential) Authenticate(ctx context.Context, opts *policy.TokenRequestOptions) (azidentity.AuthenticationRecord, error) {
-	c.authenticates.Add(1)
-	return c.TokenCredential.(signInCredential).Authenticate(ctx, opts)
 }
 
 func TestAzureSQLWithTheConfiguredMethod(t *testing.T) {

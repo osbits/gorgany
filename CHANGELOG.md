@@ -291,23 +291,27 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   the file it goes in, `pkg/provider/bootstrap.go`. A method an app registers, under a name of
   its own or a built-in one, is used as it is. `auth.login_timeout` defaults to
   `sqlserver.DefaultInteractiveLoginTimeout`, five minutes, for `interactive` and `device_code`,
-  and to `sqlserver.DefaultLoginTimeout`, one minute, for every other method. An `AuthRequest`
-  names the database as the engine's errors do, in `Target` (`host:port/db`), so an
-  authenticator's errors name it the same way, and the engine wraps them with the method and the
-  database, which the authenticator therefore leaves out.
+  to `sqlserver.DefaultManagedIdentityLoginTimeout`, two minutes, for `managed_identity`, and to
+  `sqlserver.DefaultLoginTimeout`, one minute, for every other method. An `AuthRequest` names
+  the database as the engine's errors do, in `Target` (`host:port/db`), so an authenticator's
+  errors name it the same way, and the engine wraps them with the method and the database,
+  which the authenticator therefore leaves out.
 - `db/sql/driver/sqlserver/azuread`, the Microsoft Entra ID sign-in for SQL Server and Azure SQL.
-  Importing it, in place of `driver/sqlserver`, registers the driver and five `auth.method`
+  Importing it, in place of `driver/sqlserver`, registers the driver and seven `auth.method`
   values: `interactive` (the system browser), `device_code`, `azure_cli`, `azure_default`
-  (azidentity's DefaultAzureCredential) and `service_principal`, with a client secret or a PEM
-  or PKCS#12 certificate. Each builds its azidentity credential with the authority of the host's
-  cloud, public, US Government or China, as the token scope already follows the host. For a host
-  that is not an Azure SQL endpoint, such as a private endpoint's own DNS name, an `auth.scope`
-  naming a cloud's Azure SQL selects that cloud's authority too; on an Azure SQL host, one
-  naming another cloud is refused at boot (`sqlserver.ResolveCloud`). A certificate that cannot
-  be read is named by its path, and the error says what is wrong with it: a PEM file given a
-  password, an encrypted PEM key, or a PKCS#12 file in the AES and SHA-256 profile OpenSSL 3 and
-  current Windows export by default, which azidentity cannot read (re-export it with
-  `openssl pkcs12 -export -legacy`). Its content is never quoted.
+  (azidentity's DefaultAzureCredential), `service_principal`, with a client secret or a PEM or
+  PKCS#12 certificate, and `managed_identity` and `workload_identity` (next entry). Each method
+  that signs in at an Entra ID authority builds its azidentity credential with the authority of
+  the host's cloud, public, US Government or China, as the token scope already follows the host;
+  `azure_cli` signs in to the cloud `az cloud set` chose, and `managed_identity` asks the
+  platform's identity endpoint. For a host that is not an Azure SQL endpoint, such as a private
+  endpoint's own DNS name, an `auth.scope` naming a cloud's Azure SQL selects that cloud's
+  authority too; on an Azure SQL host, one naming another cloud is refused at boot
+  (`sqlserver.ResolveCloud`). A certificate that cannot be read is named by its path, and the
+  error says what is wrong with it: a PEM file given a password, an encrypted PEM key, or a
+  PKCS#12 file in the AES and SHA-256 profile OpenSSL 3 and current Windows export by default,
+  which azidentity cannot read (re-export it with `openssl pkcs12 -export -legacy`). Its content
+  is never quoted.
 
   Each datasource has one credential and one token source, and shares neither with another
   datasource. The source hands every connection the same token. From its `RefreshOn` it renews
@@ -328,6 +332,35 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   docs/SQLSERVER.md, new, covers the imports, the keys a DataGrip or SSMS connection maps to,
   `ssl`, `options`, the methods and what each takes, sovereign clouds, development and deployed
   methods, and a second, externally owned datasource.
+- `auth.method: managed_identity` and `auth.method: workload_identity`, registered by
+  `driver/sqlserver/azuread` as `sqlserver.AuthMethodManagedIdentity` and
+  `sqlserver.AuthMethodWorkloadIdentity`, for deployed apps that should store no secret.
+  `managed_identity` signs in as the managed identity of the Azure resource the app runs on: its
+  default identity, usually the system-assigned one, or the user-assigned one that
+  `auth.client_id`, `auth.resource_id` or `auth.object_id` selects. Setting two of those is
+  refused, and so are a secret, a certificate, `redirect_url`, `tenant_id` and `token_file_path`.
+  Unlike `azure_default`'s managed identity, it never reads `AZURE_CLIENT_ID`, so in a pod the
+  workload identity webhook mutated it still signs in as the identity the config names. A
+  platform that cannot select a user-assigned identity the requested way, such as Cloud Shell or
+  Azure Arc, refuses it at boot. It asks the platform's identity endpoint, so it has no authority
+  to choose, and only its token scope follows the host. Its `auth.login_timeout` defaults to
+  `sqlserver.DefaultManagedIdentityLoginTimeout`, two minutes, which covers the hundred or so
+  seconds azidentity spends retrying an instance metadata service that answers 410 while it
+  updates. MSAL caches its tokens for the whole process, so datasources on the same identity and
+  scope may be handed the same token.
+  `workload_identity` exchanges the Kubernetes service-account token projected into the pod.
+  `auth.tenant_id`, `auth.client_id` and `auth.token_file_path` are each optional: one left empty
+  comes from `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` or `AZURE_FEDERATED_TOKEN_FILE`, which the AKS
+  webhook sets, so `method: workload_identity` alone is enough there. One that neither the config
+  nor the environment supplies fails the boot with an error naming the key and the variable;
+  every other key is refused. It signs in at the authority of the host's cloud, and its
+  `auth.login_timeout` defaults to one minute. Both renew their token as `service_principal` does
+  and never ask a person. Under any other method, `sql` and an empty `auth.method` included, the
+  refusal of `resource_id`, `object_id` or `token_file_path` names the method that takes it, and
+  `azure_default`'s refusal of `client_id` names `managed_identity`. The go-mssqldb and ADO.NET
+  spellings, such as `activedirectorymsi` and `activedirectoryworkloadidentity`, get a suggestion
+  naming the new method. docs/SQLSERVER.md lists both methods, and says which variables each
+  deployed method reads by itself.
 - `testsupport.Config.AllowAnyTarget` and `GORGANY_TEST_ALLOW_ANY_TARGET`, which switch off the
   harness's new target guard (see Changed). Like `KeepData`, the variable switches it on, never
   off.

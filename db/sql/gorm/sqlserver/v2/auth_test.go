@@ -15,6 +15,26 @@ import (
 
 const standInSecret = "stand-in-client-secret"
 
+// Stand-in values for the keys that select an identity. No refusal may repeat one, and each is
+// distinctive enough that a refusal naming its key cannot contain it by accident.
+const (
+	standInClientID   = "stand-in-client-id"
+	standInResourceID = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/example/" +
+		"providers/Microsoft.ManagedIdentity/userAssignedIdentities/stand-in"
+	standInObjectID  = "stand-in-object-id"
+	standInTenantID  = "stand-in-tenant-id"
+	standInTokenFile = "/var/run/secrets/stand-in/token"
+)
+
+// assertNoValueEchoed fails when err repeats any value a test put in an auth block.
+func assertNoValueEchoed(t *testing.T, err error) {
+	t.Helper()
+	for _, value := range []string{standInSecret, standInClientID, standInResourceID, standInObjectID,
+		standInTenantID, standInTokenFile, "/run/secrets/sp.pem", "http://localhost:8400"} {
+		assert.NotContainsf(t, err.Error(), value, "the refusal repeats a value from the auth block")
+	}
+}
+
 // staticTokens is a TokenSource that hands out one token.
 type staticTokens string
 
@@ -82,6 +102,8 @@ func TestAADWithoutTheImportNamesIt(t *testing.T) {
 		AuthMethodAzureCLI:         {},
 		AuthMethodAzureDefault:     {},
 		AuthMethodServicePrincipal: {TenantID: "tenant", ClientID: "client", ClientSecret: standInSecret},
+		AuthMethodManagedIdentity:  {},
+		AuthMethodWorkloadIdentity: {},
 	} {
 		_, err := resolveAuth(entra(method, auth))
 		require.Errorf(t, err, "method %q", method)
@@ -103,16 +125,19 @@ func TestFieldRulesComeBeforeTheAuthenticator(t *testing.T) {
 	assert.NotContains(t, err.Error(), AzureADImportPath)
 }
 
-// TestTheLoginTimeoutDefaultsByMethod: a person signing in gets five minutes, a tool one; a
-// configured login_timeout wins for either.
+// TestTheLoginTimeoutDefaultsByMethod: a person signing in gets five minutes, a managed identity
+// two, which cover azidentity's retries of the instance metadata service, and any other method
+// one; a configured login_timeout wins for each.
 func TestTheLoginTimeoutDefaultsByMethod(t *testing.T) {
 	registerBuiltins(t)
 
 	for method, want := range map[string]time.Duration{
-		AuthMethodInteractive:  DefaultInteractiveLoginTimeout,
-		AuthMethodDeviceCode:   DefaultInteractiveLoginTimeout,
-		AuthMethodAzureCLI:     DefaultLoginTimeout,
-		AuthMethodAzureDefault: DefaultLoginTimeout,
+		AuthMethodInteractive:      DefaultInteractiveLoginTimeout,
+		AuthMethodDeviceCode:       DefaultInteractiveLoginTimeout,
+		AuthMethodAzureCLI:         DefaultLoginTimeout,
+		AuthMethodAzureDefault:     DefaultLoginTimeout,
+		AuthMethodManagedIdentity:  DefaultManagedIdentityLoginTimeout,
+		AuthMethodWorkloadIdentity: DefaultLoginTimeout,
 	} {
 		plan, err := planConnection(entra(method, dsconfig.Auth{}))
 		require.NoErrorf(t, err, "method %q", method)
@@ -123,6 +148,7 @@ func TestTheLoginTimeoutDefaultsByMethod(t *testing.T) {
 		assert.Equal(t, 45*time.Second, plan.request.LoginTimeout)
 	}
 	assert.Equal(t, 5*time.Minute, DefaultInteractiveLoginTimeout)
+	assert.Equal(t, 2*time.Minute, DefaultManagedIdentityLoginTimeout)
 	assert.Equal(t, time.Minute, DefaultLoginTimeout)
 }
 
@@ -133,7 +159,7 @@ func TestUnknownAuthMethodListsValidOnes(t *testing.T) {
 	_, err := resolveAuth(entra("kerberoast", dsconfig.Auth{}))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `unknown auth.method "kerberoast"; valid: azure_cli, azure_default, `+
-		`device_code, interactive, service_principal, sql, vault_token`)
+		`device_code, interactive, managed_identity, service_principal, sql, vault_token, workload_identity`)
 }
 
 // TestFedauthAndLegacySpellingsGetASuggestion: go-mssqldb's fedauth values and ADO.NET's
@@ -151,13 +177,20 @@ func TestFedauthAndLegacySpellingsGetASuggestion(t *testing.T) {
 		"default":                         AuthMethodAzureDefault,
 		"activedirectoryserviceprincipal": AuthMethodServicePrincipal,
 		"activedirectoryapplication":      AuthMethodServicePrincipal,
+		"activedirectorymanagedidentity":  AuthMethodManagedIdentity,
+		"activedirectorymsi":              AuthMethodManagedIdentity,
+		"msi":                             AuthMethodManagedIdentity,
+		"activedirectoryworkloadidentity": AuthMethodWorkloadIdentity,
+		"workloadidentity":                AuthMethodWorkloadIdentity,
 		"sqlpassword":                     AuthMethodSQL,
 		"interactiv":                      AuthMethodInteractive,
 		"service_principle":               AuthMethodServicePrincipal,
+		"managed_identy":                  AuthMethodManagedIdentity,
 	} {
 		_, err := resolveAuth(entra(method, dsconfig.Auth{}))
 		require.Errorf(t, err, "method %q", method)
 		assert.Containsf(t, err.Error(), `did you mean "`+want+`"?`, "method %q", method)
+		assert.NotContainsf(t, err.Error(), "not available yet", "method %q", method)
 	}
 }
 
@@ -173,19 +206,153 @@ func TestRefusedMethodsSayWhy(t *testing.T) {
 	assert.Contains(t, err.Error(), "not supported")
 }
 
-// TestManagedIdentityBeforeP3bSuggestsAzureDefault: the dedicated methods ship later, and
-// azure_default covers both until then.
-func TestManagedIdentityBeforeP3bSuggestsAzureDefault(t *testing.T) {
-	resetAuthenticators(t)
+// TestManagedIdentityAcceptsAtMostOneIdentity: client_id, resource_id and object_id each select
+// one user-assigned identity, and none leaves it to the platform; two would leave which identity
+// signs in to chance.
+func TestManagedIdentityAcceptsAtMostOneIdentity(t *testing.T) {
+	registerBuiltins(t)
 
-	for _, method := range []string{"managed_identity", "workload_identity"} {
-		_, err := resolveAuth(entra(method, dsconfig.Auth{}))
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "use azure_default")
+	for name, auth := range map[string]dsconfig.Auth{
+		"system-assigned":   {},
+		"by client ID":      {ClientID: standInClientID},
+		"by resource ID":    {ResourceID: standInResourceID},
+		"by object ID":      {ObjectID: standInObjectID},
+		"with scope, limit": {ClientID: standInClientID, Scope: "https://sql.example.com", LoginTimeout: time.Minute},
+	} {
+		resolved, err := resolveAuth(entra(AuthMethodManagedIdentity, auth))
+		require.NoErrorf(t, err, "%s", name)
+		assert.Equal(t, AuthMethodManagedIdentity, resolved.method)
 	}
-	_, err := resolveAuth(entra("activedirectorymsi", dsconfig.Auth{}))
+
+	for want, auth := range map[string]dsconfig.Auth{
+		"and auth.client_id and auth.resource_id are set":                 {ClientID: standInClientID, ResourceID: standInResourceID},
+		"and auth.client_id and auth.object_id are set":                   {ClientID: standInClientID, ObjectID: standInObjectID},
+		"and auth.resource_id and auth.object_id are set":                 {ResourceID: standInResourceID, ObjectID: standInObjectID},
+		"and auth.client_id, auth.resource_id and auth.object_id are set": {ClientID: standInClientID, ResourceID: standInResourceID, ObjectID: standInObjectID},
+	} {
+		_, err := resolveAuth(entra(AuthMethodManagedIdentity, auth))
+		require.Errorf(t, err, "want %q", want)
+		assert.Contains(t, err.Error(), "sqlserver: auth.method managed_identity takes at most one of "+
+			"auth.client_id, auth.resource_id and auth.object_id, "+want)
+		assert.Contains(t, err.Error(), "none selects the resource's default identity, usually its system-assigned one")
+		assertNoValueEchoed(t, err)
+	}
+}
+
+// TestManagedIdentityRefusesWhatItNeverSends: a managed identity has no secret, no certificate,
+// no redirect and one tenant, and a key it would ignore changes what the config means without
+// saying so.
+func TestManagedIdentityRefusesWhatItNeverSends(t *testing.T) {
+	registerBuiltins(t)
+
+	for _, tc := range []struct {
+		auth dsconfig.Auth
+		want string
+	}{
+		{dsconfig.Auth{ClientSecret: standInSecret}, "auth.client_secret does not apply to auth.method managed_identity; " +
+			"a managed identity has no secret or certificate of its own"},
+		{dsconfig.Auth{CertificatePath: "/run/secrets/sp.pem"}, "auth.certificate_path does not apply to auth.method managed_identity; a managed identity has no secret"},
+		{dsconfig.Auth{CertificatePassword: standInSecret}, "auth.certificate_password does not apply to auth.method managed_identity"},
+		{dsconfig.Auth{SendCertificateChain: true}, "auth.send_certificate_chain does not apply to auth.method managed_identity"},
+		{dsconfig.Auth{RedirectURL: "http://localhost:8400"}, "auth.redirect_url does not apply to auth.method managed_identity"},
+		{dsconfig.Auth{TenantID: standInTenantID}, "auth.tenant_id does not apply to auth.method managed_identity; " +
+			"a managed identity signs in to the one tenant its Azure subscription trusts"},
+		{dsconfig.Auth{TokenFilePath: standInTokenFile}, "auth.token_file_path does not apply to auth.method managed_identity; " +
+			"it is the Kubernetes service-account token auth.method workload_identity signs in with"},
+		{dsconfig.Auth{ClientID: standInClientID, ClientSecret: standInSecret}, "auth.client_secret does not apply"},
+	} {
+		_, err := resolveAuth(entra(AuthMethodManagedIdentity, tc.auth))
+		require.Errorf(t, err, "want %q", tc.want)
+		assert.Contains(t, err.Error(), tc.want)
+		assertNoValueEchoed(t, err)
+	}
+
+	cfg := entra(AuthMethodManagedIdentity, dsconfig.Auth{ClientID: standInClientID})
+	cfg.Password = standInSecret
+	_, err := resolveAuth(cfg)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), `did you mean "managed_identity"? It is not available yet; use "azure_default"`)
+	assert.Contains(t, err.Error(), "password does not apply to auth.method managed_identity")
+	assertNoValueEchoed(t, err)
+}
+
+// TestWorkloadIdentityFieldRules: tenant_id, client_id and token_file_path are each optional,
+// because the workload identity webhook puts all three in the pod's environment; anything else
+// is refused.
+func TestWorkloadIdentityFieldRules(t *testing.T) {
+	registerBuiltins(t)
+
+	for name, auth := range map[string]dsconfig.Auth{
+		"all from the environment": {},
+		"all in the config":        {TenantID: standInTenantID, ClientID: standInClientID, TokenFilePath: standInTokenFile},
+		"only the client":          {ClientID: standInClientID},
+		"only the tenant":          {TenantID: standInTenantID},
+		"only the token file":      {TokenFilePath: standInTokenFile},
+		"with scope, limit":        {Scope: "https://sql.example.com", LoginTimeout: time.Minute},
+	} {
+		resolved, err := resolveAuth(entra(AuthMethodWorkloadIdentity, auth))
+		require.NoErrorf(t, err, "%s", name)
+		assert.Equal(t, AuthMethodWorkloadIdentity, resolved.method)
+	}
+
+	for _, tc := range []struct {
+		auth dsconfig.Auth
+		want string
+	}{
+		{dsconfig.Auth{ClientID: standInClientID, ClientSecret: standInSecret}, "auth.client_secret does not apply to " +
+			"auth.method workload_identity; a workload identity signs in with the Kubernetes service-account token"},
+		{dsconfig.Auth{CertificatePath: "/run/secrets/sp.pem"}, "auth.certificate_path does not apply to auth.method workload_identity"},
+		{dsconfig.Auth{CertificatePassword: standInSecret}, "auth.certificate_password does not apply to auth.method workload_identity"},
+		{dsconfig.Auth{SendCertificateChain: true}, "auth.send_certificate_chain does not apply to auth.method workload_identity"},
+		{dsconfig.Auth{RedirectURL: "http://localhost:8400"}, "auth.redirect_url does not apply to auth.method workload_identity"},
+		{dsconfig.Auth{ResourceID: standInResourceID}, "auth.resource_id does not apply to auth.method workload_identity; " +
+			"a workload identity is selected by auth.client_id"},
+		{dsconfig.Auth{ObjectID: standInObjectID}, "auth.object_id does not apply to auth.method workload_identity; " +
+			"a workload identity is selected by auth.client_id"},
+	} {
+		_, err := resolveAuth(entra(AuthMethodWorkloadIdentity, tc.auth))
+		require.Errorf(t, err, "want %q", tc.want)
+		assert.Contains(t, err.Error(), tc.want)
+		assertNoValueEchoed(t, err)
+	}
+}
+
+// TestIdentityKeysPointToTheirMethod: resource_id, object_id and token_file_path belong to one
+// method each, and whoever sets one under another method most likely meant that one. That holds
+// for sql too, and above all for an auth block that sets such a key and forgets the method.
+func TestIdentityKeysPointToTheirMethod(t *testing.T) {
+	registerBuiltins(t)
+
+	for _, tc := range []struct {
+		method string
+		auth   dsconfig.Auth
+		want   string
+	}{
+		{AuthMethodSQL, dsconfig.Auth{ResourceID: standInResourceID}, "sqlserver: auth.resource_id does not apply " +
+			"to auth.method sql, which signs in with the top-level username and password; remove it, or choose " +
+			"the method it belongs to: it selects a user-assigned managed identity, which auth.method " +
+			"managed_identity signs in as"},
+		{AuthMethodSQL, dsconfig.Auth{ObjectID: standInObjectID}, "auth.method managed_identity signs in as"},
+		{AuthMethodSQL, dsconfig.Auth{TokenFilePath: standInTokenFile}, "auth.method workload_identity signs in with"},
+		{"", dsconfig.Auth{ResourceID: standInResourceID}, "sqlserver: auth.resource_id does not apply to " +
+			"auth.method sql, which an empty auth.method means, and which signs in with the top-level username " +
+			"and password; remove it, or set auth.method to the method it belongs to: it selects a user-assigned " +
+			"managed identity, which auth.method managed_identity signs in as; an unset ${VAR} placeholder in " +
+			"the config reads as empty"},
+		{"", dsconfig.Auth{ObjectID: standInObjectID}, "auth.method managed_identity signs in as"},
+		{"", dsconfig.Auth{TokenFilePath: standInTokenFile}, "set auth.method to the method it belongs to: it is " +
+			"the Kubernetes service-account token auth.method workload_identity signs in with"},
+		{AuthMethodAzureDefault, dsconfig.Auth{ResourceID: standInResourceID}, "auth.method managed_identity signs in as"},
+		{AuthMethodAzureDefault, dsconfig.Auth{ClientID: standInClientID}, "auth.method managed_identity takes it here"},
+		{AuthMethodAzureDefault, dsconfig.Auth{TokenFilePath: standInTokenFile}, "auth.method workload_identity signs in with"},
+		{AuthMethodInteractive, dsconfig.Auth{ObjectID: standInObjectID}, "auth.method managed_identity signs in as"},
+		{AuthMethodServicePrincipal, dsconfig.Auth{TenantID: standInTenantID, ClientID: standInClientID,
+			ClientSecret: standInSecret, TokenFilePath: standInTokenFile}, "auth.method workload_identity signs in with"},
+	} {
+		_, err := resolveAuth(entra(tc.method, tc.auth))
+		require.Errorf(t, err, "%s %s", tc.method, tc.want)
+		assert.Contains(t, err.Error(), tc.want)
+		assertNoValueEchoed(t, err)
+	}
 }
 
 func TestSQLLoginRequiresUsernameThenPassword(t *testing.T) {
@@ -303,7 +470,16 @@ func TestMethodSpecificFieldsAreRefusedElsewhere(t *testing.T) {
 	cfg.Auth = dsconfig.Auth{TenantID: "t"}
 	_, err := resolveAuth(cfg)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "auth.tenant_id does not apply to auth.method sql")
+	assert.Contains(t, err.Error(), "auth.tenant_id does not apply to auth.method sql, which an empty auth.method means")
+	assert.Contains(t, err.Error(), "an unset ${VAR} placeholder in the config reads as empty",
+		"method: ${VAR} left unset is sql")
+
+	cfg.Auth.Method = AuthMethodSQL
+	_, err = resolveAuth(cfg)
+	require.Error(t, err)
+	assert.Equal(t, "sqlserver: auth.tenant_id does not apply to auth.method sql, which signs in with the "+
+		"top-level username and password; remove it, or choose the method it belongs to", err.Error(),
+		"a key several methods take points to none of them, and a method that is set was not left unset")
 }
 
 // TestUsernameIsAllowedButOnlyAHintForAAD: a UPN copied from DataGrip into username is the

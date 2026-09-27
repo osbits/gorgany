@@ -56,12 +56,14 @@ func request(method, host string, auth dsconfig.Auth) sqlserver.AuthRequest {
 
 func TestEveryAzureADMethodIsRegistered(t *testing.T) {
 	registered := sqlserver.RegisteredAuthMethods()
-	for _, method := range []string{"interactive", "device_code", "azure_cli", "azure_default", "service_principal"} {
+	for _, method := range []string{"interactive", "device_code", "azure_cli", "azure_default", "service_principal",
+		"managed_identity", "workload_identity"} {
 		assert.Containsf(t, registered, method, "importing azuread registers %s", method)
 	}
 	assert.ElementsMatch(t, methods, []string{
 		sqlserver.AuthMethodInteractive, sqlserver.AuthMethodDeviceCode, sqlserver.AuthMethodAzureCLI,
 		sqlserver.AuthMethodAzureDefault, sqlserver.AuthMethodServicePrincipal,
+		sqlserver.AuthMethodManagedIdentity, sqlserver.AuthMethodWorkloadIdentity,
 	})
 	assert.NotContains(t, registered, sqlserver.AuthMethodSQL, "the SQL login needs no authenticator")
 }
@@ -127,6 +129,8 @@ func TestTheToolMethodsTakeOnlyATenant(t *testing.T) {
 
 // TestSovereignHostsSelectTheirAuthority: a US Government or China server refuses a token the
 // public cloud issued, whatever its scope, so the authority follows the host as the scope does.
+// managed_identity is not here: it has no authority to choose, and asks the platform's endpoint
+// for the host's scope (TestAManagedIdentityAsksForTheHostsScope).
 func TestSovereignHostsSelectTheirAuthority(t *testing.T) {
 	for host, want := range map[string]cloud.Configuration{
 		azureHost:   cloud.AzurePublic,
@@ -145,6 +149,7 @@ func TestSovereignHostsSelectTheirAuthority(t *testing.T) {
 		assert.Equalf(t, want, azureDefaultOptions(req, client).Cloud, "azure_default, %s", host)
 		assert.Equalf(t, want, clientSecretOptions(client).Cloud, "service_principal secret, %s", host)
 		assert.Equalf(t, want, clientCertificateOptions(req, client).Cloud, "service_principal certificate, %s", host)
+		assert.Equalf(t, want, workloadIdentityOptions(req, client).Cloud, "workload_identity, %s", host)
 
 		// A request built without a cloud gets the host's.
 		req.Cloud = ""
@@ -191,15 +196,22 @@ func TestAScopeSelectsTheAuthorityOfAHostThatNamesNoCloud(t *testing.T) {
 // TestEachMethodBuildsItsCredential: one azidentity credential per method, built without
 // signing in.
 func TestEachMethodBuildsItsCredential(t *testing.T) {
-	for method, want := range map[string]azcore.TokenCredential{
-		sqlserver.AuthMethodInteractive:  (*azidentity.InteractiveBrowserCredential)(nil),
-		sqlserver.AuthMethodDeviceCode:   (*azidentity.DeviceCodeCredential)(nil),
-		sqlserver.AuthMethodAzureCLI:     (*azidentity.AzureCLICredential)(nil),
-		sqlserver.AuthMethodAzureDefault: (*azidentity.DefaultAzureCredential)(nil),
+	withoutIdentityEnvironment(t)
+	for method, tc := range map[string]struct {
+		auth dsconfig.Auth
+		want azcore.TokenCredential
+	}{
+		sqlserver.AuthMethodInteractive:     {dsconfig.Auth{TenantID: standInTenant}, (*azidentity.InteractiveBrowserCredential)(nil)},
+		sqlserver.AuthMethodDeviceCode:      {dsconfig.Auth{TenantID: standInTenant}, (*azidentity.DeviceCodeCredential)(nil)},
+		sqlserver.AuthMethodAzureCLI:        {dsconfig.Auth{TenantID: standInTenant}, (*azidentity.AzureCLICredential)(nil)},
+		sqlserver.AuthMethodAzureDefault:    {dsconfig.Auth{TenantID: standInTenant}, (*azidentity.DefaultAzureCredential)(nil)},
+		sqlserver.AuthMethodManagedIdentity: {dsconfig.Auth{}, (*azidentity.ManagedIdentityCredential)(nil)},
+		sqlserver.AuthMethodWorkloadIdentity: {dsconfig.Auth{TenantID: standInTenant, ClientID: standInClient,
+			TokenFilePath: standInTokenFile}, (*azidentity.WorkloadIdentityCredential)(nil)},
 	} {
-		cred, err := newCredential(request(method, azureHost, dsconfig.Auth{TenantID: standInTenant}))
+		cred, err := newCredential(request(method, azureHost, tc.auth))
 		require.NoErrorf(t, err, "method %s", method)
-		assert.IsTypef(t, want, cred, "method %s", method)
+		assert.IsTypef(t, tc.want, cred, "method %s", method)
 	}
 
 	_, err := newCredential(request("vault_token", azureHost, dsconfig.Auth{}))

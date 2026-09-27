@@ -116,9 +116,13 @@ func newTokenSource(cred azcore.TokenCredential, req sqlserver.AuthRequest, scop
 
 	loginTimeout := req.LoginTimeout
 	if loginTimeout <= 0 {
-		loginTimeout = sqlserver.DefaultLoginTimeout
-		if interactive {
+		switch {
+		case interactive:
 			loginTimeout = sqlserver.DefaultInteractiveLoginTimeout
+		case req.Method == sqlserver.AuthMethodManagedIdentity:
+			loginTimeout = sqlserver.DefaultManagedIdentityLoginTimeout
+		default:
+			loginTimeout = sqlserver.DefaultLoginTimeout
 		}
 	}
 	root := req.Context

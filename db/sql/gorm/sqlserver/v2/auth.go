@@ -26,6 +26,8 @@ const (
 	AuthMethodAzureCLI         = "azure_cli"
 	AuthMethodAzureDefault     = "azure_default"
 	AuthMethodServicePrincipal = "service_principal"
+	AuthMethodManagedIdentity  = "managed_identity"
+	AuthMethodWorkloadIdentity = "workload_identity"
 )
 
 // AzureADImportPath is the package that registers the Entra ID methods above. An app that
@@ -36,13 +38,19 @@ const AzureADImportPath = "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver/
 // The bounds of one sign-in when auth.login_timeout is unset.
 //
 // A person signing in, in a browser or with a device code, may have to find the window, pick
-// an account and answer MFA, so interactive and device_code get five minutes. Every other
-// method signs in without anyone: the Azure CLI answers from its own cache, and a managed
-// identity or a service principal from one request, so a minute is already generous, and a
-// longer wait would only delay the error of a tool that hangs.
+// an account and answer MFA, so interactive and device_code get five minutes.
+//
+// A managed identity gets two. The instance metadata service may answer 410 for up to about 70
+// seconds while it updates, and azidentity retries it for as long: six retries, backing off from
+// 2 seconds to at most 25, about 100 seconds in all. A minute would cut them off before the
+// fifth, and fail a boot azidentity would have completed.
+//
+// Every other method signs in without anyone, from one request or the Azure CLI's own cache, so a
+// minute is already generous, and a longer wait would only delay the error of a tool that hangs.
 const (
-	DefaultLoginTimeout            = time.Minute
-	DefaultInteractiveLoginTimeout = 5 * time.Minute
+	DefaultLoginTimeout                = time.Minute
+	DefaultManagedIdentityLoginTimeout = 2 * time.Minute
+	DefaultInteractiveLoginTimeout     = 5 * time.Minute
 )
 
 // loginTimeoutFor returns how long one sign-in with method may take: configured, which is
@@ -53,6 +61,8 @@ func loginTimeoutFor(method string, configured time.Duration) time.Duration {
 		return configured
 	case method == AuthMethodInteractive || method == AuthMethodDeviceCode:
 		return DefaultInteractiveLoginTimeout
+	case method == AuthMethodManagedIdentity:
+		return DefaultManagedIdentityLoginTimeout
 	default:
 		return DefaultLoginTimeout
 	}
@@ -98,7 +108,8 @@ type AuthRequest struct {
 	// Azure SQL audience names for a host that is not an Azure SQL endpoint (see ResolveCloud).
 	Cloud string
 	// LoginTimeout bounds one sign-in: auth.login_timeout, or DefaultInteractiveLoginTimeout
-	// for interactive and device_code, and DefaultLoginTimeout for every other method.
+	// for interactive and device_code, DefaultManagedIdentityLoginTimeout for managed_identity,
+	// and DefaultLoginTimeout for every other method.
 	LoginTimeout time.Duration
 }
 
@@ -217,20 +228,34 @@ func resolveAuth(cfg dsconfig.DataSource) (resolvedAuth, error) {
 	if a, ok := lookupAuthenticator(method); ok {
 		return resolvedAuth{method: method, authenticator: a}, nil
 	}
-	if pending, ok := pendingMethods[method]; ok {
-		return resolvedAuth{}, errors.New(pending)
-	}
 	return resolvedAuth{}, unknownMethodError(method)
 }
 
 // checkSQLLogin checks that the SQL login has what it signs in with, and nothing it would
 // ignore.
+//
+// A key that only one method takes is refused with that method's name, as under any other
+// method (see keyHints). An auth block with such a key and no method is the likeliest way to
+// reach this, so the refusal says that an empty auth.method is sql.
 func checkSQLLogin(cfg dsconfig.DataSource) error {
-	if set := setAuthKeys(cfg.Auth); len(set) > 0 {
-		return fmt.Errorf("sqlserver: auth.%s does not apply to auth.method sql, which signs in with the "+
-			"top-level username and password; remove it, or choose the method it belongs to", set[0])
-	}
 	const unset = "; an unset ${VAR} placeholder in the config reads as empty"
+	if set := setAuthKeys(cfg.Auth); len(set) > 0 {
+		noMethod := strings.TrimSpace(cfg.Auth.Method) == ""
+		msg := fmt.Sprintf("sqlserver: auth.%s does not apply to auth.method sql, which signs in with the "+
+			"top-level username and password; remove it, or choose the method it belongs to", set[0])
+		if noMethod {
+			msg = fmt.Sprintf("sqlserver: auth.%s does not apply to auth.method sql, which an empty "+
+				"auth.method means, and which signs in with the top-level username and password; remove "+
+				"it, or set auth.method to the method it belongs to", set[0])
+		}
+		if hint, ok := keyHints[set[0]]; ok {
+			msg += ": " + hint
+		}
+		if noMethod {
+			msg += unset
+		}
+		return errors.New(msg)
+	}
 	switch {
 	case cfg.Username == "" && cfg.Password == "":
 		return errors.New("sqlserver: no credentials: auth.method sql signs in with username and password, " +
@@ -304,13 +329,55 @@ var tokenMethodRules = map[string]methodRules{
 	AuthMethodAzureDefault: {
 		allowed: keySet("tenant_id"),
 		hints: map[string]string{"client_id": "DefaultAzureCredential takes a user-assigned managed " +
-			"identity's client ID from the AZURE_CLIENT_ID environment variable"},
+			"identity's client ID from the AZURE_CLIENT_ID environment variable; auth.method " +
+			"managed_identity takes it here"},
 	},
 	AuthMethodServicePrincipal: {
 		allowed: keySet("tenant_id", "client_id", "client_secret", "certificate_path",
 			"certificate_password", "send_certificate_chain"),
 		extra: checkServicePrincipal,
 	},
+	AuthMethodManagedIdentity: {
+		allowed: keySet("client_id", "resource_id", "object_id"),
+		hints: map[string]string{
+			"tenant_id":              "a managed identity signs in to the one tenant its Azure subscription trusts",
+			"client_secret":          managedIdentityHasNoSecret,
+			"certificate_path":       managedIdentityHasNoSecret,
+			"certificate_password":   managedIdentityHasNoSecret,
+			"send_certificate_chain": managedIdentityHasNoSecret,
+		},
+		extra: checkManagedIdentity,
+	},
+	AuthMethodWorkloadIdentity: {
+		allowed: keySet("tenant_id", "client_id", "token_file_path"),
+		hints: map[string]string{
+			"client_secret":          workloadIdentityHasNoSecret,
+			"certificate_path":       workloadIdentityHasNoSecret,
+			"certificate_password":   workloadIdentityHasNoSecret,
+			"send_certificate_chain": workloadIdentityHasNoSecret,
+			"resource_id":            workloadIdentityIsAClientID,
+			"object_id":              workloadIdentityIsAClientID,
+		},
+	},
+}
+
+// The hints of the identities the platform they run on vouches for, which present no secret of
+// their own and are selected by an ID.
+const (
+	managedIdentityHasNoSecret = "a managed identity has no secret or certificate of its own; the Azure " +
+		"resource the app runs on obtains its tokens"
+	workloadIdentityHasNoSecret = "a workload identity signs in with the Kubernetes service-account token " +
+		"(auth.token_file_path or AZURE_FEDERATED_TOKEN_FILE), and has no secret or certificate of its own"
+	workloadIdentityIsAClientID = "a workload identity is selected by auth.client_id; resource_id and " +
+		"object_id select a managed identity, which auth.method managed_identity signs in as"
+)
+
+// keyHints explain the refusal of a key that only one method takes, wherever the refusing method,
+// sql included, has no hint of its own for it: whoever set it most likely meant that method.
+var keyHints = map[string]string{
+	"resource_id":     "it selects a user-assigned managed identity, which auth.method managed_identity signs in as",
+	"object_id":       "it selects a user-assigned managed identity, which auth.method managed_identity signs in as",
+	"token_file_path": "it is the Kubernetes service-account token auth.method workload_identity signs in with",
 }
 
 func keySet(keys ...string) map[string]bool {
@@ -334,6 +401,8 @@ func (r methodRules) check(method string, cfg dsconfig.DataSource) error {
 		}
 		msg := fmt.Sprintf("sqlserver: auth.%s does not apply to auth.method %s", key, method)
 		if hint, ok := r.hints[key]; ok {
+			msg += "; " + hint
+		} else if hint, ok := keyHints[key]; ok {
 			msg += "; " + hint
 		}
 		return errors.New(msg)
@@ -364,14 +433,27 @@ func checkServicePrincipal(a dsconfig.Auth) error {
 	return nil
 }
 
-// pendingMethods are method names that will exist but do not yet, each with what to use
-// meanwhile.
-var pendingMethods = map[string]string{
-	"managed_identity": "sqlserver: auth.method managed_identity is not available yet; use azure_default, " +
-		"which includes managed identity (select a user-assigned one with the AZURE_CLIENT_ID environment " +
-		"variable), until the dedicated method ships",
-	"workload_identity": "sqlserver: auth.method workload_identity is not available yet; use azure_default, " +
-		"which includes workload identity, until the dedicated method ships",
+// checkManagedIdentity lets through at most one of the keys that select a user-assigned
+// identity. Each names one identity and azidentity takes one, so with two, which identity signs
+// in would be decided by a rule the config does not show. None leaves the choice to the
+// platform, which signs in as the resource's default identity, usually its system-assigned one.
+func checkManagedIdentity(a dsconfig.Auth) error {
+	var set []string
+	for _, field := range authFields(a) {
+		switch field.key {
+		case "client_id", "resource_id", "object_id":
+			if field.set {
+				set = append(set, "auth."+field.key)
+			}
+		}
+	}
+	if len(set) < 2 {
+		return nil
+	}
+	names := strings.Join(set[:len(set)-1], ", ") + " and " + set[len(set)-1]
+	return fmt.Errorf("sqlserver: auth.method managed_identity takes at most one of auth.client_id, "+
+		"auth.resource_id and auth.object_id, and %s are set: each selects a user-assigned identity, and "+
+		"none selects the resource's default identity, usually its system-assigned one", names)
 }
 
 // methodAliases map what someone arriving from a go-mssqldb or ADO.NET connection string, or
@@ -397,12 +479,12 @@ var methodAliases = map[string]string{
 	"application":                     AuthMethodServicePrincipal,
 	"client_secret":                   AuthMethodServicePrincipal,
 	"client_credentials":              AuthMethodServicePrincipal,
-	"activedirectorymanagedidentity":  "managed_identity",
-	"activedirectorymsi":              "managed_identity",
-	"managedidentity":                 "managed_identity",
-	"msi":                             "managed_identity",
-	"activedirectoryworkloadidentity": "workload_identity",
-	"workloadidentity":                "workload_identity",
+	"activedirectorymanagedidentity":  AuthMethodManagedIdentity,
+	"activedirectorymsi":              AuthMethodManagedIdentity,
+	"managedidentity":                 AuthMethodManagedIdentity,
+	"msi":                             AuthMethodManagedIdentity,
+	"activedirectoryworkloadidentity": AuthMethodWorkloadIdentity,
+	"workloadidentity":                AuthMethodWorkloadIdentity,
 	"sqlpassword":                     AuthMethodSQL,
 	"sql_password":                    AuthMethodSQL,
 	"sqllogin":                        AuthMethodSQL,
@@ -446,10 +528,6 @@ func unknownMethodError(method string) error {
 		return errors.New(msg + " — " + why)
 	}
 	if suggestion, ok := methodAliases[method]; ok {
-		if _, pending := pendingMethods[suggestion]; pending {
-			return fmt.Errorf("%s — did you mean %q? It is not available yet; use %q, which includes it, "+
-				"until it ships", msg, suggestion, AuthMethodAzureDefault)
-		}
 		return fmt.Errorf("%s — did you mean %q?", msg, suggestion)
 	}
 	if suggestion, ok := dsconfig.Suggest(method, valid); ok {

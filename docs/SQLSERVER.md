@@ -48,7 +48,8 @@ databases:
     read_only: true
     lazy_connect: true                 # see "A second datasource" below
     auth:
-      method: ${LEGACY_DB_AUTH_METHOD} # interactive | azure_cli (development); azure_default (deployed)
+      # interactive | azure_cli (development); managed_identity | workload_identity (deployed)
+      method: ${LEGACY_DB_AUTH_METHOD}
       tenant_id: ${LEGACY_DB_TENANT_ID}
     options:
       app_name: my-app
@@ -75,7 +76,8 @@ because a string that sets a key twice has no rule for which value wins.
 | Authentication: SQL Server, User & Password | `auth.method: sql`, or no `auth` block | |
 | Authentication: Azure Active Directory / Microsoft Entra MFA, "Universal with MFA", interactive | `auth.method: interactive` | One browser prompt per datasource. |
 | Authentication: Azure Active Directory / Microsoft Entra Service Principal | `auth.method: service_principal` | |
-| Authentication: Managed Identity, Default | `auth.method: azure_default` | |
+| Authentication: Managed Identity | `auth.method: managed_identity` | A user-assigned identity's client ID, resource ID or object ID goes in `auth.client_id`, `auth.resource_id` or `auth.object_id`. None selects the resource's default identity, usually its system-assigned one. |
+| Authentication: Default | `auth.method: azure_default` | |
 | Authentication: Entra Password, Integrated, Windows | none | Refused. A user's password cannot satisfy MFA or Conditional Access, and Windows or Kerberos sign-in is not supported. |
 | Encrypt (Mandatory, Optional, Strict) | `ssl` | `true`, `false` or `strict`; see below. |
 | Trust server certificate | `options.trust_server_certificate` | Refused on Azure hosts, with `ssl: strict`, and with an Entra ID method. |
@@ -141,12 +143,18 @@ minutes, and every connection after 30.
 | `azure_cli` | the account `az login` chose | | `tenant_id` | development |
 | `azure_default` | whatever azidentity's DefaultAzureCredential finds | | `tenant_id`, for some of the credentials it tries (see "Deployed apps") | deployed |
 | `service_principal` | an app registration | `tenant_id`, `client_id`, and `client_secret` or `certificate_path` | `certificate_password`, `send_certificate_chain` | deployed |
+| `managed_identity` | the managed identity of the Azure resource the app runs on | | at most one of `client_id`, `resource_id` and `object_id`, for a user-assigned identity; none is the resource's default identity, usually its system-assigned one (see "Deployed apps") | deployed, on Azure |
+| `workload_identity` | the app registration or user-assigned identity a Kubernetes service account is federated with | | `tenant_id`, `client_id`, `token_file_path`; each one left empty comes from the environment (see "Deployed apps") | deployed, on Kubernetes |
 
 Every Entra ID method also takes two keys:
 
 - `scope` overrides the token scope, which is otherwise derived from the host.
 - `login_timeout`, in seconds, bounds one sign-in. The default is 300 for `interactive` and
-  `device_code`, and 60 for the others.
+  `device_code`, 120 for `managed_identity`, and 60 for the others. The instance metadata
+  service of a VM, a scale set or an AKS node may answer 410 for up to about 70 seconds while
+  it updates, and azidentity retries it for about 100 seconds, which 120 leaves room for.
+  `azure_default`'s managed identity retries the same way, so where it signs in with one, give
+  it `login_timeout: 120` too.
 
 `password` is refused with any of these methods. A service principal's secret goes in
 `auth.client_secret`. An unresolved placeholder there, or in `certificate_password`, stops the
@@ -161,7 +169,9 @@ A guest account needs `tenant_id`, the tenant of the database. Without `client_i
 signs in through Microsoft's development application, which is fine on a developer's machine.
 
 **One sign-in per datasource.** Each datasource has one credential and one token cache, and
-shares neither with another datasource. Every connection signs in with the same token:
+shares neither with another datasource. A managed identity's tokens are also cached by MSAL, in
+one cache for the whole process, so datasources that sign in as the same managed identity with
+the same scope may be handed the same token. Every connection signs in with the same token:
 
 - From the token's `RefreshOn` time, which MSAL sets to half the life of a long-lived token such
   as a managed identity's, the token is renewed in the background while connections keep using
@@ -200,6 +210,9 @@ such as a private endpoint behind a DNS name of its own or an IP address, names 
 such a host, an `auth.scope` that names a cloud's Azure SQL selects that cloud's authority too,
 and without one the cloud is public. `azure_cli` has no authority option of its own. Select the
 cloud with `az cloud set --name AzureUSGovernment` (or `AzureChinaCloud`) before `az login`.
+`managed_identity` has no authority to choose either: it asks the platform's identity endpoint,
+which issues tokens in the resource's own cloud, and only the scope it asks for follows the
+host.
 
 ### Development and deployed apps
 
@@ -207,13 +220,29 @@ cloud with `az cloud set --name AzureUSGovernment` (or `AzureChinaCloud`) before
 `scratch` ([DEPLOYMENT.md](DEPLOYMENT.md#the-image)), which has no browser, no terminal anyone
 watches, and no `az`.
 
-A deployed app has two choices:
+A deployed app signs in with one of these:
 
-- **`azure_default`**, which picks up a managed identity or a workload identity, or a service
-  principal from `AZURE_*` variables.
+- **`managed_identity`**, on an Azure resource with a managed identity: App Service, Functions,
+  Container Apps, a VM or scale set, or an AKS node. There is nothing to store or rotate. Leave
+  the ID keys empty for the resource's default identity, usually its system-assigned one, or set
+  one of `client_id`, `resource_id` or `object_id` to select a user-assigned one. Two are
+  refused, because each names an identity and only one signs in.
+- **`workload_identity`**, in a Kubernetes pod whose service account is federated with an app
+  registration or a user-assigned identity. It exchanges the service-account token Kubernetes
+  projects into the pod, so there is nothing to store or rotate either. On AKS, the workload
+  identity webhook puts the tenant, the token file and the client ID from the service account's
+  `azure.workload.identity/client-id` annotation in the environment of a pod labelled
+  `azure.workload.identity/use: "true"`, and `method: workload_identity` alone is enough.
+  Elsewhere, set `client_id`, `tenant_id` and `token_file_path`. One that neither the config nor
+  the environment supplies stops the boot, and the error names the key and the variable.
 - **`service_principal`**, with the secret in the host's `app.env` or a certificate mounted
   outside the repository tree. The app runs as uid 65532, so that user must be able to read the
   certificate. Rotating the secret means updating `app.env` and restarting.
+- **`azure_default`**, which tries the environment's service principal, a workload identity and a
+  managed identity in turn, and developer tools after them (see below). Prefer one of the
+  methods above where one fits. Each is a single credential: it reads only what the table below
+  says, never falls through to a developer tool, and fails with its own error rather than one
+  from every credential in the chain.
 
 To switch method per environment, write `method: ${LEGACY_DB_AUTH_METHOD}`. Each method refuses
 the keys it does not take, and an empty value counts as unset, so every key in the block must be
@@ -222,12 +251,34 @@ empty wherever the method in use does not take it. To include `service_principal
 `certificate_path`). An unset `client_secret` placeholder stops the boot in every environment,
 even one whose method takes no secret, so each environment's env file defines
 `LEGACY_DB_CLIENT_SECRET`, empty where it is not used. `azure_default` refuses `client_id`, so
-leave `LEGACY_DB_CLIENT_ID` empty where it runs.
+leave `LEGACY_DB_CLIENT_ID` empty where it runs. `managed_identity` refuses `tenant_id`, because
+a managed identity signs in to the one tenant its subscription trusts, so leave
+`LEGACY_DB_TENANT_ID` empty where it runs.
 
-azidentity reads some variables without being told to: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
-`AZURE_CLIENT_SECRET`, `AZURE_CLIENT_CERTIFICATE_PATH`, `AZURE_FEDERATED_TOKEN_FILE`,
-`AZURE_TOKEN_CREDENTIALS` and others. DefaultAzureCredential tries these, in order, and uses the
-first that answers:
+Besides the config, each deployed method reads some variables by itself:
+
+| Method | Reads from the environment |
+|---|---|
+| `managed_identity` | No `AZURE_*` variable, not even `AZURE_CLIENT_ID`. It finds the platform's identity endpoint in the variables the platform sets: `IDENTITY_ENDPOINT` and `IDENTITY_HEADER` on App Service, Functions and Container Apps (with `IDENTITY_SERVER_THUMBPRINT`, Service Fabric), `MSI_ENDPOINT` in Cloud Shell (with `MSI_SECRET`, Azure ML, which signs in as the identity `DEFAULT_IDENTITY_CLIENT_ID` names when no ID key is set), `IDENTITY_ENDPOINT` with `IMDS_ENDPOINT`, or the agent's `himds` file even with neither set, on Azure Arc, and otherwise the instance metadata service. |
+| `workload_identity` | `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and `AZURE_FEDERATED_TOKEN_FILE`, each only when `client_id`, `tenant_id` or `token_file_path` is empty. |
+| `service_principal` | Nothing it signs in with; that all comes from `auth`. |
+| `azure_default` | Everything above, and `AZURE_CLIENT_SECRET`, `AZURE_CLIENT_CERTIFICATE_PATH`, `AZURE_CLIENT_CERTIFICATE_PASSWORD`, `AZURE_TOKEN_CREDENTIALS`, `AZURE_ADDITIONALLY_ALLOWED_TENANTS` and others. Its managed identity takes a user-assigned identity's client ID from `AZURE_CLIENT_ID`. |
+
+`service_principal` and `workload_identity` also read `AZURE_REGIONAL_AUTHORITY_NAME`, which sends
+their token requests to a regional Entra ID endpoint when it is set. No method reads
+`AZURE_AUTHORITY_HOST`, which the AKS webhook sets too: the host decides the cloud (see
+"Sovereign clouds").
+
+`managed_identity` ignoring `AZURE_CLIENT_ID` matters in a pod the workload identity webhook
+mutated, where that variable names the workload's identity: `managed_identity` with no ID key
+still signs in as the node's default identity. Not every platform can select a user-assigned
+identity. Cloud Shell and Azure Arc have none, Service Fabric takes the identity from the
+cluster's configuration, and Azure ML selects one by client ID only, and with no ID key signs in
+as the one `DEFAULT_IDENTITY_CLIENT_ID` names. On those platforms, any other selection is
+refused at boot.
+
+`azure_default`'s DefaultAzureCredential tries these credentials, in order, and uses the first
+that answers:
 
 1. the environment's service principal;
 2. workload identity;

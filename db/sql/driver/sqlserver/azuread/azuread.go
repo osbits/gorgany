@@ -31,6 +31,12 @@
 //   - azure_default: azidentity's DefaultAzureCredential chain, which covers the environment's
 //     service principal, workload identity and managed identity. For deployed apps.
 //   - service_principal: an app registration's client secret or certificate. For deployed apps.
+//   - managed_identity: the managed identity of the Azure resource the app runs on, its default
+//     one, usually system-assigned, or the user-assigned one client_id, resource_id or object_id
+//     selects. For apps deployed on Azure.
+//   - workload_identity: the app registration or user-assigned identity a Kubernetes service
+//     account is federated with, through the token Kubernetes projects into the pod. For apps
+//     deployed on AKS, or another cluster with a federated credential.
 //
 // The keys each method takes are checked by the SQL Server engine before any of this runs; see
 // docs/SQLSERVER.md.
@@ -43,8 +49,11 @@
 // share one acquisition. interactive and device_code ask the person once per datasource, when it
 // warms up at boot, or on its first connection with lazy_connect; after that a token that cannot
 // be renewed without them is an error, never a second prompt the process opens on its own.
-// Nothing is shared between datasources: an app with two interactive datasources asks the
-// person twice.
+// The credential and the token source are the datasource's own: an app with two interactive
+// datasources asks the person twice. A managed identity's tokens, though, are also cached by MSAL,
+// in one cache for the whole process keyed by identity and scope, so datasources that sign in as
+// the same managed identity with the same scope, which every Azure SQL server in one cloud has,
+// may be handed the same token.
 package azuread
 
 import (
@@ -60,6 +69,8 @@ var methods = []string{
 	sqlserver.AuthMethodAzureCLI,
 	sqlserver.AuthMethodAzureDefault,
 	sqlserver.AuthMethodServicePrincipal,
+	sqlserver.AuthMethodManagedIdentity,
+	sqlserver.AuthMethodWorkloadIdentity,
 }
 
 func init() {
