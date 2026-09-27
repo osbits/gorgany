@@ -11,7 +11,7 @@ import (
 )
 
 // The authenticator registry and how auth.method resolves. No test here signs in anywhere:
-// the registered authenticators are fakes, as the Entra ID package's will be to this one.
+// the registered authenticators are fakes, as the Entra ID package's are to this one.
 
 const standInSecret = "stand-in-client-secret"
 
@@ -70,10 +70,10 @@ func TestRegisteredAuthMethodsIsSorted(t *testing.T) {
 	assert.Equal(t, []string{AuthMethodAzureCLI, AuthMethodInteractive}, RegisteredAuthMethods())
 }
 
-// TestAADWithoutAnAuthenticatorSaysItIsNotShipped: no package registers the Entra ID methods
-// in this release, so a built-in one without an authenticator says so, and what to do instead.
-// It names no import: one that does not exist would only fail the build.
-func TestAADWithoutAnAuthenticatorSaysItIsNotShipped(t *testing.T) {
+// TestAADWithoutTheImportNamesIt: the Entra ID methods register from their own package, so a
+// built-in one without an authenticator is a missing import, and the error is the line that
+// fixes it and the file it goes in.
+func TestAADWithoutTheImportNamesIt(t *testing.T) {
 	resetAuthenticators(t)
 
 	for method, auth := range map[string]dsconfig.Auth{
@@ -85,9 +85,9 @@ func TestAADWithoutAnAuthenticatorSaysItIsNotShipped(t *testing.T) {
 	} {
 		_, err := resolveAuth(entra(method, auth))
 		require.Errorf(t, err, "method %q", method)
-		assert.Contains(t, err.Error(), "does not ship")
-		assert.Contains(t, err.Error(), "sqlserver.RegisterAuthenticator")
-		assert.NotContains(t, err.Error(), "azuread")
+		assert.Contains(t, err.Error(), `add _ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver/azuread" `+
+			`in pkg/provider/bootstrap.go next to your driver import`)
+		assert.Contains(t, err.Error(), `auth.method "`+method+`"`)
 		assert.NotContains(t, err.Error(), standInSecret)
 	}
 }
@@ -100,7 +100,30 @@ func TestFieldRulesComeBeforeTheAuthenticator(t *testing.T) {
 	_, err := resolveAuth(entra(AuthMethodInteractive, dsconfig.Auth{ClientSecret: standInSecret}))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "auth.client_secret does not apply to auth.method interactive")
-	assert.NotContains(t, err.Error(), "does not ship")
+	assert.NotContains(t, err.Error(), AzureADImportPath)
+}
+
+// TestTheLoginTimeoutDefaultsByMethod: a person signing in gets five minutes, a tool one; a
+// configured login_timeout wins for either.
+func TestTheLoginTimeoutDefaultsByMethod(t *testing.T) {
+	registerBuiltins(t)
+
+	for method, want := range map[string]time.Duration{
+		AuthMethodInteractive:  DefaultInteractiveLoginTimeout,
+		AuthMethodDeviceCode:   DefaultInteractiveLoginTimeout,
+		AuthMethodAzureCLI:     DefaultLoginTimeout,
+		AuthMethodAzureDefault: DefaultLoginTimeout,
+	} {
+		plan, err := planConnection(entra(method, dsconfig.Auth{}))
+		require.NoErrorf(t, err, "method %q", method)
+		assert.Equalf(t, want, plan.request.LoginTimeout, "method %q", method)
+
+		plan, err = planConnection(entra(method, dsconfig.Auth{LoginTimeout: 45 * time.Second}))
+		require.NoError(t, err)
+		assert.Equal(t, 45*time.Second, plan.request.LoginTimeout)
+	}
+	assert.Equal(t, 5*time.Minute, DefaultInteractiveLoginTimeout)
+	assert.Equal(t, time.Minute, DefaultLoginTimeout)
 }
 
 func TestUnknownAuthMethodListsValidOnes(t *testing.T) {

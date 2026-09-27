@@ -165,8 +165,9 @@ func importHint(registered []string) string {
 	return " Import the engine you use for its side effects — " +
 		importLine("postgres") + " or " + importLine("mysql") + ", or " +
 		importLine("builtin") + " for both; " +
-		importLine("sqlserver") + " for SQL Server, which driver/builtin does not include — " +
-		"in pkg/provider/bootstrap.go, where the app's driver import lives."
+		importLine("sqlserver") + " for SQL Server, which driver/builtin does not include, or " +
+		importLine("sqlserver/azuread") + " to sign in to it with Microsoft Entra ID, which " +
+		"registers it too — in pkg/provider/bootstrap.go, where the app's driver import lives."
 }
 
 // frameworkDrivers maps each driver name the framework ships to the driver package whose
@@ -175,14 +176,16 @@ func importHint(registered []string) string {
 // It exists for the unknown-driver message. A framework name that is not registered is a
 // missing import rather than a typo, so the reader needs the one import that registers it,
 // and a reader who imported builtin expecting every engine needs to hear that it does not
-// bring SQL Server.
+// bring SQL Server. entra is the package that registers the driver together with its
+// Microsoft Entra ID sign-in, which an app signing in that way imports instead.
 var frameworkDrivers = map[string]struct {
 	pkg     string
 	builtin bool
+	entra   string
 }{
 	"postgres_gorm":  {pkg: "postgres", builtin: true},
 	"mysql_gorm":     {pkg: "mysql", builtin: true},
-	"sqlserver_gorm": {pkg: "sqlserver"},
+	"sqlserver_gorm": {pkg: "sqlserver", entra: "sqlserver/azuread"},
 }
 
 // missingImportHint says how to register name, a driver the registry does not know.
@@ -203,6 +206,10 @@ func missingImportHint(name string) string {
 	case known.builtin:
 		return "Import " + importLine(known.pkg) + " for its side effects " + where +
 			"; driver/builtin imports it too."
+	case known.entra != "":
+		return "Import " + importLine(known.pkg) + " for its side effects " + where +
+			" — driver/builtin does not include it. To sign in with Microsoft Entra ID, import " +
+			importLine(known.entra) + " instead, which registers the driver too."
 	default:
 		return "Import " + importLine(known.pkg) + " for its side effects " + where +
 			" — driver/builtin does not include it."

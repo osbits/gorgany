@@ -30,6 +30,10 @@ jobs:
 
       - run: go build ./...
       - run: go vet ./...
+      # The manual Azure SQL test (db/sql/driver/sqlserver/azuread/azure_live_test.go) sits
+      # behind the azuresql tag, which no other step sets. Vetting it compiles it without
+      # running it: it needs a real Azure SQL database, and fails without one.
+      - run: go vet -tags=azuresql ./db/sql/driver/sqlserver/azuread
       - run: go test ./...
       # Separate step, not -race on the run above: a race failure and a logic failure are
       # different problems and the log should say which one happened.

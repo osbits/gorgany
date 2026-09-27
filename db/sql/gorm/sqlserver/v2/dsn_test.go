@@ -322,6 +322,54 @@ func TestAADMethodsOmitUserinfo(t *testing.T) {
 	assert.Empty(t, p.Password)
 }
 
+// TestTokenMethodsRefuseWeakEncryptionOnEveryHost: a token sign-in sends a bearer token in the
+// login, which ssl false sends in clear to a server that says it cannot encrypt, and a trusted
+// certificate hands to any server at all. A host the engine does not recognise as Azure, a
+// private endpoint's own DNS name or an address, is no exception.
+func TestTokenMethodsRefuseWeakEncryptionOnEveryHost(t *testing.T) {
+	token := func(host string) dsconfig.DataSource {
+		cfg := sqlLogin()
+		cfg.Host = host
+		cfg.Username, cfg.Password = "user@example.com", ""
+		cfg.Auth = dsconfig.Auth{Method: AuthMethodInteractive}
+		return cfg
+	}
+
+	for _, host := range []string{"sql.example.com", "10.0.0.4"} {
+		for _, ssl := range []string{"false", "optional", "no", "0", "disable", " Disable "} {
+			cfg := token(host)
+			cfg.SSL = ssl
+			_, err := BuildDSN(cfg)
+			require.Errorf(t, err, "host %s, ssl %q", host, ssl)
+			assert.Contains(t, err.Error(), "would let an Entra ID sign-in send its access token unencrypted")
+		}
+		for _, ssl := range []string{"", "true", "strict"} {
+			cfg := token(host)
+			cfg.SSL = ssl
+			_, err := BuildDSN(cfg)
+			require.NoErrorf(t, err, "host %s, ssl %q", host, ssl)
+		}
+
+		cfg := token(host)
+		cfg.Options = map[string]string{"trust_server_certificate": "true"}
+		_, err := BuildDSN(cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "options.trust_server_certificate would hand an Entra ID sign-in's access "+
+			"token to any server that answers")
+
+		cfg.Options = map[string]string{"certificate": "/etc/ssl/sql.pem", "hostname_in_certificate": "sql.example.com"}
+		_, err = BuildDSN(cfg)
+		require.NoError(t, err, "verifying a self-signed certificate is the way")
+	}
+
+	// The SQL login keeps what it had: an on-premises server may be weakened for development.
+	cfg := sqlLogin()
+	cfg.SSL = "disable"
+	cfg.Options = map[string]string{"trust_server_certificate": "true"}
+	_, err := BuildDSN(cfg)
+	require.NoError(t, err)
+}
+
 // TestDescribeNamesTheServerOnly: describe is what errors say instead of the DSN.
 func TestDescribeNamesTheServerOnly(t *testing.T) {
 	cfg := sqlLogin()

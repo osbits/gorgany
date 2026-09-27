@@ -158,7 +158,7 @@ type DataSource struct {
 	// whole story. The zero value, and Method "sql", mean exactly that: Username and
 	// Password at the top level. Postgres and MySQL speak nothing else and refuse any other
 	// method. The SQL Server engine takes the Entra ID methods that are registered with it,
-	// and refuses the others; no package in this release registers one.
+	// which importing db/sql/driver/sqlserver/azuread does, and refuses the others.
 	Auth Auth
 
 	// Log turns on statement logging for this connection.

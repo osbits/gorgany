@@ -160,9 +160,9 @@ func planConnection(cfg dsconfig.DataSource) (connectionPlan, error) {
 	if err != nil {
 		return connectionPlan{}, err
 	}
-	timeout := cfg.Auth.LoginTimeout
-	if timeout == 0 {
-		timeout = DefaultLoginTimeout
+	cloud, err := ResolveCloud(cfg.Host, scope)
+	if err != nil {
+		return connectionPlan{}, err
 	}
 	plan.request = AuthRequest{
 		Method:       auth.method,
@@ -170,9 +170,10 @@ func planConnection(cfg dsconfig.DataSource) (connectionPlan, error) {
 		Username:     cfg.Username,
 		Host:         cfg.Host,
 		Database:     cfg.Database,
+		Target:       plan.target,
 		Scope:        scope,
-		Cloud:        dsconfig.AzureCloudOf(cfg.Host),
-		LoginTimeout: timeout,
+		Cloud:        cloud,
+		LoginTimeout: loginTimeoutFor(auth.method, cfg.Auth.LoginTimeout),
 	}
 	return plan, nil
 }

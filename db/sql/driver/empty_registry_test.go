@@ -1,6 +1,9 @@
 package driver
 
 import (
+	"errors"
+	"os/exec"
+	"regexp"
 	"testing"
 
 	dsconfig "github.com/osbits/gorgany/v2/db/sql/config"
@@ -31,8 +34,8 @@ func TestAnEmptyRegistryExplainsTheMissingImport(t *testing.T) {
 
 // TestTheEmptyRegistryHintMentionsSQLServer. driver/builtin is the import a reader reaches for
 // when they want "every engine", and it does not bring SQL Server, so the hint has to name that
-// engine's own package, and where the import goes. It names no package that does not exist:
-// every import it quotes has to compile.
+// engine's own package, the Entra ID package that registers it too, and where the import goes.
+// Every import it quotes has to compile; TestEveryQuotedImportExists checks that.
 func TestTheEmptyRegistryHintMentionsSQLServer(t *testing.T) {
 	withCleanRegistry(t)
 
@@ -43,7 +46,8 @@ func TestTheEmptyRegistryHintMentionsSQLServer(t *testing.T) {
 	assert.Contains(t, message, "no datasource drivers are registered")
 	assert.Contains(t, message, `_ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver"`)
 	assert.Contains(t, message, "driver/builtin does not include", "builtin is not every engine")
-	assert.NotContains(t, message, "azuread", "no Entra ID package ships in this release")
+	assert.Contains(t, message, `_ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver/azuread" to sign in `+
+		`to it with Microsoft Entra ID`)
 	assert.Contains(t, message, "pkg/provider/bootstrap.go", "the file the app's driver import lives in")
 }
 
@@ -107,7 +111,8 @@ func TestAMissingSQLServerImportNamesItsPackage(t *testing.T) {
 	assert.Contains(t, message, `_ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver"`)
 	assert.Contains(t, message, "driver/builtin does not include it")
 	assert.Contains(t, message, "pkg/provider/bootstrap.go, next to the other driver import")
-	assert.NotContains(t, message, "azuread", "no Entra ID package ships in this release")
+	assert.Contains(t, message, `To sign in with Microsoft Entra ID, import `+
+		`_ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver/azuread" instead`)
 	assert.NotContains(t, message, "Import the engine you use",
 		"the empty-registry hint is for a registry with nothing in it")
 }
@@ -144,6 +149,34 @@ func TestAnUnknownNameListsEveryFrameworkEngine(t *testing.T) {
 	assert.Contains(t, message, "driver/builtin does not include sqlserver")
 	assert.Contains(t, message, "pkg/provider/bootstrap.go")
 	assert.Contains(t, message, "driver.Register")
+}
+
+// TestEveryQuotedImportExists: the hints are copied into bootstrap.go as they are, so every
+// import they quote must be a package of this module, or the fix they offer fails the build. It
+// asks the build tool, since a package that exists only as a string cannot be imported here.
+func TestEveryQuotedImportExists(t *testing.T) {
+	messages := []string{importHint(nil), missingImportHint("oracle_gorm")}
+	for name := range frameworkDrivers {
+		messages = append(messages, missingImportHint(name))
+	}
+
+	quoted := regexp.MustCompile(`_ "([^"]+)"`)
+	paths := map[string]bool{}
+	for _, message := range messages {
+		for _, match := range quoted.FindAllStringSubmatch(message, -1) {
+			paths[match[1]] = true
+		}
+	}
+	require.Contains(t, paths, "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver/azuread")
+
+	for path := range paths {
+		out, err := exec.Command("go", "list", path).CombinedOutput()
+		var exitErr *exec.ExitError
+		if err != nil && !errors.As(err, &exitErr) {
+			t.Skipf("go list unavailable: %v", err)
+		}
+		assert.NoErrorf(t, err, "the hints quote %s, which is not a package: %s", path, out)
+	}
 }
 
 // stubConstructor is a registrable constructor that builds nothing, for tests that only

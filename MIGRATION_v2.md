@@ -1876,8 +1876,10 @@ _ "github.com/osbits/gorgany/v2/db/sql/driver/postgres" or
 _ "github.com/osbits/gorgany/v2/db/sql/driver/mysql", or
 _ "github.com/osbits/gorgany/v2/db/sql/driver/builtin" for both;
 _ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver" for SQL Server, which
-driver/builtin does not include — in pkg/provider/bootstrap.go, where the app's driver
-import lives.
+driver/builtin does not include, or
+_ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver/azuread" to sign in to it with
+Microsoft Entra ID, which registers it too — in pkg/provider/bootstrap.go, where the app's
+driver import lives.
 ```
 
 Up to and including v2.4.3 the message named only the first three packages and ended

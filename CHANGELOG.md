@@ -244,7 +244,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `_ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver"`, which `driver/builtin` does not
   import, so an app on `builtin` links no SQL Server code until it adds that import.
 - A SQL Server and Azure SQL engine, `db/sql/gorm/sqlserver/v2`, behind the `sqlserver_gorm`
-  driver, signing in with a SQL login; the Microsoft Entra ID methods come in a later release.
+  driver, signing in with a SQL login, or with Microsoft Entra ID through
+  `driver/sqlserver/azuread` (below).
   It targets SQL Server 2016 or newer and Azure SQL Database. Its dialect brackets every
   identifier, so EF Core names such as `[dbo].[2024Orders]` and `[Order]` work, in conditions
   too, through the new rendering seam. It translates `Limit` to `TOP (n)`, `Offset` to
@@ -273,7 +274,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   Postgres. `read_only` and `external_schema` are enforced: the dialect refuses writes, the
   connection's guards refuse writes or DDL, and `read_only` also sets
   `ApplicationIntent=ReadOnly`. `ssl` maps to go-mssqldb's `encrypt` and defaults to encrypted
-  with the certificate verified; an Azure SQL host refuses anything weaker. `options` is a
+  with the certificate verified; an Azure SQL host refuses anything weaker, and so does an Entra
+  ID sign-in on any host, which also refuses `options.trust_server_certificate`, since either
+  could hand its access token to whoever answers. `options` is a
   closed list, with snake_case names for go-mssqldb's spaced keys. A named `instance` is
   dialled through SQL Server Browser only on premises with no port; a set port wins, and an
   Azure host drops it, each with a boot warning. Pool settings left unset default to 10 open
@@ -282,11 +285,49 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `RegisteredAuthMethods`, and the `Authenticator`, `AuthRequest` and `TokenSource` types, with
   the method names as `AuthMethod*` constants. `auth.method` picks a registered method, and a
   datasource asks it for one token source, which the connection uses for every sign-in and
-  whose sign-in in flight `Close` abandons. The Entra ID methods will register from a package of
-  their own in a later release, so an app on a SQL login links no Azure SDK. No package
-  registers one in this release, so a built-in Entra ID `auth.method` fails the boot, saying so
-  and naming `sqlserver.RegisterAuthenticator`; a method an app registers, under a name of its
-  own or a built-in one, is used as it is.
+  whose sign-in in flight `Close` abandons. The Entra ID methods register from a package of
+  their own, `sqlserver.AzureADImportPath`, so an app on a SQL login links no Azure SDK. A
+  built-in Entra ID `auth.method` without that import fails the boot with the import line and
+  the file it goes in, `pkg/provider/bootstrap.go`. A method an app registers, under a name of
+  its own or a built-in one, is used as it is. `auth.login_timeout` defaults to
+  `sqlserver.DefaultInteractiveLoginTimeout`, five minutes, for `interactive` and `device_code`,
+  and to `sqlserver.DefaultLoginTimeout`, one minute, for every other method. An `AuthRequest`
+  names the database as the engine's errors do, in `Target` (`host:port/db`), so an
+  authenticator's errors name it the same way, and the engine wraps them with the method and the
+  database, which the authenticator therefore leaves out.
+- `db/sql/driver/sqlserver/azuread`, the Microsoft Entra ID sign-in for SQL Server and Azure SQL.
+  Importing it, in place of `driver/sqlserver`, registers the driver and five `auth.method`
+  values: `interactive` (the system browser), `device_code`, `azure_cli`, `azure_default`
+  (azidentity's DefaultAzureCredential) and `service_principal`, with a client secret or a PEM
+  or PKCS#12 certificate. Each builds its azidentity credential with the authority of the host's
+  cloud, public, US Government or China, as the token scope already follows the host. For a host
+  that is not an Azure SQL endpoint, such as a private endpoint's own DNS name, an `auth.scope`
+  naming a cloud's Azure SQL selects that cloud's authority too; on an Azure SQL host, one
+  naming another cloud is refused at boot (`sqlserver.ResolveCloud`). A certificate that cannot
+  be read is named by its path, and the error says what is wrong with it: a PEM file given a
+  password, an encrypted PEM key, or a PKCS#12 file in the AES and SHA-256 profile OpenSSL 3 and
+  current Windows export by default, which azidentity cannot read (re-export it with
+  `openssl pkcs12 -export -legacy`). Its content is never quoted.
+
+  Each datasource has one credential and one token source, and shares neither with another
+  datasource. The source hands every connection the same token. From its `RefreshOn` it renews
+  the token in the background while connections keep using it, trying a failed renewal again
+  after 30 seconds rather than on every connection; only within five minutes of the expiry do
+  connections wait for the renewal, and if that fails while the token is still valid for a
+  minute, they use the old one. Connections that open together share one request for a token,
+  each waiting under its own context. That request runs under its own timeout,
+  `auth.login_timeout`, and under the datasource's lifetime, which `Close` ends. `interactive`
+  and `device_code` ask the person once per datasource: at boot, or on the first connection
+  with `lazy_connect`, so an app with two such datasources asks twice. A token that cannot be
+  renewed without them after that fails with an error naming the likely causes, after which
+  the next connection tries again, and never opens a second prompt. No error contains a token.
+  The package does not link go-mssqldb's own `azuread` package, which builds a credential, and
+  so prompts, for every connection, nor azidentity's persistent cache, which links the operating
+  system's keychain. CI compiles its manual Azure SQL test, behind the `azuresql` tag, with
+  `go vet -tags=azuresql`.
+  docs/SQLSERVER.md, new, covers the imports, the keys a DataGrip or SSMS connection maps to,
+  `ssl`, `options`, the methods and what each takes, sovereign clouds, development and deployed
+  methods, and a second, externally owned datasource.
 - `testsupport.Config.AllowAnyTarget` and `GORGANY_TEST_ALLOW_ANY_TARGET`, which switch off the
   harness's new target guard (see Changed). Like `KeepData`, the variable switches it on, never
   off.
@@ -459,8 +500,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   test binary now fails where it skipped; add the import the error names.
 - The unknown-driver error names the one import that registers a framework driver, and says
   that `driver/builtin` does not include SQL Server, and where the import goes:
-  `pkg/provider/bootstrap.go`, next to the other driver import. The empty-registry hint lists
-  `driver/sqlserver` as well.
+  `pkg/provider/bootstrap.go`, next to the other driver import. For `sqlserver_gorm` it also
+  names `driver/sqlserver/azuread`, which registers the driver with the Entra ID sign-in. The
+  empty-registry hint lists `driver/sqlserver` and `driver/sqlserver/azuread` as well.
 
   **Upgrade note:** the text of both messages changed after their first sentence, which is
   unchanged. MIGRATION_v2.md §21 quotes the new empty-registry message.
@@ -472,9 +514,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   table with triggers, and refusing a statement after the server has rolled back a transaction
   under `XACT_ABORT`, which v1.9.6 ran as its own auto-committed statement. The go and
   toolchain directives are unchanged. Only an app that imports `driver/sqlserver` links the
-  SQL Server packages, and none links the Azure SDK, but
-  the Azure SDK, MSAL and Kerberos modules go-mssqldb requires are now in every consumer's
-  module graph and `go.sum`, although nothing links them.
+  SQL Server packages, but the Azure SDK, MSAL and Kerberos modules go-mssqldb requires are now
+  in every consumer's module graph and `go.sum`.
+
+  `go.mod` also requires `github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.1` and
+  `github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.1` directly, with
+  `github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0`,
+  `github.com/AzureAD/microsoft-authentication-library-for-go v1.8.0`, `github.com/pkg/browser`
+  and `github.com/kylelemons/godebug` as indirect requirements. Only `driver/sqlserver/azuread`
+  links them. `go.sum` also lists azidentity's persistent cache, the MSAL extensions and
+  `github.com/keybase/go-keychain`, which azidentity's own tests use and nothing links.
 
   **Upgrade note:** run `go mod tidy` after upgrading; expect `go.sum` to grow, and the
   testify, x/crypto, x/text and x/net versions of your own module to move up with it.

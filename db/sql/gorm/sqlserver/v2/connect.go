@@ -176,6 +176,12 @@ func droppedConnection(err error) bool {
 		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
+// warmUpGrace is how much longer than the login timeout the warm-up waits. A token source that
+// bounds its own sign-in by the same timeout, as the Entra ID package's does, then fails with
+// its own error, which says which setting to raise, instead of the warm-up's bare "context
+// deadline exceeded".
+const warmUpGrace = time.Second
+
 // warmUp asks tokens for the first token, bounded by timeout, so that a sign-in that needs a
 // person — a browser, a device code — happens at boot and once, not on whichever request
 // opens the first connection. A SQL login has nothing to warm up.
@@ -183,7 +189,7 @@ func warmUp(tokens *datasourceTokens, timeout time.Duration) error {
 	if tokens == nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(tokens.root, timeout)
+	ctx, cancel := context.WithTimeout(tokens.root, timeout+warmUpGrace)
 	defer cancel()
 	_, err := tokens.token(ctx)
 	return err

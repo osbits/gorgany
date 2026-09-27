@@ -139,17 +139,31 @@ var sslToEncrypt = map[string]string{
 	"disable":   "disable",
 }
 
-// encryptFor returns go-mssqldb's encrypt value for cfg.SSL, refusing a weaker one on Azure.
-func encryptFor(cfg dsconfig.DataSource, azure bool) (string, error) {
+// encryptFor returns go-mssqldb's encrypt value for cfg.SSL, refusing a weaker one on Azure,
+// and for a token sign-in anywhere.
+//
+// A token sign-in sends its Entra ID access token in the login, and with encrypt false the
+// login is encrypted only if the server says it can be: a server, or anything in between, that
+// says it cannot receives the token in clear. The token is a bearer credential for its audience,
+// which for Azure SQL is every database the principal can reach, in every server, so it must
+// never travel unencrypted, whatever the host is called; a private endpoint behind a DNS name of
+// its own is still Azure SQL.
+func encryptFor(cfg dsconfig.DataSource, azure, token bool) (string, error) {
 	ssl := strings.ToLower(strings.TrimSpace(cfg.SSL))
 	encrypt, ok := sslToEncrypt[ssl]
 	if !ok {
 		return "", fmt.Errorf("sqlserver: ssl %q is not a SQL Server encryption mode; use true (the default), "+
 			"strict, false or disable", cfg.SSL)
 	}
-	if azure && (encrypt == "false" || encrypt == "disable") {
+	weak := encrypt == "false" || encrypt == "disable"
+	switch {
+	case azure && weak:
 		return "", fmt.Errorf("sqlserver: ssl %q would send an Azure SQL connection unencrypted, which Azure "+
 			"refuses; remove ssl, or set it to true or strict", cfg.SSL)
+	case token && weak:
+		return "", fmt.Errorf("sqlserver: ssl %q would let an Entra ID sign-in send its access token "+
+			"unencrypted, and the token lets whoever reads it into every database the principal can reach; "+
+			"remove ssl, or set it to true or strict", cfg.SSL)
 	}
 	return encrypt, nil
 }
@@ -171,8 +185,9 @@ func encryptFor(cfg dsconfig.DataSource, azure bool) (string, error) {
 //   - database is db, as written.
 //   - encrypt comes from ssl (see sslToEncrypt), and trustservercertificate is always sent,
 //     false unless options.trust_server_certificate says true. go-mssqldb trusts any
-//     certificate when neither is set. An Azure SQL host refuses encryption turned off and a
-//     trusted certificate, and strict refuses a trusted certificate anywhere.
+//     certificate when neither is set. An Azure SQL host and an Entra ID sign-in on any host
+//     refuse encryption turned off and a trusted certificate, and strict refuses a trusted
+//     certificate anywhere.
 //   - app name is DefaultAppName, and guid conversion is true, so a uniqueidentifier scans
 //     into a uuid.UUID in the byte order it is shown in; an option overrides either. The
 //     conversion is wrong for go-mssqldb's own mssql.UniqueIdentifier and
@@ -210,7 +225,7 @@ func buildDSN(cfg dsconfig.DataSource, sqlLogin bool) (string, endpoint, []strin
 	}
 
 	azure := dsconfig.IsAzureSQLHost(cfg.Host)
-	encrypt, err := encryptFor(cfg, azure)
+	encrypt, err := encryptFor(cfg, azure, !sqlLogin)
 	if err != nil {
 		return "", endpoint{}, nil, err
 	}
@@ -236,6 +251,11 @@ func buildDSN(cfg dsconfig.DataSource, sqlLogin bool) (string, endpoint, []strin
 		case encrypt == "strict":
 			return "", endpoint{}, nil, errors.New("sqlserver: options.trust_server_certificate cannot be used with " +
 				"ssl strict, which verifies the certificate by definition")
+		case !sqlLogin:
+			return "", endpoint{}, nil, errors.New("sqlserver: options.trust_server_certificate would hand an Entra " +
+				"ID sign-in's access token to any server that answers, since it accepts any certificate; verify " +
+				"the server instead, with options.certificate or options.server_certificate for a self-signed " +
+				"certificate, or options.hostname_in_certificate for a name that differs from host")
 		}
 	}
 	if params.Get("applicationintent") == intentReadOnly && !cfg.ReadOnly {

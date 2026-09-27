@@ -23,6 +23,7 @@ db/sql/builder     the engine-agnostic Builder — no SQL syntax of its own
 db/sql/driver      driver-name -> constructor registry
 db/sql/driver/builtin     registers postgres_gorm and mysql_gorm
 db/sql/driver/sqlserver   registers sqlserver_gorm; not part of builtin
+db/sql/driver/sqlserver/azuread  registers the Entra ID sign-in methods, and the driver
 db/sql/gorm/guard         gorm callbacks enforcing read_only and external_schema
 db/sql/gorm/postgres/v2   PostgresDialect + Postgres datasource
 db/sql/gorm/mysql/v2      MySQLDialect + MySQL datasource
@@ -469,6 +470,8 @@ import, in `pkg/provider/bootstrap.go`:
 ```go
 import _ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver"
 ```
+
+Connecting and signing in, Microsoft Entra ID included, are in [SQLSERVER.md](SQLSERVER.md).
 
 The governing rule is MySQL's: what T-SQL cannot express is refused with a
 `dbCore.UnsupportedError`, and nothing is translated into SQL that runs but means

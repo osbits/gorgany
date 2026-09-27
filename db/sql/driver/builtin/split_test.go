@@ -76,6 +76,13 @@ func TestASingleEngineImportDoesNotLinkTheOther(t *testing.T) {
 // SQL Server may.
 var sqlServerPackages = []string{"github.com/microsoft/go-mssqldb", "gorm.io/driver/sqlserver"}
 
+// azureSDKModules are what the Entra ID sign-in links, and only driver/sqlserver/azuread may.
+var azureSDKModules = []string{
+	"github.com/Azure/azure-sdk-for-go",
+	"github.com/AzureAD/microsoft-authentication-library-for-go",
+	"github.com/pkg/browser",
+}
+
 // linkedPackages returns the packages pkg links, one per entry, or skips the test when the
 // toolchain is unavailable.
 func linkedPackages(t *testing.T, pkg string) map[string]bool {
@@ -102,17 +109,19 @@ func linksUnder(linked map[string]bool, module string) string {
 	return ""
 }
 
-// requireNoSQLServer fails unless none of pkgs links the SQL Server engine.
+// requireNoSQLServer fails unless none of pkgs links the SQL Server engine, or the Azure SDK its
+// Entra ID sign-in brings.
 //
 // The SQL Server driver stays out of builtin, and the framework packages every app links pick
 // SQL Server behaviour by name only — gorm's Dialector.Name() or the dialect's Name() — so
-// that an app that never speaks SQL Server never links go-mssqldb.
+// that an app that never speaks SQL Server never links go-mssqldb, and one that never signs in
+// with Entra ID never links azidentity or MSAL.
 func requireNoSQLServer(t *testing.T, pkgs ...string) {
 	t.Helper()
 	for _, pkg := range pkgs {
 		linked := linkedPackages(t, pkg)
-		for _, engine := range sqlServerPackages {
-			assert.Emptyf(t, linksUnder(linked, engine), "%s must not link %s", pkg, engine)
+		for _, module := range append(append([]string{}, sqlServerPackages...), azureSDKModules...) {
+			assert.Emptyf(t, linksUnder(linked, module), "%s must not link %s", pkg, module)
 		}
 	}
 }
@@ -147,9 +156,9 @@ func TestORMLinksNoSQLServer(t *testing.T) {
 }
 
 // TestTheSQLServerDriverDoesNotLinkAzureAD: a SQL login needs go-mssqldb and nothing of Azure.
-// The Entra ID methods, when they come, will live in a package of their own, since they link
-// the identity SDK, MSAL and a browser opener, which an app that signs in with a SQL login must
-// not link. Nor may the SQL Server driver link another engine's.
+// The Entra ID methods live in driver/sqlserver/azuread, since they link the identity SDK, MSAL
+// and a browser opener, which an app that signs in with a SQL login must not link. Nor may the
+// SQL Server driver link another engine's.
 func TestTheSQLServerDriverDoesNotLinkAzureAD(t *testing.T) {
 	linked := linkedPackages(t, "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver")
 
@@ -167,6 +176,40 @@ func TestTheSQLServerDriverDoesNotLinkAzureAD(t *testing.T) {
 		"gorm.io/driver/mysql",
 	} {
 		assert.Emptyf(t, linksUnder(linked, module), "driver/sqlserver must not link %s", module)
+	}
+}
+
+// TestAzureADLinksTheAzureSDKButNotTheKeychain: the Entra ID package is where the Azure SDK
+// comes in, together with the driver it registers, and it stops short of three things. The
+// persistent token cache links the operating system's keychain, cgo on macOS, and belongs to an
+// opt-in package of its own. go-mssqldb's own azuread package builds a credential for every
+// connection, so an interactive sign-in would prompt for each; this package builds one per
+// datasource instead. Kerberos is a sign-in the engine refuses.
+func TestAzureADLinksTheAzureSDKButNotTheKeychain(t *testing.T) {
+	linked := linkedPackages(t, "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver/azuread")
+
+	for _, pkg := range []string{
+		"github.com/Azure/azure-sdk-for-go/sdk/azidentity",
+		"github.com/Azure/azure-sdk-for-go/sdk/azcore",
+		"github.com/osbits/gorgany/v2/db/sql/driver/sqlserver",
+		"github.com/microsoft/go-mssqldb",
+	} {
+		assert.Truef(t, linked[pkg], "driver/sqlserver/azuread links %s", pkg)
+	}
+	assert.NotEmpty(t, linksUnder(linked, "github.com/AzureAD/microsoft-authentication-library-for-go"),
+		"azidentity signs in through MSAL")
+
+	for _, module := range []string{
+		"github.com/Azure/azure-sdk-for-go/sdk/azidentity/cache",
+		"github.com/AzureAD/microsoft-authentication-extensions-for-go",
+		"github.com/keybase/go-keychain",
+		"github.com/microsoft/go-mssqldb/azuread",
+		"github.com/microsoft/go-mssqldb/integratedauth/krb5",
+		"github.com/jcmturner/gokrb5",
+		"github.com/jackc/pgx",
+		"github.com/go-sql-driver/mysql",
+	} {
+		assert.Emptyf(t, linksUnder(linked, module), "driver/sqlserver/azuread must not link %s", module)
 	}
 }
 

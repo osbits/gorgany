@@ -15,10 +15,10 @@ import (
 // The sign-in methods databases.<name>.auth.method selects. "sql", or no auth block at all,
 // signs in with the top-level username and password. The others sign in with a Microsoft
 // Entra ID token through an Authenticator registered under their name. They link the Azure
-// identity SDK, which an app signing in with a SQL login should not have to link, so they will
-// register from a package of their own, in a later release. None ships in this one: until
-// then, a method has an authenticator only if the app registers one (see
-// RegisterAuthenticator).
+// identity SDK, MSAL and a browser opener, which an app signing in with a SQL login should not
+// have to link, so they register from a package of their own, AzureADImportPath, which the app
+// imports when it wants them. An app may also register an Authenticator of its own under one of
+// these names (see RegisterAuthenticator).
 const (
 	AuthMethodSQL              = "sql"
 	AuthMethodInteractive      = "interactive"
@@ -28,9 +28,35 @@ const (
 	AuthMethodServicePrincipal = "service_principal"
 )
 
-// DefaultLoginTimeout bounds one sign-in when auth.login_timeout is unset. It is long enough
-// for a person to finish an interactive sign-in in a browser.
-const DefaultLoginTimeout = 2 * time.Minute
+// AzureADImportPath is the package that registers the Entra ID methods above. An app that
+// signs in with one imports it for its side effects, in pkg/provider/bootstrap.go next to its
+// driver import; it registers the sqlserver_gorm driver too.
+const AzureADImportPath = "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver/azuread"
+
+// The bounds of one sign-in when auth.login_timeout is unset.
+//
+// A person signing in, in a browser or with a device code, may have to find the window, pick
+// an account and answer MFA, so interactive and device_code get five minutes. Every other
+// method signs in without anyone: the Azure CLI answers from its own cache, and a managed
+// identity or a service principal from one request, so a minute is already generous, and a
+// longer wait would only delay the error of a tool that hangs.
+const (
+	DefaultLoginTimeout            = time.Minute
+	DefaultInteractiveLoginTimeout = 5 * time.Minute
+)
+
+// loginTimeoutFor returns how long one sign-in with method may take: configured, which is
+// auth.login_timeout, or the method's default.
+func loginTimeoutFor(method string, configured time.Duration) time.Duration {
+	switch {
+	case configured > 0:
+		return configured
+	case method == AuthMethodInteractive || method == AuthMethodDeviceCode:
+		return DefaultInteractiveLoginTimeout
+	default:
+		return DefaultLoginTimeout
+	}
+}
 
 // TokenSource hands out the access token a connection signs in with.
 //
@@ -61,19 +87,29 @@ type AuthRequest struct {
 	// Host and Database name the server and database the token is for.
 	Host     string
 	Database string
+	// Target names them as the engine's errors do: host:port/db, or host\instance/db. An
+	// Authenticator whose errors name the database uses it, so that a log line names it one
+	// way whichever layer wrote it.
+	Target string
 	// Scope is the token scope: auth.scope when set, otherwise derived from the host (see
 	// ResolveScope).
 	Scope string
-	// Cloud is the Azure cloud the host belongs to (see dsconfig.AzureCloudOf), which decides
-	// the sign-in authority.
+	// Cloud is the Azure cloud whose authority signs in: the host's, or the one auth.scope's
+	// Azure SQL audience names for a host that is not an Azure SQL endpoint (see ResolveCloud).
 	Cloud string
-	// LoginTimeout bounds one sign-in: auth.login_timeout, or DefaultLoginTimeout.
+	// LoginTimeout bounds one sign-in: auth.login_timeout, or DefaultInteractiveLoginTimeout
+	// for interactive and device_code, and DefaultLoginTimeout for every other method.
 	LoginTimeout time.Duration
 }
 
 // Authenticator builds the TokenSource for one datasource. It is called once, when the
 // datasource is constructed, and must not sign in there: the datasource asks for the first
 // token when it warms up, or on its first connection with lazy_connect.
+//
+// The engine wraps an error it returns with the method and the database, so the error says
+// only what is wrong. The TokenSource's errors are not wrapped that way on every path, since
+// go-mssqldb reports them to whichever query opened the connection, so they name the database
+// themselves, as AuthRequest.Target does.
 type Authenticator func(AuthRequest) (TokenSource, error)
 
 var (
@@ -170,10 +206,10 @@ func resolveAuth(cfg dsconfig.DataSource) (resolvedAuth, error) {
 		}
 		a, ok := lookupAuthenticator(method)
 		if !ok {
-			return resolvedAuth{}, fmt.Errorf("sqlserver: auth.method %q signs in with Entra ID, which this "+
-				"release of gorgany does not ship: no package registers it yet. Sign in with auth.method "+
-				"sql, or register an Authenticator of your own under this name with "+
-				"sqlserver.RegisterAuthenticator", method)
+			return resolvedAuth{}, fmt.Errorf("sqlserver: auth.method %q signs in with Microsoft Entra ID, "+
+				"whose methods register from a package of their own so that an app on a SQL login links "+
+				"no Azure SDK: add _ %q in pkg/provider/bootstrap.go next to your driver import (it "+
+				"registers the sqlserver_gorm driver too)", method, AzureADImportPath)
 		}
 		return resolvedAuth{method: method, authenticator: a}, nil
 	}
