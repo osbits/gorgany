@@ -87,8 +87,8 @@ func TestAzureSQLWithTheConfiguredMethod(t *testing.T) {
 
 	var counted *countingCredential
 	saved := credentialFor
-	credentialFor = func(req sqlserver.AuthRequest) (azcore.TokenCredential, error) {
-		cred, err := newCredential(req)
+	credentialFor = func(req sqlserver.AuthRequest, remembered *rememberedSignIn) (azcore.TokenCredential, error) {
+		cred, err := newCredential(req, remembered)
 		if err != nil {
 			return nil, err
 		}

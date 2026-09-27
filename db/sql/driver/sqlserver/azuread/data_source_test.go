@@ -279,7 +279,7 @@ func useCredential(t *testing.T, cred azcore.TokenCredential) *[]sqlserver.AuthR
 	t.Helper()
 	var requests []sqlserver.AuthRequest
 	saved := credentialFor
-	credentialFor = func(req sqlserver.AuthRequest) (azcore.TokenCredential, error) {
+	credentialFor = func(req sqlserver.AuthRequest, remembered *rememberedSignIn) (azcore.TokenCredential, error) {
 		requests = append(requests, req)
 		return cred, nil
 	}

@@ -17,7 +17,8 @@
 // that imports this package. The split is enforced by db/sql/driver/builtin's split test: the
 // SQL Server driver links no Azure SDK, and this package links neither go-mssqldb's own azuread
 // package, which builds a credential per connection and so prompts per connection, nor the
-// persistent token cache, which links the operating system's keychain.
+// persistent token cache, which links the operating system's keychain and is the persistentcache
+// subpackage's to register (see RegisterPersistentCache).
 //
 // # Methods
 //
@@ -48,7 +49,9 @@
 // connections wait only within five minutes of its expiry, and connections that arrive together
 // share one acquisition. interactive and device_code ask the person once per datasource, when it
 // warms up at boot, or on its first connection with lazy_connect; after that a token that cannot
-// be renewed without them is an error, never a second prompt the process opens on its own.
+// be renewed without them is an error, never a second prompt the process opens on its own. With
+// auth.token_cache: persistent, the next process starts without asking at all; see
+// RegisterPersistentCache.
 // The credential and the token source are the datasource's own: an app with two interactive
 // datasources asks the person twice. A managed identity's tokens, though, are also cached by MSAL,
 // in one cache for the whole process keyed by identity and scope, so datasources that sign in as
@@ -81,21 +84,27 @@ func init() {
 
 // credentialFor builds the credential of one datasource. It is newCredential, and a variable
 // only so that tests can hand the engine a credential that signs in nowhere.
-var credentialFor func(sqlserver.AuthRequest) (azcore.TokenCredential, error) = newCredential
+var credentialFor func(sqlserver.AuthRequest, *rememberedSignIn) (azcore.TokenCredential, error) = newCredential
 
 // authenticate is the sqlserver.Authenticator of every method this package registers. The engine
 // calls it once per datasource, and it must not sign in: it builds the one credential the
-// datasource will use and wraps it in the token source that decides when to use it.
+// datasource will use and wraps it in the token source that decides when to use it. With
+// auth.token_cache: persistent, it also opens the persistent cache and reads the record of the
+// last sign-in, which the credential and the token source share (see rememberedSignIn).
 func authenticate(req sqlserver.AuthRequest) (sqlserver.TokenSource, error) {
 	scope, err := scopeOf(req)
 	if err != nil {
 		return nil, err
 	}
-	cred, err := credentialFor(req)
+	remembered, err := rememberedSignInFor(req)
 	if err != nil {
 		return nil, err
 	}
-	return newTokenSource(cred, req, scope)
+	cred, err := credentialFor(req, remembered)
+	if err != nil {
+		return nil, err
+	}
+	return newTokenSource(cred, req, scope, remembered)
 }
 
 // scopeOf is the token scope req asks for: the one the engine resolved, or, for a request built

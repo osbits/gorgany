@@ -361,6 +361,35 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   spellings, such as `activedirectorymsi` and `activedirectoryworkloadidentity`, get a suggestion
   naming the new method. docs/SQLSERVER.md lists both methods, and says which variables each
   deployed method reads by itself.
+- `auth.token_cache` (`memory`, the default, or `persistent`) and `auth.authentication_record_path`
+  for `interactive` and `device_code`, and `db/sql/driver/sqlserver/azuread/persistentcache`, so
+  that on a development machine a restarted process signs in without asking the person again.
+  `token_cache` is folded like `method`, and `DataSource.Validate` refuses any other value
+  (`config.TokenCacheMemory`, `config.TokenCachePersistent`). Every other method, `sql` included,
+  refuses both keys, naming the methods that take them, and `authentication_record_path` is
+  refused without `token_cache: persistent`. With `persistent`, the tokens go to the operating
+  system's credential store, through azidentity's persistent cache: the keychain on macOS, which
+  needs cgo, a file encrypted with a key in the kernel keyring on Linux, and a DPAPI-encrypted
+  file on Windows. The first start asks the person, as `memory` does, and writes an authentication
+  record, account metadata with no token in it, to `authentication_record_path` or under the
+  user's cache directory as `gorgany/azuread/<hash>.json`. The file is written for its owner alone
+  (0600, in a 0700 directory it creates) and replaced by a rename, never rewritten in place. On
+  Unix, a record another user owns, or others can write, is ignored with a warning. A later start
+  with a record for the account the config names, and the application and tenant where it names
+  them as IDs, signs in from the cache without `Authenticate`, bounded like a renewal (the shorter
+  of `login_timeout` and 60 seconds). A record for another account is ignored, so the datasource
+  never signs in silently as someone the config does not name. If the cache cannot answer, the
+  start asks the person once; if the silent sign-in runs out of time, or the datasource closes
+  first, it asks nobody. A sign-in as an account other than `username`, which is only a login
+  hint, is not remembered, and a warning says so; a record that cannot be written leaves the
+  sign-in standing with a warning. The store links the keychain, so it registers from
+  `azuread/persistentcache`, the only package that links azidentity's cache, the MSAL extensions
+  or `github.com/keybase/go-keychain`. Without that import, `token_cache: persistent` fails the
+  boot with the import line (`azuread.PersistentCacheImportPath`). `azuread.RegisterPersistentCache`
+  is the seam it registers through, and panics on nil or a second registration. Built for macOS
+  without cgo, or for a system azidentity keeps no cache on, the package still compiles and fails
+  the boot with the reason. It is for development: the production image is built without cgo for
+  `scratch`. docs/SQLSERVER.md, "Remembering the sign-in across restarts (development)", covers it.
 - `testsupport.Config.AllowAnyTarget` and `GORGANY_TEST_ALLOW_ANY_TARGET`, which switch off the
   harness's new target guard (see Changed). Like `KeepData`, the variable switches it on, never
   off.
@@ -614,8 +643,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0`,
   `github.com/AzureAD/microsoft-authentication-library-for-go v1.8.0`, `github.com/pkg/browser`
   and `github.com/kylelemons/godebug` as indirect requirements. Only `driver/sqlserver/azuread`
-  links them. `go.sum` also lists azidentity's persistent cache, the MSAL extensions and
-  `github.com/keybase/go-keychain`, which azidentity's own tests use and nothing links.
+  links them.
+
+  `go.mod` also requires `github.com/Azure/azure-sdk-for-go/sdk/azidentity/cache v0.4.0`
+  directly, with `github.com/AzureAD/microsoft-authentication-extensions-for-go/cache v0.1.1`
+  and `github.com/keybase/go-keychain v0.0.1` as indirect requirements. Only
+  `driver/sqlserver/azuread/persistentcache` links them. No other requirement moved, and the go
+  and toolchain directives are unchanged.
 
   **Upgrade note:** run `go mod tidy` after upgrading; expect `go.sum` to grow, and the
   testify, x/crypto, x/text and x/net versions of your own module to move up with it.

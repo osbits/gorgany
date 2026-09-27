@@ -91,26 +91,26 @@ func TestInteractiveOptions(t *testing.T) {
 	client, err := clientOptions(req)
 	require.NoError(t, err)
 
-	opts := interactiveOptions(req, client)
+	opts := interactiveOptions(req, client, nil)
 	assert.True(t, opts.DisableAutomaticAuthentication, "a GetToken must never open a browser")
 	assert.Equal(t, standInUser, opts.LoginHint)
 	assert.Equal(t, standInTenant, opts.TenantID)
 	assert.Equal(t, standInClient, opts.ClientID)
 	assert.Equal(t, "http://localhost:8400", opts.RedirectURL)
 	assert.Equal(t, cloud.AzurePublic, opts.Cloud)
-	assert.Zero(t, opts.Cache, "the persistent cache links the keychain and is not this package's")
+	assert.Zero(t, opts.Cache, "without auth.token_cache: persistent the tokens stay in memory")
 	assert.Zero(t, opts.AuthenticationRecord)
 
 	// An empty tenant and client stay empty, so azidentity's own defaults apply: the
 	// organizations tenant and its development application.
-	bare := interactiveOptions(request(sqlserver.AuthMethodInteractive, azureHost, dsconfig.Auth{}), client)
+	bare := interactiveOptions(request(sqlserver.AuthMethodInteractive, azureHost, dsconfig.Auth{}), client, nil)
 	assert.Empty(t, bare.TenantID)
 	assert.Empty(t, bare.ClientID)
 	assert.True(t, bare.DisableAutomaticAuthentication)
 
 	device := deviceCodeOptions(request(sqlserver.AuthMethodDeviceCode, azureHost, dsconfig.Auth{
 		TenantID: standInTenant, ClientID: standInClient,
-	}), client)
+	}), client, nil)
 	assert.True(t, device.DisableAutomaticAuthentication, "one device code per datasource, as one browser")
 	assert.Equal(t, standInTenant, device.TenantID)
 	assert.Equal(t, standInClient, device.ClientID)
@@ -144,8 +144,8 @@ func TestSovereignHostsSelectTheirAuthority(t *testing.T) {
 		client, err := clientOptions(req)
 		require.NoError(t, err)
 
-		assert.Equalf(t, want, interactiveOptions(req, client).Cloud, "interactive, %s", host)
-		assert.Equalf(t, want, deviceCodeOptions(req, client).Cloud, "device_code, %s", host)
+		assert.Equalf(t, want, interactiveOptions(req, client, nil).Cloud, "interactive, %s", host)
+		assert.Equalf(t, want, deviceCodeOptions(req, client, nil).Cloud, "device_code, %s", host)
 		assert.Equalf(t, want, azureDefaultOptions(req, client).Cloud, "azure_default, %s", host)
 		assert.Equalf(t, want, clientSecretOptions(client).Cloud, "service_principal secret, %s", host)
 		assert.Equalf(t, want, clientCertificateOptions(req, client).Cloud, "service_principal certificate, %s", host)
@@ -162,7 +162,7 @@ func TestSovereignHostsSelectTheirAuthority(t *testing.T) {
 	assert.Equal(t, "https://database.usgovcloudapi.net/.default", req.Scope, "and the scope follows it too")
 
 	req.Cloud = "mars"
-	_, err := newCredential(req)
+	_, err := newCredential(req, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `unknown Azure cloud "mars"`)
 }
@@ -188,7 +188,7 @@ func TestAScopeSelectsTheAuthorityOfAHostThatNamesNoCloud(t *testing.T) {
 	contradiction := request(sqlserver.AuthMethodInteractive, azureHost,
 		dsconfig.Auth{Scope: "https://database.usgovcloudapi.net"})
 	contradiction.Cloud = ""
-	_, err = newCredential(contradiction)
+	_, err = newCredential(contradiction, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "is an Azure SQL host in the public cloud")
 }
@@ -209,12 +209,12 @@ func TestEachMethodBuildsItsCredential(t *testing.T) {
 		sqlserver.AuthMethodWorkloadIdentity: {dsconfig.Auth{TenantID: standInTenant, ClientID: standInClient,
 			TokenFilePath: standInTokenFile}, (*azidentity.WorkloadIdentityCredential)(nil)},
 	} {
-		cred, err := newCredential(request(method, azureHost, tc.auth))
+		cred, err := newCredential(request(method, azureHost, tc.auth), nil)
 		require.NoErrorf(t, err, "method %s", method)
 		assert.IsTypef(t, tc.want, cred, "method %s", method)
 	}
 
-	_, err := newCredential(request("vault_token", azureHost, dsconfig.Auth{}))
+	_, err := newCredential(request("vault_token", azureHost, dsconfig.Auth{}), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `auth.method "vault_token" is not a method this package signs in with`)
 }
@@ -223,7 +223,7 @@ func TestEachMethodBuildsItsCredential(t *testing.T) {
 // with the method and the database, so the credential's own error names neither, and the one a
 // reader sees names each once.
 func TestCredentialErrorsLeaveTheDatasourceToTheEngine(t *testing.T) {
-	_, err := newCredential(request(sqlserver.AuthMethodInteractive, azureHost, dsconfig.Auth{TenantID: "not a tenant!"}))
+	_, err := newCredential(request(sqlserver.AuthMethodInteractive, azureHost, dsconfig.Auth{TenantID: "not a tenant!"}), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid tenantID")
 	assert.NotContains(t, err.Error(), "auth.method")
@@ -242,13 +242,13 @@ func TestTheTargetIsTheEnginesOrHostAndDatabase(t *testing.T) {
 func TestServicePrincipalSecretCredential(t *testing.T) {
 	cred, err := newCredential(request(sqlserver.AuthMethodServicePrincipal, azureHost, dsconfig.Auth{
 		TenantID: standInTenant, ClientID: standInClient, ClientSecret: standInSecret,
-	}))
+	}), nil)
 	require.NoError(t, err)
 	assert.IsType(t, (*azidentity.ClientSecretCredential)(nil), cred)
 
 	_, err = newCredential(request(sqlserver.AuthMethodServicePrincipal, azureHost, dsconfig.Auth{
 		ClientID: standInClient, ClientSecret: standInSecret,
-	}))
+	}), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "needs auth.tenant_id and auth.client_id")
 	assert.NotContains(t, err.Error(), standInSecret)
@@ -270,7 +270,7 @@ func TestServicePrincipalCertificateFromPEMAndPKCS12(t *testing.T) {
 			auth.TenantID, auth.ClientID = standInTenant, standInClient
 			req := request(sqlserver.AuthMethodServicePrincipal, usGovHost, auth)
 
-			cred, err := newCredential(req)
+			cred, err := newCredential(req, nil)
 			require.NoError(t, err)
 			assert.IsType(t, (*azidentity.ClientCertificateCredential)(nil), cred)
 
@@ -341,7 +341,7 @@ func TestCertificateErrorsNameThePathNotTheContent(t *testing.T) {
 			path := writeFile(t, "sp.pem", tc.data)
 			_, err := newCredential(request(sqlserver.AuthMethodServicePrincipal, azureHost, dsconfig.Auth{
 				TenantID: standInTenant, ClientID: standInClient, CertificatePath: path, CertificatePassword: tc.password,
-			}))
+			}), nil)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.want)
 			assert.Contains(t, err.Error(), path, "the error names the file")
@@ -356,7 +356,7 @@ func TestCertificateErrorsNameThePathNotTheContent(t *testing.T) {
 	missing := t.TempDir() + "/missing.pem"
 	_, err = newCredential(request(sqlserver.AuthMethodServicePrincipal, azureHost, dsconfig.Auth{
 		TenantID: standInTenant, ClientID: standInClient, CertificatePath: missing,
-	}))
+	}), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `cannot read auth.certificate_path "`+missing+`": no such file or directory`)
 }

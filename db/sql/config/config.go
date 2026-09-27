@@ -171,11 +171,13 @@ type DataSource struct {
 // Auth is the `auth` block of a datasource: which sign-in method to use and the settings
 // that method takes.
 //
-// Every field is a plain value, parsed strictly like the rest of DataSource, and none of
+// Every field is a plain value, parsed strictly like the rest of DataSource, and only one of
 // them is interpreted here. Which fields a method requires, allows or refuses is the
 // engine's rule to apply — a service principal needs a tenant and a client, an interactive
 // sign-in refuses a client secret — because only the engine knows the methods it offers.
-// Parse only guarantees that every key is one of ours and every value has the right type.
+// Parse only guarantees that every key is one of ours and every value has the right type. The
+// exception is TokenCache, whose values are this package's own, and which Validate refuses to
+// be anything but one of them.
 type Auth struct {
 	// Method names the sign-in method, lowercased and trimmed when parsed so that a value
 	// written as "Service_Principal " still selects one. Empty means "sql".
@@ -224,7 +226,25 @@ type Auth struct {
 	// LoginTimeout bounds one sign-in, configured in seconds. Zero leaves the engine's
 	// default in place; a negative value is refused.
 	LoginTimeout time.Duration
+
+	// TokenCache says where a person's sign-in keeps its tokens: TokenCacheMemory, which an
+	// empty value means, for the life of the process, or TokenCachePersistent, in the
+	// operating system's credential store, so that the next process can start without asking
+	// the person again. Lowercased and trimmed when parsed, like Method; any other value is
+	// refused by Validate.
+	TokenCache string
+
+	// AuthenticationRecordPath is the file a persistent token cache keeps its authentication
+	// record in: which account the cached tokens belong to, and no token. Empty leaves the
+	// choice to the engine.
+	AuthenticationRecordPath string
 }
+
+// The values of auth.token_cache.
+const (
+	TokenCacheMemory     = "memory"
+	TokenCachePersistent = "persistent"
+)
 
 // IsZero reports whether a is the zero value, which is what an absent `auth` block parses
 // to.
@@ -251,6 +271,12 @@ func (c *DataSource) Validate() error {
 	// hand, which never went through Parse.
 	if c.Auth.LoginTimeout < 0 {
 		return fmt.Errorf("datasource config: 'auth.login_timeout' must not be negative, got %s", c.Auth.LoginTimeout)
+	}
+	switch c.Auth.TokenCache {
+	case "", TokenCacheMemory, TokenCachePersistent:
+	default:
+		return fmt.Errorf("datasource config: 'auth.token_cache' must be %s or %s, got %q",
+			TokenCacheMemory, TokenCachePersistent, c.Auth.TokenCache)
 	}
 	return nil
 }
@@ -419,6 +445,7 @@ var knownAuthKeys = map[string]bool{
 	"certificate_path": true, "certificate_password": true, "send_certificate_chain": true,
 	"resource_id": true, "object_id": true, "token_file_path": true,
 	"redirect_url": true, "scope": true, "login_timeout": true,
+	"token_cache": true, "authentication_record_path": true,
 }
 
 // topLevelUsername and topLevelPassword are the suggestions for a login name or password
@@ -470,6 +497,15 @@ var authKeyAliases = map[string]string{
 	"user_id":             topLevelUsername,
 	"username":            topLevelUsername,
 	"password":            topLevelPassword,
+
+	"cache":                 "token_cache",
+	"cache_mode":            "token_cache",
+	"persistent_cache":      "token_cache",
+	"record":                "authentication_record_path",
+	"record_path":           "authentication_record_path",
+	"auth_record":           "authentication_record_path",
+	"auth_record_path":      "authentication_record_path",
+	"authentication_record": "authentication_record_path",
 }
 
 // parseAuth decodes the optional `auth` block, as strictly as parsePool decodes
@@ -532,11 +568,17 @@ func parseAuth(raw map[string]any) (Auth, error) {
 		{"token_file_path", &auth.TokenFilePath},
 		{"redirect_url", &auth.RedirectURL},
 		{"scope", &auth.Scope},
+		{"token_cache", &auth.TokenCache},
+		{"authentication_record_path", &auth.AuthenticationRecordPath},
 	} {
 		if *field.target, err = optStringUnder(fields, "auth", field.key); err != nil {
 			return auth, err
 		}
 	}
+
+	// Folded like the method, and for the same reason; Validate refuses what is left that is
+	// neither value.
+	auth.TokenCache = strings.ToLower(strings.TrimSpace(auth.TokenCache))
 
 	if auth.ClientSecret, err = optSecretString(fields, "auth", "client_secret"); err != nil {
 		return auth, err
@@ -689,6 +731,7 @@ var keyAliases = map[string]string{
 	"tenant_id":             "auth.tenant_id",
 	"client_id":             "auth.client_id",
 	"client_secret":         "auth.client_secret",
+	"token_cache":           "auth.token_cache",
 
 	"applicationintent":  "read_only",
 	"application_intent": "read_only",

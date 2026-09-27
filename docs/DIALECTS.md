@@ -24,6 +24,7 @@ db/sql/driver      driver-name -> constructor registry
 db/sql/driver/builtin     registers postgres_gorm and mysql_gorm
 db/sql/driver/sqlserver   registers sqlserver_gorm; not part of builtin
 db/sql/driver/sqlserver/azuread  registers the Entra ID sign-in methods, and the driver
+db/sql/driver/sqlserver/azuread/persistentcache  the keychain token cache (development)
 db/sql/gorm/guard         gorm callbacks enforcing read_only and external_schema
 db/sql/gorm/postgres/v2   PostgresDialect + Postgres datasource
 db/sql/gorm/mysql/v2      MySQLDialect + MySQL datasource

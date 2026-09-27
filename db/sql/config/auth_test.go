@@ -161,6 +161,16 @@ func TestAnUnknownAuthKeyIsRefusedWithASuggestion(t *testing.T) {
 		"authentication":      "'method'",
 		"tenant_di":           "'tenant_id'", // a typo, caught by distance
 		"scop":                "'scope'",
+
+		"cache":                 "'token_cache'",
+		"cache_mode":            "'token_cache'",
+		"persistent_cache":      "'token_cache'",
+		"tokencache":            "'token_cache'",
+		"record":                "'authentication_record_path'",
+		"record_path":           "'authentication_record_path'",
+		"auth_record":           "'authentication_record_path'",
+		"auth_record_path":      "'authentication_record_path'",
+		"authentication_record": "'authentication_record_path'",
 	}
 
 	for written, want := range tests {
@@ -328,4 +338,50 @@ func TestValidateRejectsNegativeLoginTimeout(t *testing.T) {
 
 	cfg.Auth.LoginTimeout = 0
 	assert.NoError(t, cfg.Validate(), "zero leaves the engine's default in place")
+}
+
+// TestTheTokenCacheKeysAreParsed: token_cache is folded like the method, since it is matched like
+// one, and the record path is the operator's exact text.
+func TestTheTokenCacheKeysAreParsed(t *testing.T) {
+	for _, written := range []string{"persistent", "Persistent", " PERSISTENT\t"} {
+		cfg, err := config.Parse(withAuth(map[string]any{
+			"method":                     "interactive",
+			"token_cache":                written,
+			"authentication_record_path": "/home/Example/.cache/Record.json",
+		}))
+		require.NoErrorf(t, err, "%q", written)
+		assert.Equal(t, config.TokenCachePersistent, cfg.Auth.TokenCache)
+		assert.Equal(t, "/home/Example/.cache/Record.json", cfg.Auth.AuthenticationRecordPath)
+		require.NoError(t, cfg.Validate())
+	}
+
+	cfg, err := config.Parse(withAuth(map[string]any{"token_cache": "memory"}))
+	require.NoError(t, err)
+	assert.Equal(t, config.TokenCacheMemory, cfg.Auth.TokenCache)
+	assert.False(t, cfg.Auth.IsZero(), "a cache the operator chose is a value, which Postgres and MySQL refuse")
+	assert.False(t, config.Auth{AuthenticationRecordPath: "/r.json"}.IsZero())
+}
+
+// TestValidateRefusesAnUnknownTokenCache, whether it came through Parse or was built by hand.
+func TestValidateRefusesAnUnknownTokenCache(t *testing.T) {
+	cfg, err := config.Parse(withAuth(map[string]any{"method": "interactive", "token_cache": "keychain"}))
+	require.NoError(t, err, "Parse checks the type; the value is Validate's")
+	err = cfg.Validate()
+	require.Error(t, err)
+	assert.Equal(t, `datasource config: 'auth.token_cache' must be memory or persistent, got "keychain"`, err.Error())
+
+	built := config.DataSource{Host: "h", Database: "d", Auth: config.Auth{TokenCache: "Persistent"}}
+	require.Error(t, built.Validate(), "a DataSource built by hand is not folded")
+	for _, value := range []string{"", config.TokenCacheMemory, config.TokenCachePersistent} {
+		built.Auth.TokenCache = value
+		assert.NoErrorf(t, built.Validate(), "%q", value)
+	}
+}
+
+func TestATopLevelTokenCachePointsIntoAuth(t *testing.T) {
+	raw := validRaw()
+	raw["token_cache"] = "persistent"
+	_, err := config.Parse(raw)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "did you mean 'auth.token_cache' instead of 'token_cache'?")
 }

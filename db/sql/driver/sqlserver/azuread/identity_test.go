@@ -138,7 +138,7 @@ func TestManagedIdentityIDSelection(t *testing.T) {
 			if tc.want != nil {
 				skipUserAssignedOnAzureArc(t)
 			}
-			cred, err := newCredential(req)
+			cred, err := newCredential(req, nil)
 			require.NoError(t, err)
 			assert.IsType(t, (*azidentity.ManagedIdentityCredential)(nil), cred)
 		})
@@ -147,7 +147,7 @@ func TestManagedIdentityIDSelection(t *testing.T) {
 	// The engine lets one through at most; a request built without it and carrying two is
 	// refused rather than left to whichever azidentity would pick, without repeating either.
 	_, err := newCredential(request(sqlserver.AuthMethodManagedIdentity, azureHost,
-		dsconfig.Auth{ClientID: standInClient, ObjectID: standInObject}))
+		dsconfig.Auth{ClientID: standInClient, ObjectID: standInObject}), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "a managed identity is selected by at most one of auth.client_id, "+
 		"auth.resource_id and auth.object_id")
@@ -178,12 +178,12 @@ func TestAPlatformThatCannotSelectTheIdentityRefusesAtBoot(t *testing.T) {
 	withoutIdentityEnvironment(t)
 	t.Setenv("MSI_ENDPOINT", "http://localhost:50342/oauth2/token")
 
-	_, err := newCredential(request(sqlserver.AuthMethodManagedIdentity, azureHost, dsconfig.Auth{ClientID: standInClient}))
+	_, err := newCredential(request(sqlserver.AuthMethodManagedIdentity, azureHost, dsconfig.Auth{ClientID: standInClient}), nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "Cloud Shell doesn't support user-assigned managed identities")
 	assert.NotContains(t, err.Error(), standInClient)
 
-	cred, err := newCredential(request(sqlserver.AuthMethodManagedIdentity, azureHost, dsconfig.Auth{}))
+	cred, err := newCredential(request(sqlserver.AuthMethodManagedIdentity, azureHost, dsconfig.Auth{}), nil)
 	require.NoError(t, err, "with no ID, its default identity is still there")
 	assert.IsType(t, (*azidentity.ManagedIdentityCredential)(nil), cred)
 }
@@ -227,7 +227,7 @@ func TestWorkloadIdentityOptions(t *testing.T) {
 	// the host's cloud naming one is what keeps the webhook's value out.
 	assert.NotEmpty(t, workloadIdentityOptions(full, client).Cloud.ActiveDirectoryAuthorityHost)
 
-	cred, err := newCredential(full)
+	cred, err := newCredential(full, nil)
 	require.NoError(t, err, "the token file is read on the first token request, not here")
 	assert.IsType(t, (*azidentity.WorkloadIdentityCredential)(nil), cred)
 
@@ -242,7 +242,7 @@ func TestWorkloadIdentityOptions(t *testing.T) {
 		t.Setenv("AZURE_CLIENT_ID", standInClient)
 		t.Setenv("AZURE_TENANT_ID", standInTenant)
 		t.Setenv("AZURE_FEDERATED_TOKEN_FILE", standInTokenFile)
-		cred, err := newCredential(bare)
+		cred, err := newCredential(bare, nil)
 		require.NoError(t, err)
 		assert.IsType(t, (*azidentity.WorkloadIdentityCredential)(nil), cred)
 	})
@@ -264,7 +264,7 @@ func TestWorkloadIdentityOptions(t *testing.T) {
 			t.Setenv("AZURE_FEDERATED_TOKEN_FILE", standInTokenFile)
 			t.Setenv(tc.env, "")
 
-			_, err := newCredential(bare)
+			_, err := newCredential(bare, nil)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), tc.want)
 			for _, value := range []string{standInClient, standInTenant, standInTokenFile} {
@@ -281,7 +281,7 @@ func TestWorkloadIdentityOptions(t *testing.T) {
 			case "token_file_path":
 				filled.Auth.TokenFilePath = standInTokenFile
 			}
-			_, err = newCredential(filled)
+			_, err = newCredential(filled, nil)
 			require.NoError(t, err)
 		})
 	}
@@ -299,7 +299,7 @@ func TestManagedAndWorkloadIdentityRenewWithoutAPerson(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			c := newClock()
 			req := request(method, azureHost, dsconfig.Auth{})
-			_, err := newTokenSource(silentCredential{&fakeCredential{clock: c}}, req, req.Scope)
+			_, err := newTokenSource(silentCredential{&fakeCredential{clock: c}}, req, req.Scope, nil)
 			require.NoError(t, err, "no Authenticate needed")
 
 			cred := &fakeCredential{clock: c}
@@ -331,8 +331,8 @@ func TestTheConstructorBuildsTheCredentialAndSignsInNowhere(t *testing.T) {
 	withoutIdentityEnvironment(t)
 	var built []*countingCredential
 	saved := credentialFor
-	credentialFor = func(req sqlserver.AuthRequest) (azcore.TokenCredential, error) {
-		cred, err := newCredential(req)
+	credentialFor = func(req sqlserver.AuthRequest, remembered *rememberedSignIn) (azcore.TokenCredential, error) {
+		cred, err := newCredential(req, remembered)
 		if err != nil {
 			return nil, err
 		}

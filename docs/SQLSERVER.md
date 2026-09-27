@@ -25,7 +25,8 @@ import (
 ```
 
 Without the `azuread` import, an Entra ID `auth.method` fails the boot, and the error quotes the
-import line.
+import line. A third package, `azuread/persistentcache`, keeps a person's sign-in across restarts
+on a development machine (see "Remembering the sign-in across restarts").
 
 ## Configuration
 
@@ -138,8 +139,8 @@ minutes, and every connection after 30.
 | Method | Signs in as | Required | Optional | Where |
 |---|---|---|---|---|
 | `sql` (or no `auth`) | a SQL login | `username`, `password` | | anywhere |
-| `interactive` | a person, in the system browser | | `tenant_id`, `client_id`, `redirect_url`; `username` is the suggested account | development |
-| `device_code` | a person, with a code the process prints | | `tenant_id`, `client_id` | development |
+| `interactive` | a person, in the system browser | | `tenant_id`, `client_id`, `redirect_url`, `token_cache`, `authentication_record_path`; `username` is the suggested account | development |
+| `device_code` | a person, with a code the process prints | | `tenant_id`, `client_id`, `token_cache`, `authentication_record_path` | development |
 | `azure_cli` | the account `az login` chose | | `tenant_id` | development |
 | `azure_default` | whatever azidentity's DefaultAzureCredential finds | | `tenant_id`, for some of the credentials it tries (see "Deployed apps") | deployed |
 | `service_principal` | an app registration | `tenant_id`, `client_id`, and `client_secret` or `certificate_path` | `certificate_password`, `send_certificate_chain` | deployed |
@@ -171,7 +172,11 @@ signs in through Microsoft's development application, which is fine on a develop
 **One sign-in per datasource.** Each datasource has one credential and one token cache, and
 shares neither with another datasource. A managed identity's tokens are also cached by MSAL, in
 one cache for the whole process, so datasources that sign in as the same managed identity with
-the same scope may be handed the same token. Every connection signs in with the same token:
+the same scope may be handed the same token. With `token_cache: persistent` (see below), every
+datasource of every gorgany app on the machine keeps its tokens in one store of the operating
+system's credential store, so datasources that sign in as the same account, with the same
+application and scope, may be handed the same token too. Every connection signs in with the same
+token:
 
 - From the token's `RefreshOn` time, which MSAL sets to half the life of a long-lived token such
   as a managed identity's, the token is renewed in the background while connections keep using
@@ -191,6 +196,70 @@ not be renewed silently", which names the likely causes, and the next connection
 never opens another prompt. If the error persists, restart the process to sign in again, or use
 `azure_cli`. A sign-in that failed has signed nobody in, so the next connection asks again.
 `azure_cli` never prompts.
+
+### Remembering the sign-in across restarts (development)
+
+By default, `interactive` and `device_code` keep their tokens in memory, so every start of the
+process asks the person again. `token_cache: persistent` keeps them in the operating system's
+credential store instead, and the next start signs in without asking:
+
+```yaml
+    auth:
+      method: interactive
+      token_cache: persistent          # memory (the default) | persistent
+```
+
+The store links the keychain, which an app that does not use it should not have to link, so it
+comes from a package of its own. Import it next to the `azuread` import:
+
+```go
+    _ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver/azuread/persistentcache"
+```
+
+Without it, `token_cache: persistent` fails the boot, and the error quotes the import line.
+
+- **macOS:** the login keychain, which needs cgo: a C compiler (the Xcode command-line tools)
+  and `CGO_ENABLED=1`, the default where one is installed. macOS may ask to let the binary use
+  the keychain item, and ask again after it is rebuilt.
+- **Linux:** a file under `$XDG_CACHE_HOME` (or `~/.cache`), encrypted with a key in the
+  kernel's user keyring. No cgo is needed, but a container's default seccomp profile blocks the
+  keyring, and the key is lost at reboot, after which the person signs in once more.
+- **Windows:** a file under `%LOCALAPPDATA%`, encrypted with DPAPI for the signed-in user.
+
+Built for macOS without cgo, or for another system, the package still compiles, and
+`token_cache: persistent` fails the boot with the reason.
+
+The first start asks the person, as without the cache, and writes an authentication record: a
+small JSON file that says which account the cached tokens belong to. It holds no token and no
+secret, only the authority, tenant, application, account ID and username; the tokens stay in
+the credential store. The file is written readable by its owner only, and replaced whole, never
+rewritten in place. By default it goes under the user's cache directory (`~/Library/Caches` on
+macOS), as `gorgany/azuread/<hash>.json`, with a hash of the host, database, username,
+`client_id` and `tenant_id`; a directory it has to create for it is its owner's alone. Set
+`authentication_record_path` to put it somewhere else; it is refused without
+`token_cache: persistent`, which is the only cache that reads it. A directory that already exists
+is left as it is, so put the file in one only you can write: the record decides which of your
+cached accounts signs in, and a record another user owns, or others can write, is ignored with a
+warning, and the person is asked again.
+
+A record for another account than `username` names is ignored, and the person is asked again, so
+the datasource never signs in silently as someone the config does not name. The application and
+the tenant are compared only where the config names them as IDs: `client_id` when it is set, and
+`tenant_id` when it is a tenant ID rather than a domain name or `organizations`. `username` is only
+the account the sign-in page suggests, and `device_code` does not read it, so the person may sign
+in as another account, or under a sign-in name other than the alias configured. That sign-in is
+not remembered, a warning says so, and the next start asks again; set `username` to the account's
+sign-in name, or remove it.
+
+With a record, a start first signs in silently from the cache, bounded like a renewal: by
+`login_timeout` or 60 seconds, whichever is shorter. If the cache cannot answer, because the
+refresh token expired or was revoked, the start asks the person once, as without the cache, within
+what is left of `login_timeout`. If the silent sign-in runs out of time, or the datasource is
+closed first, nobody is asked, and the error says the sign-in could not be resumed. If the record
+cannot be written, the sign-in still stands, a warning says so, and the next start asks again.
+
+This is for development machines only. The production image is built with `CGO_ENABLED=0` for
+`scratch`, which has no credential store and no person to ask.
 
 ### Sovereign clouds
 

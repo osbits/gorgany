@@ -32,10 +32,13 @@ import (
 // endpoint, which issues tokens in the resource's own cloud, and only the scope it asks for
 // follows the host.
 //
+// remembered is the persistent cache and the record of the last sign-in that interactive and
+// device_code are built with under auth.token_cache: persistent, and nil otherwise.
+//
 // Its errors say what is wrong and not which datasource it is: the engine wraps them with the
 // method and the database (see sqlserver.Authenticator), and a second prefix would name both
 // twice. No error repeats a secret, a certificate's content or a token.
-func newCredential(req sqlserver.AuthRequest) (azcore.TokenCredential, error) {
+func newCredential(req sqlserver.AuthRequest, remembered *rememberedSignIn) (azcore.TokenCredential, error) {
 	client, err := clientOptions(req)
 	if err != nil {
 		return nil, err
@@ -44,9 +47,9 @@ func newCredential(req sqlserver.AuthRequest) (azcore.TokenCredential, error) {
 	var cred azcore.TokenCredential
 	switch req.Method {
 	case sqlserver.AuthMethodInteractive:
-		cred, err = credential(azidentity.NewInteractiveBrowserCredential(interactiveOptions(req, client)))
+		cred, err = credential(azidentity.NewInteractiveBrowserCredential(interactiveOptions(req, client, remembered)))
 	case sqlserver.AuthMethodDeviceCode:
-		cred, err = credential(azidentity.NewDeviceCodeCredential(deviceCodeOptions(req, client)))
+		cred, err = credential(azidentity.NewDeviceCodeCredential(deviceCodeOptions(req, client, remembered)))
 	case sqlserver.AuthMethodAzureCLI:
 		cred, err = credential(azidentity.NewAzureCLICredential(azureCLIOptions(req)))
 	case sqlserver.AuthMethodAzureDefault:
@@ -122,8 +125,12 @@ func cloudConfig(req sqlserver.AuthRequest) (cloud.Configuration, error) {
 // tenant or client is left empty, and azidentity then signs in to the "organizations" tenant
 // through Microsoft's development application. A guest account needs tenant_id, and a
 // production app registration its own client_id and the redirect_url registered with it.
-func interactiveOptions(req sqlserver.AuthRequest, client azcore.ClientOptions) *azidentity.InteractiveBrowserCredentialOptions {
-	return &azidentity.InteractiveBrowserCredentialOptions{
+//
+// With a remembered sign-in, the credential keeps its tokens in the persistent cache and starts
+// from the record of the last sign-in, when there is one, so that its GetToken can answer from
+// what an earlier process left there without asking anyone.
+func interactiveOptions(req sqlserver.AuthRequest, client azcore.ClientOptions, remembered *rememberedSignIn) *azidentity.InteractiveBrowserCredentialOptions {
+	opts := &azidentity.InteractiveBrowserCredentialOptions{
 		ClientOptions:                  client,
 		TenantID:                       req.Auth.TenantID,
 		ClientID:                       req.Auth.ClientID,
@@ -131,17 +138,26 @@ func interactiveOptions(req sqlserver.AuthRequest, client azcore.ClientOptions) 
 		RedirectURL:                    req.Auth.RedirectURL,
 		DisableAutomaticAuthentication: true,
 	}
+	if remembered != nil {
+		opts.Cache, opts.AuthenticationRecord = remembered.cache, remembered.record
+	}
+	return opts
 }
 
 // deviceCodeOptions sign a person in on another device, with a code the credential prints to
-// standard output. DisableAutomaticAuthentication keeps it to one code, as for interactive.
-func deviceCodeOptions(req sqlserver.AuthRequest, client azcore.ClientOptions) *azidentity.DeviceCodeCredentialOptions {
-	return &azidentity.DeviceCodeCredentialOptions{
+// standard output. DisableAutomaticAuthentication keeps it to one code, as for interactive, and a
+// remembered sign-in is applied as it is there.
+func deviceCodeOptions(req sqlserver.AuthRequest, client azcore.ClientOptions, remembered *rememberedSignIn) *azidentity.DeviceCodeCredentialOptions {
+	opts := &azidentity.DeviceCodeCredentialOptions{
 		ClientOptions:                  client,
 		TenantID:                       req.Auth.TenantID,
 		ClientID:                       req.Auth.ClientID,
 		DisableAutomaticAuthentication: true,
 	}
+	if remembered != nil {
+		opts.Cache, opts.AuthenticationRecord = remembered.cache, remembered.record
+	}
+	return opts
 }
 
 // azureCLIOptions ask `az account get-access-token` for the account `az login` chose, in

@@ -79,11 +79,17 @@ type cachingTokenSource struct {
 	// interactive is set for interactive and device_code: the first acquisition asks the person
 	// with Authenticate, and no later one may.
 	interactive bool
+	// remembered is how an interactive method's sign-in outlives the process, and nil unless
+	// auth.token_cache is persistent. With the record of an earlier sign-in, the first
+	// acquisition asks the persistent cache before the person; a sign-in writes the record the
+	// next process starts from.
+	remembered *rememberedSignIn
 	// loginTimeout bounds an acquisition that may take a person or a tool: every acquisition of
-	// the other methods, and an interactive method's sign-in.
+	// the other methods, and an interactive method's sign-in, its resume from the persistent cache
+	// included.
 	loginTimeout time.Duration
-	// renewTimeout bounds an interactive method's renewals after its sign-in, which ask Entra ID
-	// and no one else.
+	// renewTimeout bounds what of an interactive method asks Entra ID and no one else: its
+	// renewals after the sign-in, and, within the sign-in, its resume from the persistent cache.
 	renewTimeout time.Duration
 
 	// root is the datasource's lifetime, which its Close ends.
@@ -107,9 +113,10 @@ type acquisition struct {
 	err  error
 }
 
-// newTokenSource wraps cred as the token source of the datasource req describes.
-func newTokenSource(cred azcore.TokenCredential, req sqlserver.AuthRequest, scope string) (*cachingTokenSource, error) {
-	interactive := req.Method == sqlserver.AuthMethodInteractive || req.Method == sqlserver.AuthMethodDeviceCode
+// newTokenSource wraps cred as the token source of the datasource req describes, remembering its
+// sign-in in remembered when that is not nil.
+func newTokenSource(cred azcore.TokenCredential, req sqlserver.AuthRequest, scope string, remembered *rememberedSignIn) (*cachingTokenSource, error) {
+	interactive := asksAPerson(req.Method)
 	if _, canSignIn := cred.(signInCredential); interactive && !canSignIn {
 		return nil, fmt.Errorf("azuread: the %s credential for %s cannot ask for a sign-in", req.Method, target(req))
 	}
@@ -137,11 +144,18 @@ func newTokenSource(cred azcore.TokenCredential, req sqlserver.AuthRequest, scop
 		scope:        scope,
 		target:       target(req),
 		interactive:  interactive,
+		remembered:   remembered,
 		loginTimeout: loginTimeout,
 		renewTimeout: min(loginTimeout, sqlserver.DefaultLoginTimeout),
 		root:         root,
 		now:          time.Now,
 	}, nil
+}
+
+// asksAPerson reports whether method signs a person in, which interactive and device_code do,
+// and every other method this package registers does not.
+func asksAPerson(method string) bool {
+	return method == sqlserver.AuthMethodInteractive || method == sqlserver.AuthMethodDeviceCode
 }
 
 // target names req's database as the engine's errors do: host:port/db, or host\instance/db,
@@ -201,8 +215,8 @@ func (s *cachingTokenSource) Token(ctx context.Context) (string, error) {
 	}
 }
 
-// startLocked starts an acquisition, asking the person first when an interactive method has not
-// signed in yet, and makes it the one in flight. s.mu must be held.
+// startLocked starts an acquisition, signing the person in first when an interactive method has
+// not signed in yet, and makes it the one in flight. s.mu must be held.
 func (s *cachingTokenSource) startLocked() *acquisition {
 	a := &acquisition{done: make(chan struct{})}
 	s.inflight = a
@@ -236,8 +250,8 @@ func usable(tok azcore.AccessToken, now time.Time, margin time.Duration) bool {
 	return tok.Token != "" && now.Before(tok.ExpiresOn.Add(-margin))
 }
 
-// acquire runs a, asking the person first when signIn is set, and publishes the result to its
-// waiters and, when it is a token, to the cache.
+// acquire runs a, signing the person in first when signIn is set (see signIn), and publishes the
+// result to its waiters and, when it is a token, to the cache.
 func (s *cachingTokenSource) acquire(a *acquisition, signIn bool) {
 	timeout := s.loginTimeout
 	if s.interactive && !signIn {
@@ -246,22 +260,15 @@ func (s *cachingTokenSource) acquire(a *acquisition, signIn bool) {
 	ctx, cancel := context.WithTimeout(s.root, timeout)
 	defer cancel()
 
-	signedIn := false
-	tok, err := func() (azcore.AccessToken, error) {
-		if signIn {
-			opts := s.opts
-			if _, err := s.cred.(signInCredential).Authenticate(ctx, &opts); err != nil {
-				return azcore.AccessToken{}, err
-			}
-			signedIn = true
-		}
-		return s.cred.GetToken(ctx, s.opts)
-	}()
-	if err == nil && tok.Token == "" {
-		err = errors.New("the credential returned an empty token")
-	}
-	if err != nil {
-		tok, err = azcore.AccessToken{}, s.failure(ctx, err, signIn && !signedIn, timeout)
+	var (
+		tok      azcore.AccessToken
+		err      error
+		signedIn bool
+	)
+	if signIn {
+		tok, signedIn, err = s.signIn(ctx, timeout)
+	} else {
+		tok, err = s.request(ctx, timeout)
 	}
 
 	s.mu.Lock()
@@ -286,8 +293,104 @@ func (s *cachingTokenSource) acquire(a *acquisition, signIn bool) {
 	close(a.done)
 }
 
-// failure explains an acquisition that failed with err. signingIn says it failed while the person
-// was being asked; timeout is what bounded it.
+// request asks the credential for a token under ctx, which timeout bounds: every acquisition of a
+// method that asks no person, and an interactive method's renewals.
+func (s *cachingTokenSource) request(ctx context.Context, timeout time.Duration) (azcore.AccessToken, error) {
+	tok, err := s.cred.GetToken(ctx, s.opts)
+	if err = checked(tok, err); err != nil {
+		return azcore.AccessToken{}, s.failure(ctx, err, requesting, timeout)
+	}
+	return tok, nil
+}
+
+// signIn signs the person in under ctx, which timeout bounds, and returns the first token. It
+// reports whether anyone is signed in, which stays set when only that token failed.
+//
+// Signing in means asking the person with Authenticate, unless the sign-in an earlier process
+// remembered still answers without them (see resume). A resume cut short by a Close or by its own
+// timeout asks nobody: once the silent request has found the authority, MSAL opens the browser
+// before it looks at the context again, so a prompt after it would ask the person for a sign-in
+// already abandoned. A sign-in the person completes writes its record for the next process.
+func (s *cachingTokenSource) signIn(ctx context.Context, timeout time.Duration) (azcore.AccessToken, bool, error) {
+	if s.remembered.hasRecord() {
+		tok, resumed, err := s.resume(ctx, timeout)
+		switch {
+		case err != nil:
+			return azcore.AccessToken{}, false, err
+		case resumed:
+			return tok, true, nil
+		}
+	}
+
+	if err := ctx.Err(); err != nil {
+		// Closed, or out of time, before the prompt: none opens.
+		return azcore.AccessToken{}, false, s.failure(ctx, err, prompting, timeout)
+	}
+	opts := s.opts
+	record, err := s.cred.(signInCredential).Authenticate(ctx, &opts)
+	if err != nil {
+		return azcore.AccessToken{}, false, s.failure(ctx, err, prompting, timeout)
+	}
+	if s.remembered != nil {
+		s.remembered.save(record, s.target)
+	}
+	tok, err := s.cred.GetToken(ctx, s.opts)
+	if err = checked(tok, err); err != nil {
+		return azcore.AccessToken{}, true, s.failure(ctx, err, requesting, timeout)
+	}
+	return tok, true, nil
+}
+
+// resume signs in without the person, from the persistent cache, with the record of an earlier
+// process's sign-in. resumed is false when the cache cannot answer: its refresh token expired or
+// was revoked, a Conditional Access policy requires a new sign-in, or the credential store lost
+// it. The caller then asks the person, as it would without a persistent cache, and that one prompt
+// is still the process's only one.
+//
+// It is bounded like a renewal, by renewTimeout within what is left of ctx, since it too asks
+// Entra ID and no one else, so a slow one leaves the person most of the sign-in's time. err is set
+// when a Close or that bound cut it short, and says so; the caller then asks nobody.
+//
+// Why the cache could not answer is not kept: with DisableAutomaticAuthentication, azidentity
+// reports every silent failure as an AuthenticationRequiredError, whatever its cause, and the
+// sign-in that follows either works or says what is wrong.
+func (s *cachingTokenSource) resume(ctx context.Context, timeout time.Duration) (tok azcore.AccessToken, resumed bool, err error) {
+	ctx, cancel := context.WithTimeout(ctx, s.renewTimeout)
+	defer cancel()
+	tok, err = s.cred.GetToken(ctx, s.opts)
+	switch {
+	case err == nil && tok.Token != "":
+		return tok, true, nil
+	case ctx.Err() != nil:
+		return azcore.AccessToken{}, false, s.failure(ctx, ctx.Err(), resuming, min(s.renewTimeout, timeout))
+	}
+	return azcore.AccessToken{}, false, nil
+}
+
+// checked is err, or an error for a token that is empty.
+func checked(tok azcore.AccessToken, err error) error {
+	if err == nil && tok.Token == "" {
+		return errors.New("the credential returned an empty token")
+	}
+	return err
+}
+
+// stage is what an acquisition was doing when it failed, which its error says.
+type stage int
+
+const (
+	// requesting is asking the credential for a token without the person: every acquisition of
+	// a method that asks no person, an interactive method's renewals, and its token right after
+	// the sign-in.
+	requesting stage = iota
+	// resuming is signing an interactive method in from the persistent cache, before anyone is
+	// asked (see resume).
+	resuming
+	// prompting is asking the person.
+	prompting
+)
+
+// failure explains an acquisition that failed with err at stage at; timeout is what bounded it.
 //
 // What ended the acquisition is asked first: a Close, then its own timeout. Only then does the
 // error's kind count, because azidentity reports every failed silent renewal of an interactive
@@ -298,17 +401,28 @@ func (s *cachingTokenSource) acquire(a *acquisition, signIn bool) {
 // opens by itself in the middle of a query.
 //
 // The errors name the method, the scope and the database, and never the token.
-func (s *cachingTokenSource) failure(ctx context.Context, err error, signingIn bool, timeout time.Duration) error {
+func (s *cachingTokenSource) failure(ctx context.Context, err error, at stage, timeout time.Duration) error {
 	var required *azidentity.AuthenticationRequiredError
 	switch {
+	case s.root.Err() != nil && at == resuming:
+		return fmt.Errorf("azuread: resuming the %s sign-in for %s from the persistent token cache was "+
+			"abandoned, and nobody was asked: the datasource was closed: %w", s.method, s.target, err)
 	case s.root.Err() != nil:
 		what := "token request"
-		if signingIn {
+		if at == prompting {
 			what = "sign-in"
 		}
 		return fmt.Errorf("azuread: the %s %s for %s was abandoned: the datasource was closed: %w",
 			s.method, what, s.target, err)
-	case errors.Is(ctx.Err(), context.DeadlineExceeded) && signingIn:
+	case errors.Is(ctx.Err(), context.DeadlineExceeded) && at == resuming:
+		msg := fmt.Sprintf("azuread: the %s sign-in for %s could not be resumed from the persistent token "+
+			"cache within %s, so nobody was asked; Entra ID may be unreachable, and the next connection "+
+			"tries again", s.method, s.target, timeout)
+		if timeout == s.loginTimeout {
+			msg += "; raise auth.login_timeout if it needs longer"
+		}
+		return fmt.Errorf("%s: %w", msg, err)
+	case errors.Is(ctx.Err(), context.DeadlineExceeded) && at == prompting:
 		return fmt.Errorf("azuread: the %s sign-in for %s did not finish within %s; finish it sooner, "+
 			"or raise auth.login_timeout: %w", s.method, s.target, timeout, err)
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
@@ -320,7 +434,7 @@ func (s *cachingTokenSource) failure(ctx context.Context, err error, signingIn b
 			msg += "; raise auth.login_timeout if it needs longer"
 		}
 		return fmt.Errorf("%s: %w", msg, err)
-	case s.interactive && !signingIn && errors.As(err, &required):
+	case s.interactive && at == requesting && errors.As(err, &required):
 		return fmt.Errorf("azuread: the %s sign-in for %s could not be renewed silently: its refresh token "+
 			"may have expired or been revoked, a Conditional Access policy may require a new sign-in, or "+
 			"Entra ID may be unreachable; the next connection tries again, and if this persists, restart "+

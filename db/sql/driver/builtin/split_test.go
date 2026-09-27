@@ -1,6 +1,7 @@
 package builtin_test
 
 import (
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -76,11 +77,14 @@ func TestASingleEngineImportDoesNotLinkTheOther(t *testing.T) {
 // SQL Server may.
 var sqlServerPackages = []string{"github.com/microsoft/go-mssqldb", "gorm.io/driver/sqlserver"}
 
-// azureSDKModules are what the Entra ID sign-in links, and only driver/sqlserver/azuread may.
+// azureSDKModules are what the Entra ID sign-in links, and only driver/sqlserver/azuread may, or,
+// for the persistent token cache's, azuread/persistentcache.
 var azureSDKModules = []string{
 	"github.com/Azure/azure-sdk-for-go",
 	"github.com/AzureAD/microsoft-authentication-library-for-go",
 	"github.com/pkg/browser",
+	"github.com/AzureAD/microsoft-authentication-extensions-for-go",
+	"github.com/keybase/go-keychain",
 }
 
 // linkedPackages returns the packages pkg links, one per entry, or skips the test when the
@@ -167,6 +171,8 @@ func TestTheSQLServerDriverDoesNotLinkAzureAD(t *testing.T) {
 	for _, module := range []string{
 		"github.com/Azure/azure-sdk-for-go",
 		"github.com/AzureAD/microsoft-authentication-library-for-go",
+		"github.com/AzureAD/microsoft-authentication-extensions-for-go",
+		"github.com/keybase/go-keychain",
 		"github.com/microsoft/go-mssqldb/azuread",
 		"github.com/microsoft/go-mssqldb/integratedauth/krb5",
 		"github.com/pkg/browser",
@@ -210,6 +216,71 @@ func TestAzureADLinksTheAzureSDKButNotTheKeychain(t *testing.T) {
 		"github.com/go-sql-driver/mysql",
 	} {
 		assert.Emptyf(t, linksUnder(linked, module), "driver/sqlserver/azuread must not link %s", module)
+	}
+}
+
+// persistentCacheModules are what the persistent token cache links, and only
+// azuread/persistentcache may: azidentity's cache, the MSAL extensions it stores through, and on
+// macOS the cgo keychain binding.
+var persistentCacheModules = []string{
+	"github.com/Azure/azure-sdk-for-go/sdk/azidentity/cache",
+	"github.com/AzureAD/microsoft-authentication-extensions-for-go",
+	"github.com/keybase/go-keychain",
+}
+
+// linkedPackagesFor is linkedPackages for another platform, which go list resolves the build
+// constraints of without compiling anything, so any host can answer for macOS with cgo.
+func linkedPackagesFor(t *testing.T, pkg, goos, cgo string) map[string]bool {
+	t.Helper()
+
+	cmd := exec.Command("go", "list", "-deps", pkg)
+	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH=amd64", "CGO_ENABLED="+cgo)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Skipf("go list unavailable: %v: %s", err, out)
+	}
+	linked := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		linked[strings.TrimSpace(line)] = true
+	}
+	return linked
+}
+
+// TestOnlyPersistentCacheLinksTheKeychain: auth.token_cache: persistent keeps a person's tokens in
+// the operating system's credential store, which on macOS is the keychain, through cgo. That
+// comes in with azuread/persistentcache alone, on every platform, and azuread links none of it
+// on any. Built for macOS without cgo, or for a system azidentity keeps no cache on, the package
+// links no cache at all and refuses at boot instead, so the build never breaks on it.
+func TestOnlyPersistentCacheLinksTheKeychain(t *testing.T) {
+	const (
+		azuread         = "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver/azuread"
+		persistentCache = azuread + "/persistentcache"
+	)
+	for _, platform := range []struct {
+		goos, cgo       string
+		cache, keychain bool
+	}{
+		{"darwin", "1", true, true},
+		{"darwin", "0", false, false},
+		{"linux", "0", true, false},
+		{"linux", "1", true, false},
+		{"windows", "0", true, false},
+		{"freebsd", "0", false, false},
+	} {
+		name := platform.goos + " CGO_ENABLED=" + platform.cgo
+		linked := linkedPackagesFor(t, persistentCache, platform.goos, platform.cgo)
+		assert.Truef(t, linked[azuread], "%s: persistentcache registers with azuread", name)
+		assert.Equalf(t, platform.cache, linked["github.com/Azure/azure-sdk-for-go/sdk/azidentity/cache"],
+			"%s: azidentity's persistent cache", name)
+		assert.Equalf(t, platform.cache,
+			linksUnder(linked, "github.com/AzureAD/microsoft-authentication-extensions-for-go") != "",
+			"%s: the MSAL extensions", name)
+		assert.Equalf(t, platform.keychain, linked["github.com/keybase/go-keychain"], "%s: the keychain", name)
+
+		linked = linkedPackagesFor(t, azuread, platform.goos, platform.cgo)
+		for _, module := range persistentCacheModules {
+			assert.Emptyf(t, linksUnder(linked, module), "%s: azuread must not link %s", name, module)
+		}
 	}
 }
 

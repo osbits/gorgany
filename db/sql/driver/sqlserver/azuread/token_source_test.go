@@ -33,7 +33,9 @@ type fakeCredential struct {
 	getToken func(ctx context.Context, n int) (azcore.AccessToken, error)
 	// authenticate answers Authenticate; nil signs in at once.
 	authenticate func(ctx context.Context) error
-	clock        *clock
+	// record is the record of the account a sign-in that works signs in as; zero is standInRecord.
+	record azidentity.AuthenticationRecord
+	clock  *clock
 }
 
 func (f *fakeCredential) GetToken(ctx context.Context, opts policy.TokenRequestOptions) (azcore.AccessToken, error) {
@@ -54,13 +56,16 @@ func (f *fakeCredential) Authenticate(ctx context.Context, opts *policy.TokenReq
 	f.mu.Lock()
 	f.authenticates++
 	f.scopes = append(f.scopes, opts.Scopes)
-	answer := f.authenticate
+	answer, record := f.authenticate, f.record
 	f.mu.Unlock()
 
 	if answer != nil {
 		return azidentity.AuthenticationRecord{}, answer(ctx)
 	}
-	return azidentity.AuthenticationRecord{Username: standInUser}, nil
+	if record == (azidentity.AuthenticationRecord{}) {
+		record = standInRecord
+	}
+	return record, nil
 }
 
 func (f *fakeCredential) counts() (getTokens, authenticates int) {
@@ -105,7 +110,7 @@ func source(t *testing.T, method string, cred azcore.TokenCredential, c *clock) 
 
 	req := request(method, azureHost, dsconfig.Auth{})
 	req.Context = root
-	s, err := newTokenSource(cred, req, req.Scope)
+	s, err := newTokenSource(cred, req, req.Scope, nil)
 	require.NoError(t, err)
 	s.now = c.Now
 	return s, closeDatasource
@@ -555,7 +560,7 @@ func TestTheLoginTimeoutDefaultsByMethod(t *testing.T) {
 
 	req := request(sqlserver.AuthMethodInteractive, azureHost, dsconfig.Auth{})
 	req.LoginTimeout = 20 * time.Second
-	s, err := newTokenSource(&fakeCredential{clock: c}, req, req.Scope)
+	s, err := newTokenSource(&fakeCredential{clock: c}, req, req.Scope, nil)
 	require.NoError(t, err)
 	assert.Equal(t, 20*time.Second, s.loginTimeout)
 	assert.Equal(t, 20*time.Second, s.renewTimeout, "a renewal is never allowed longer than a sign-in")
@@ -591,6 +596,24 @@ func TestCloseAbandonsAnAcquisitionInFlight(t *testing.T) {
 	assert.Contains(t, err.Error(), "the datasource is closed")
 	_, authenticates := cred.counts()
 	assert.Equal(t, 1, authenticates, "a closed source starts nothing")
+}
+
+// TestNoPromptOpensForAClosedDatasource: a Close that lands between the start of a sign-in and its
+// prompt opens none, as a Close during the prompt ends it.
+func TestNoPromptOpensForAClosedDatasource(t *testing.T) {
+	c := newClock()
+	cred := &fakeCredential{clock: c}
+	s, closeDatasource := source(t, sqlserver.AuthMethodDeviceCode, cred, c)
+	closeDatasource()
+
+	a := &acquisition{done: make(chan struct{})}
+	s.acquire(a, true)
+	require.Error(t, a.err)
+	assert.Equal(t, "azuread: the device_code sign-in for "+standInTarget+" was abandoned: the datasource was "+
+		"closed: context canceled", a.err.Error())
+	getTokens, authenticates := cred.counts()
+	assert.Zero(t, authenticates)
+	assert.Zero(t, getTokens)
 }
 
 // TestTokenErrorsDoNotContainTheToken: a token is a bearer credential for the database, and an
@@ -649,7 +672,7 @@ func TestTheScopeIsPassedThrough(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cred := &fakeCredential{clock: c}
 			saved := credentialFor
-			credentialFor = func(sqlserver.AuthRequest) (azcore.TokenCredential, error) { return cred, nil }
+			credentialFor = func(sqlserver.AuthRequest, *rememberedSignIn) (azcore.TokenCredential, error) { return cred, nil }
 			t.Cleanup(func() { credentialFor = saved })
 
 			ts, err := authenticate(tc.req)
@@ -680,11 +703,11 @@ func withoutScope(req sqlserver.AuthRequest) sqlserver.AuthRequest {
 // the person in by prompting from GetToken, which is what DisableAutomaticAuthentication forbids.
 func TestInteractiveNeedsACredentialThatCanSignIn(t *testing.T) {
 	req := request(sqlserver.AuthMethodInteractive, azureHost, dsconfig.Auth{})
-	_, err := newTokenSource(silentCredential{&fakeCredential{clock: newClock()}}, req, req.Scope)
+	_, err := newTokenSource(silentCredential{&fakeCredential{clock: newClock()}}, req, req.Scope, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cannot ask for a sign-in")
 
 	req = request(sqlserver.AuthMethodAzureCLI, azureHost, dsconfig.Auth{})
-	_, err = newTokenSource(silentCredential{&fakeCredential{clock: newClock()}}, req, req.Scope)
+	_, err = newTokenSource(silentCredential{&fakeCredential{clock: newClock()}}, req, req.Scope, nil)
 	require.NoError(t, err)
 }

@@ -507,3 +507,70 @@ func TestACustomRegisteredMethodSkipsBuiltInRules(t *testing.T) {
 	assert.Equal(t, "vault_token", resolved.method)
 	assert.False(t, resolved.sqlLogin())
 }
+
+// standInRecordPath is where a test's authentication record would go. No refusal repeats it.
+const standInRecordPath = "/var/lib/stand-in/record.json"
+
+// TestTokenCacheIsRefusedByMethodsThatAskNoOne: token_cache and authentication_record_path keep
+// a person's sign-in, and a method that signs in without anyone would ignore them, so it refuses
+// them instead, naming the methods that take them and repeating neither value.
+func TestTokenCacheIsRefusedByMethodsThatAskNoOne(t *testing.T) {
+	registerBuiltins(t)
+
+	for method, auth := range map[string]dsconfig.Auth{
+		AuthMethodSQL:              {},
+		"":                         {},
+		AuthMethodAzureCLI:         {},
+		AuthMethodAzureDefault:     {},
+		AuthMethodServicePrincipal: {TenantID: standInTenantID, ClientID: standInClientID, ClientSecret: standInSecret},
+		AuthMethodManagedIdentity:  {},
+		AuthMethodWorkloadIdentity: {TenantID: standInTenantID, ClientID: standInClientID, TokenFilePath: standInTokenFile},
+	} {
+		for _, tokenCache := range []string{dsconfig.TokenCachePersistent, dsconfig.TokenCacheMemory} {
+			cached := auth
+			cached.TokenCache = tokenCache
+			cfg := entra(method, cached)
+			if method == AuthMethodSQL || method == "" {
+				cfg.Username, cfg.Password = "app", "stand-in-password"
+			}
+			_, err := resolveAuth(cfg)
+			require.Errorf(t, err, "%q with token_cache %s", method, tokenCache)
+			assert.Contains(t, err.Error(), "auth.token_cache does not apply to auth.method")
+			assert.Contains(t, err.Error(), "only auth.method interactive and device_code ask for")
+			assert.NotContains(t, err.Error(), tokenCache, "the refusal names the key, not its value")
+			assertNoValueEchoed(t, err)
+		}
+
+		recorded := auth
+		recorded.AuthenticationRecordPath = standInRecordPath
+		_, err := resolveAuth(entra(method, recorded))
+		require.Errorf(t, err, "%q with authentication_record_path", method)
+		assert.Contains(t, err.Error(), "auth.authentication_record_path does not apply to auth.method")
+		assert.NotContains(t, err.Error(), standInRecordPath)
+	}
+}
+
+// TestTokenCacheFieldRules: interactive and device_code take either cache, and a record path only
+// with the persistent one, which is the only cache that reads it.
+func TestTokenCacheFieldRules(t *testing.T) {
+	registerBuiltins(t)
+
+	for _, method := range []string{AuthMethodInteractive, AuthMethodDeviceCode} {
+		for _, auth := range []dsconfig.Auth{
+			{TokenCache: dsconfig.TokenCacheMemory},
+			{TokenCache: dsconfig.TokenCachePersistent},
+			{TokenCache: dsconfig.TokenCachePersistent, AuthenticationRecordPath: standInRecordPath},
+		} {
+			_, err := resolveAuth(entra(method, auth))
+			require.NoErrorf(t, err, "%s %+v", method, auth)
+		}
+
+		for _, tokenCache := range []string{"", dsconfig.TokenCacheMemory} {
+			_, err := resolveAuth(entra(method, dsconfig.Auth{TokenCache: tokenCache, AuthenticationRecordPath: standInRecordPath}))
+			require.Errorf(t, err, "%s with token_cache %q and a record path", method, tokenCache)
+			assert.Equal(t, "sqlserver: auth.authentication_record_path applies to auth.token_cache: persistent, the "+
+				"only token cache that keeps a record of the sign-in; set auth.token_cache: persistent, or remove the path",
+				err.Error())
+		}
+	}
+}

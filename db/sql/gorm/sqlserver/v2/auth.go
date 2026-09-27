@@ -299,6 +299,8 @@ func authFields(a dsconfig.Auth) []authField {
 		{"redirect_url", a.RedirectURL != ""},
 		{"scope", a.Scope != ""},
 		{"login_timeout", a.LoginTimeout != 0},
+		{"token_cache", a.TokenCache != ""},
+		{"authentication_record_path", a.AuthenticationRecordPath != ""},
 	}
 }
 
@@ -314,12 +316,14 @@ type methodRules struct {
 
 var tokenMethodRules = map[string]methodRules{
 	AuthMethodInteractive: {
-		allowed: keySet("tenant_id", "client_id", "redirect_url"),
+		allowed: keySet("tenant_id", "client_id", "redirect_url", "token_cache", "authentication_record_path"),
 		hints:   map[string]string{"client_secret": "an interactive sign-in is a person's, and takes no secret"},
+		extra:   checkTokenCache,
 	},
 	AuthMethodDeviceCode: {
-		allowed: keySet("tenant_id", "client_id"),
+		allowed: keySet("tenant_id", "client_id", "token_cache", "authentication_record_path"),
 		hints:   map[string]string{"client_secret": "a device-code sign-in is a person's, and takes no secret"},
+		extra:   checkTokenCache,
 	},
 	AuthMethodAzureCLI: {
 		allowed: keySet("tenant_id"),
@@ -378,6 +382,10 @@ var keyHints = map[string]string{
 	"resource_id":     "it selects a user-assigned managed identity, which auth.method managed_identity signs in as",
 	"object_id":       "it selects a user-assigned managed identity, which auth.method managed_identity signs in as",
 	"token_file_path": "it is the Kubernetes service-account token auth.method workload_identity signs in with",
+	"token_cache": "it keeps the tokens of a person's sign-in, which only auth.method interactive and " +
+		"device_code ask for; every other method signs in without anyone",
+	"authentication_record_path": "it is where auth.token_cache: persistent remembers a person's sign-in, " +
+		"which only auth.method interactive and device_code ask for",
 }
 
 func keySet(keys ...string) map[string]bool {
@@ -429,6 +437,17 @@ func checkServicePrincipal(a dsconfig.Auth) error {
 		return errors.New("sqlserver: auth.certificate_password decrypts auth.certificate_path, which is not set")
 	case a.SendCertificateChain && a.CertificatePath == "":
 		return errors.New("sqlserver: auth.send_certificate_chain applies to a certificate, and auth.certificate_path is not set")
+	}
+	return nil
+}
+
+// checkTokenCache refuses an authentication_record_path that nothing would read: only a
+// persistent token cache keeps an authentication record, and the memory cache, which an empty
+// token_cache means, forgets the sign-in with the process.
+func checkTokenCache(a dsconfig.Auth) error {
+	if a.AuthenticationRecordPath != "" && a.TokenCache != dsconfig.TokenCachePersistent {
+		return errors.New("sqlserver: auth.authentication_record_path applies to auth.token_cache: persistent, " +
+			"the only token cache that keeps a record of the sign-in; set auth.token_cache: persistent, or remove the path")
 	}
 	return nil
 }
