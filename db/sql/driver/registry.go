@@ -128,7 +128,8 @@ func New(cfg dsconfig.DataSource) (dbCore.IDataSource, error) {
 // registered, ignores them, so its datasource reports the zero policy: it would boot as a
 // datasource gorgany owns and may write to, and every check that asks PolicyOf would agree. A
 // flag that is accepted but not enforced reads as a guarantee it is not, so the boot stops here
-// and names the driver, as Postgres and MySQL refuse read_only themselves.
+// and names the driver, as Postgres and MySQL refuse a key they do not honour, such as
+// instance, themselves.
 func requireEnforcedPolicy(cfg dsconfig.DataSource, ds dbCore.IDataSource) error {
 	policy := dbCore.PolicyOf(ds)
 

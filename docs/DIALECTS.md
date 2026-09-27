@@ -242,6 +242,34 @@ report a flag its config sets and fails the boot with a `core.UnsupportedError`
 naming the driver and the key. A constructor written before the flags existed
 therefore keeps working for every config that leaves them off.
 
+The Postgres and MySQL engines show what enforcing `read_only` takes. Their dialect
+has a `ReadOnly` field, which `Dialect()` sets from the config, and `FormatQuery`
+refuses an `INSERT`, `UPDATE`, `DELETE` or upsert before it renders anything, with
+an error that wraps `core.ErrReadOnly` and names the statement. So every builder a
+session or transaction hands out refuses a write where it is built. The datasource
+installs `guard.InstallReadOnly` (`db/sql/gorm/guard`) on the handle `gorm.Open`
+returned, before deriving any other from it, which refuses a write that reaches
+gorm any other way, in its callbacks and again as each statement is sent. Their
+executors mark the SQL a builder rendered, so the guard checks it for its shape and
+not for words, and a column named `copy` does not make a builder read unrunnable;
+the mark is internal to `db/sql/gorm`, so an engine outside it gets the word-by-word
+check on its builder SQL too. The guard's and the dialect's refusals wrap
+`core.ErrReadOnly`.
+
+Postgres also asks the server for read-only transactions, with
+`default_transaction_read_only=on` in the DSN, unless `options` set that parameter
+themselves, in any spelling Postgres reads as it, or set `target_session_attrs` to
+`read-write` or `read-only`. An empty `default_transaction_read_only` under
+`options` sends nothing, and is what a datasource behind PgBouncer before 1.26 needs
+unless PgBouncer tracks the parameter (`track_extra_parameters`, 1.20 and later on
+Postgres 14 and later) or ignores it (`ignore_startup_parameters`): before 1.26 it
+refuses any startup parameter it does not track, in every pool mode. The server's
+refusal of a write is the driver's error, SQLSTATE 25006, not `core.ErrReadOnly`.
+The guard refuses the `SET` and `set_config` calls that would switch the setting
+off, but a `set_config` it does not see, sent on `DB()` or run by a function, switches
+it off on that pooled connection for as long as the connection lives. These are
+safety nets: a principal that can only read is the guarantee.
+
 ### 7. Test with pure string assertions
 
 Dialect tests need no server. Write one case per method pinning either the exact
@@ -294,7 +322,25 @@ default). The dialect never emits SQL that relies on loose grouping.
 | `search_path` | A MySQL schema *is* a database, so there is no schema search path to set. Ignoring the setting would silently connect to the wrong place. | Point `db` at the schema you want. |
 | `instance` | A named instance is a SQL Server concept. A config that names one was written for another engine, and connecting to whatever answers on the host's port would hide that. Postgres refuses it too. | Remove the key, and point `host` and `port` at the server. |
 | `auth`, other than `method: sql` alone | MySQL signs in with the top-level `username` and `password` only. Any other method, or any other key under `auth`, would be dropped, and the sign-in would not be the one configured. Postgres refuses it too. | Remove the block, or leave only `method: sql` in it. |
-| `read_only` | Not enforced on MySQL in this build, and a flag that is accepted but not enforced reads as a guarantee it is not. Postgres refuses it too. | Connect as a database role that can only read. |
+
+### On a `read_only` datasource
+
+With `read_only: true` the dialect refuses every write — `INSERT`, including
+`INSERT … SELECT`, an `ON CONFLICT` upsert whether or not
+`allow_unfaithful_upsert` is set, `UPDATE` and `DELETE` — before it renders
+anything. The error wraps `core.ErrReadOnly` rather than being a
+`core.UnsupportedError`, and it comes first: a write that MySQL could not express
+anyway, such as one with `RETURNING`, is refused for being a write. Reads render,
+and are refused, exactly as they are without the flag.
+
+Unlike Postgres, the MySQL engine does not ask the server for read-only sessions.
+The session variable is `transaction_read_only` on MySQL 8 and `tx_read_only` on
+MySQL 5.7 before 5.7.20 and MariaDB before 11.1, and go-sql-driver sends a DSN
+parameter it does not know as a `SET` that fails the connection when the server
+does not know the name either. On a server you know, set the variable it has under
+`options`, for example `transaction_read_only: "1"`; the server then refuses a
+write with error 1792, which is the driver's error and does not wrap
+`core.ErrReadOnly`. Either way, connect as a user that can only read.
 
 ### Translated
 

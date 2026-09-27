@@ -12,7 +12,7 @@ import (
 )
 
 // The datasource flags added alongside the SQL Server engine: which of them Postgres refuses,
-// and what it does with the rest.
+// and what it does with the rest. read_only has read_only_test.go to itself.
 //
 // Every test here runs against 127.0.0.1:1, where nothing listens and a connection is refused
 // at once. A constructor that dials therefore fails, fast, so a constructor that succeeds
@@ -173,34 +173,6 @@ func TestLazyConnectDisablesThePing(t *testing.T) {
 	_, err := NewDataSourceWithConfig(unreachableConfig())
 	require.Error(t, err, "without lazy_connect an unreachable server must still fail the constructor")
 	assert.Contains(t, err.Error(), "postgres: cannot open connection")
-}
-
-// TestReadOnlyIsRefusedUntilEnforced: nothing on Postgres enforces read_only yet, and a flag
-// that is accepted but not enforced reads as a guarantee it is not. The refusal points at the
-// guarantee that does exist. It is replaced when Postgres enforces the flag.
-func TestReadOnlyIsRefusedUntilEnforced(t *testing.T) {
-	_, err := NewDataSource(map[string]any{
-		"driver":    "postgres_gorm",
-		"host":      "127.0.0.1",
-		"port":      1,
-		"db":        "Example-db",
-		"read_only": true,
-	})
-
-	unsupported := requireUnsupported(t, err, "read_only")
-	assert.Contains(t, unsupported.Hint, "read-only database role")
-
-	// Saying false is saying nothing, and is accepted.
-	ds, err := NewDataSource(map[string]any{
-		"driver":       "postgres_gorm",
-		"host":         "127.0.0.1",
-		"port":         1,
-		"db":           "Example-db",
-		"read_only":    false,
-		"lazy_connect": true,
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, ds.Close()) })
 }
 
 // TestPolicyReportsTheExternalSchemaFlag: the policy is what the commands and providers ask

@@ -40,8 +40,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - `instance` is refused, since a named instance is a SQL Server concept.
   - `auth` is refused unless it is absent or `method: sql` with nothing else in it. That is the
     top-level username and password both engines have always used.
-  - `read_only: true` is refused. Neither engine enforces it yet, and a flag that is accepted
-    but not enforced reads as a guarantee it is not. Use a read-only database role.
+  - `read_only: true` is enforced, in the layers the `read_only` entry below describes.
   - `external_schema: true` says another system owns the schema. The datasource reports it in
     its policy, and its connection refuses DDL through the `db/sql/gorm/guard` guard below.
     `db:migrate`, `db:seed` and `db:diff` refuse such a datasource before they send any SQL,
@@ -74,14 +73,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `IDataSource` can be asked. One that does not implement `PolicyReporter`, including one an app
   wrote, reports the zero policy, which is what gorgany assumed of every datasource before, and
   `driver.New` refuses it when its config sets either flag (see above). The Postgres and MySQL
-  datasources implement it. Every policy refusal, from whichever layer, wraps
-  `core.ErrExternalSchema` or `core.ErrReadOnly`, so `errors.Is` tells a refusal from a database
-  error, and names `external_schema` when both flags are set.
+  datasources implement it. Every policy refusal gorgany makes, from whichever of its layers,
+  wraps `core.ErrExternalSchema` or `core.ErrReadOnly`, so `errors.Is` tells a refusal from a
+  database error, and names `external_schema` when both flags are set. A refusal the server
+  makes itself, where a `read_only` datasource asks it to (see below), is a database error.
 - SQL guards in `db/sql/core`, which never quote the SQL in their errors. A refusal names what
   it refused in the guard's own words, as in `INSERT statement refused`:
   - `GuardReadOnlySQL` checks every word, for SQL written by hand. It refuses the words that
-    write, lock or change the session wherever they stand, `NEXT VALUE FOR`, and the locking
-    clauses, `FOR SHARE` and `FOR KEY SHARE` included. On SQL Server, which needs no `;`
+    write, lock or change the session wherever they stand, `NEXT VALUE FOR`, the locking
+    clauses, `FOR SHARE` and `FOR KEY SHARE` included, and a call of Postgres's `set_config`,
+    the function form of `SET`, however its name is qualified or quoted, and of a function
+    named with a `U&"…"` identifier, whose escapes could spell it. On SQL Server, which needs no `;`
     between statements, it also refuses the reserved words that begin a statement and have no
     place in a query, such as `BEGIN`, `COMMIT`, `IF`, `WAITFOR` and `SETUSER`, so
     `SELECT 1 DELETE FROM t` and `SELECT 1 BEGIN TRAN` are refused. SQL Server's locking
@@ -91,7 +93,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     and `READPAST` pass, and so does a column named `[updlock]`. A second read with no `;`,
     `SELECT 1 SELECT 2`, is not told from one statement there.
   - `GuardReadOnlyShape` checks only the structure, for SQL a dialect rendered: one statement,
-    no `INTO`, no locking clause, no `NEXT VALUE FOR`, and CTEs that read. On SQL Server it is
+    no `INTO`, no locking clause, no `NEXT VALUE FOR`, no call of `set_config`, which a raw
+    `Select` field can carry into a builder's SQL, and CTEs that read. On SQL Server it is
     `GuardReadOnlySQL`, since a structure check cannot tell where a statement ends there, and
     a builder carries an app's raw fragments into the SQL it renders.
   - `GuardExternalSchemaSQL` refuses DDL and `SELECT … INTO` a permanent table. DDL includes
@@ -158,6 +161,65 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `db/sql/gorm`, cannot be set with gorm's `Set`, and does not pass to a `Session` or
   `Transaction` derived from a marked handle. Installing twice adds nothing, and the package
   links no engine driver.
+- `read_only: true` is enforced on Postgres and MySQL, in layers, each of which sees what the
+  one before it cannot. The datasource reports the flag in its policy, which is what the db
+  commands and database session storage refuse (see Changed). Every refusal gorgany makes
+  wraps `core.ErrReadOnly`; the Postgres server's own, below, arrives as the driver's error.
+  - The dialect refuses to render a write. `PostgresDialect` and `MySQLDialect` gain a
+    `ReadOnly` field, which the datasource sets, and `FormatQuery` refuses an `INSERT`
+    (`INSERT … SELECT` included), an `ON CONFLICT` upsert, an `UPDATE` or a `DELETE` before it
+    renders anything, wherever it stands, so a data-modifying CTE is refused too. The error
+    names the statement, as in `postgres refuses INSERT on a read_only datasource`, and on
+    MySQL it comes ahead of the refusal a write MySQL cannot express would otherwise get.
+    Every builder a read-only session or transaction hands out has the flag, so the ORM's
+    writes are refused there. Reads render byte for byte as they do without it:
+    `testdata/pg_mysql.golden` is unchanged, and a test renders its whole corpus through the
+    read-only dialects.
+  - The read-only guard from `db/sql/gorm/guard` is installed on the connection before the
+    logging handle, the sessions and the transactions are derived from it. It refuses gorm's
+    `Create`, `Update` and `Delete`, checks SQL set with `Exec` or `Raw` word by word, and
+    checks every statement again as it is sent, `ExecInsert`'s included. The executors' `Exec`,
+    `Find`, `Count` and `ExecInsert` mark the SQL a builder rendered, so the guard checks its
+    shape only, and a builder read of a column named like a word the guard refuses, such as
+    `copy` (or `lock` on Postgres), which the dialects write unquoted, runs. `ExecRaw`,
+    `FindRaw` and `CountRaw` are not marked: their SQL is an app's, and such a word in it is
+    refused unless quoted. The ORM reads through them, so on a read-only datasource an ORM
+    read that names such a table or column is refused; read it with the session's builder and
+    executor.
+  - Postgres also asks the server to make every transaction read-only, with
+    `default_transaction_read_only=on` in the DSN, so that a write that gets past both, such
+    as one sent on the `*sql.DB` that `DB()` returns or one a function a `SELECT` calls runs,
+    fails with SQLSTATE 25006. That error is the driver's (`*pgconn.PgError`), and does not
+    wrap `core.ErrReadOnly`. It holds for as long as nothing switches the setting off on the
+    pooled connection: the guard refuses `SET` and `set_config`, but a `set_config` it does
+    not see, sent on `DB()` or run by a function, switches it off on that connection for the
+    rest of its life, for every statement sent there afterwards, `DB()`'s included.
+  - The parameter is left out when `options` set it themselves, off included, as a key of
+    their own in any case, or with `-c` or `--` in `options`, however Postgres spells it there
+    (`-c default-transaction-read-only=off` included); and when `options` set
+    `target_session_attrs` to `read-write` or `read-only`, whose host check reads the setting
+    and would then refuse every host, or take the primary for a standby. It is not left out for
+    what the config does not show, `PGOPTIONS`, `PGTARGETSESSIONATTRS` or a service file, which
+    pgx reads too: the added parameter overrides an `off` given there, and a
+    `target_session_attrs` given there meets the host check above. Set those under `options`.
+  - **Deployment note:** PgBouncer before 1.26 refuses every startup parameter it does not
+    track, in every pool mode, so a `read_only` Postgres datasource behind one fails to connect
+    with `unsupported startup parameter: default_transaction_read_only`. Either have PgBouncer
+    track it, with `track_extra_parameters` (1.20 and later, on Postgres 14 and later; 1.26
+    tracks it by default), or ignore it, with `ignore_startup_parameters`, or set
+    `default_transaction_read_only: ""` under `options`, which sends nothing. Without the
+    parameter, or with PgBouncer ignoring it, the server check is absent and the dialect and
+    the guard refuse writes alone. `prefer_simple_protocol` has no bearing on it.
+  - MySQL asks for nothing: the variable is `transaction_read_only` on MySQL 8 and
+    `tx_read_only` on MySQL 5.7 before 5.7.20 and MariaDB before 11.1, and go-sql-driver sends
+    a DSN parameter it does not know as a `SET` that fails the connection when the server does
+    not know it either. On a server you know, set its variable under `options`; the server then
+    refuses a write with error 1792, the driver's error.
+
+  These are a safety net; a read-only principal is the guarantee. The dialect and the guard do
+  not see what the server runs on a statement's behalf, such as a function a `SELECT` calls.
+  On Postgres the server's check refuses a write made that way; on MySQL nothing refuses it,
+  nor a write sent on the `*sql.DB` that `DB()` returns.
 - `IsAzureSQLHost`, `AzureCloudOf` and `Suggest` in `db/sql/config`. The first two recognise
   Azure SQL, Synapse and Fabric SQL endpoints by whole DNS suffix, and tell which cloud one
   belongs to. A host is recognised also when written as a connection string writes it, with

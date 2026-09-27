@@ -12,7 +12,19 @@ import (
 const DialectName = "postgres"
 
 // PostgresDialect implements the SQLDialect interface for PostgreSQL
-type PostgresDialect struct{}
+type PostgresDialect struct {
+	// ReadOnly makes FormatQuery refuse every write, before it renders anything, with an
+	// error that wraps core.ErrReadOnly and names the statement: an INSERT, including
+	// INSERT … SELECT and an upsert (ON CONFLICT), an UPDATE and a DELETE. A write nested in a
+	// read — a data-modifying CTE, say — is refused too, since a CTE, a UNION arm and a derived
+	// table render through FormatQuery as well. Reads render exactly as they do without it.
+	//
+	// The datasource sets it from databases.<name>.read_only, so every builder a read-only
+	// session or transaction hands out refuses a write where it is built, and says which
+	// setting refused it. The guard on the connection (db/sql/gorm/guard) would refuse the SQL
+	// too, but only once it is sent, and it cannot tell a builder's INSERT from anyone else's.
+	ReadOnly bool
+}
 
 var _ dbCore.SQLDialect = (*PostgresDialect)(nil)
 
@@ -298,6 +310,9 @@ func (d *PostgresDialect) FormatReturning(fields []string) (string, []interface{
 
 // FormatQuery converts a query to SQL and returns both the SQL string and arguments
 func (d *PostgresDialect) FormatQuery(q *dbCore.Query) (string, []interface{}, error) {
+	if err := d.refuseWrite(q); err != nil {
+		return "", nil, err
+	}
 	// Handle INSERT queries
 	if q.Insert != nil {
 		return d.formatInsert(q)
@@ -312,6 +327,29 @@ func (d *PostgresDialect) FormatQuery(q *dbCore.Query) (string, []interface{}, e
 	}
 	// Handle SELECT queries
 	return d.formatSelect(q)
+}
+
+// refuseWrite refuses q when the dialect is ReadOnly and q is a write, naming the statement
+// as FormatQuery would dispatch it. It runs before anything is rendered, so a refused write
+// has no SQL to leak and no second error to report instead.
+func (d *PostgresDialect) refuseWrite(q *dbCore.Query) error {
+	if !d.ReadOnly || q == nil {
+		return nil
+	}
+	var statement string
+	switch {
+	case q.Insert != nil && q.Insert.OnConflict != nil:
+		statement = "INSERT ... ON CONFLICT"
+	case q.Insert != nil:
+		statement = "INSERT"
+	case q.Update != nil:
+		statement = "UPDATE"
+	case q.Delete != nil:
+		statement = "DELETE"
+	default:
+		return nil
+	}
+	return fmt.Errorf("%w: %s refuses %s on a read_only datasource", dbCore.ErrReadOnly, DialectName, statement)
 }
 
 // formatInsert generates SQL for INSERT queries

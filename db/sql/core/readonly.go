@@ -96,9 +96,10 @@ var (
 // DECLARE, LOCK, COPY, VACUUM, LOAD, HANDLER and CHECKPOINT; nor the sequence NEXT VALUE FOR,
 // which draws from a sequence (FETCH NEXT … ROWS ONLY does not); nor a locking clause, FOR
 // UPDATE, FOR NO KEY UPDATE, FOR SHARE, FOR KEY SHARE or LOCK IN SHARE MODE, which locks the
-// rows it reads and needs write rights to do it. Under SQL Server's rules
-// (lex.BracketIdentifiers) the reserved words that begin a statement and have no place in a
-// query are refused as well: BEGIN, COMMIT, ROLLBACK, SAVE, IF, WHILE, BREAK, CONTINUE, GOTO,
+// rows it reads and needs write rights to do it; nor a call of Postgres's set_config, the
+// function form of the SET it refuses, which a SELECT can make (see settingCall). Under SQL
+// Server's rules (lex.BracketIdentifiers) the reserved words that begin a statement and have
+// no place in a query are refused as well: BEGIN, COMMIT, ROLLBACK, SAVE, IF, WHILE, BREAK, CONTINUE, GOTO,
 // RETURN, WAITFOR, PRINT, RAISERROR, OPEN, CLOSE, DEALLOCATE, READTEXT, SETUSER and REVERT.
 // Looking everywhere is what catches a data-modifying CTE (WITH gone AS (DELETE …) SELECT …),
 // SELECT … INTO, SELECT … FOR UPDATE, and SQL Server running two statements that no ";"
@@ -149,13 +150,15 @@ func GuardReadOnlySQL(sql string, lex SQLLexicon) error {
 // rendered statement write is its structure, and that is all this checks: it begins with
 // SELECT or WITH, once any leading "(" and ";" are skipped; no ";" is followed by another
 // statement; INTO, a locking clause (FOR UPDATE, FOR NO KEY UPDATE, FOR SHARE, FOR KEY SHARE,
-// LOCK IN SHARE MODE) and NEXT VALUE FOR appear nowhere in it; and each common table
-// expression — the parenthesised body after AS, AS MATERIALIZED or AS NOT MATERIALIZED — and
-// the statement the WITH introduces begin with SELECT, WITH or VALUES. Unlike
-// GuardReadOnlySQL it does not look for keywords anywhere else, so a column named lock, copy
-// or load, which the Postgres and MySQL dialects emit unquoted, does not make a builder query
-// unrunnable. What a dialect could otherwise render that writes is the dialect's to refuse
-// before it renders it.
+// LOCK IN SHARE MODE), NEXT VALUE FOR and a call of set_config appear nowhere in it; and each
+// common table expression — the parenthesised body after AS, AS MATERIALIZED or AS NOT
+// MATERIALIZED — and the statement the WITH introduces begin with SELECT, WITH or VALUES.
+// Unlike GuardReadOnlySQL it does not look for keywords anywhere else, so a column named
+// lock, copy or load, which the Postgres and MySQL dialects emit unquoted, does not make a
+// builder query unrunnable. What a dialect could otherwise render that writes is the
+// dialect's to refuse before it renders it. set_config is no structure a dialect renders, but
+// a builder carries an app's raw fragments, a Select field among them, into the SQL it
+// renders, and a call there switches a setting off as surely as one in raw SQL would.
 //
 // Under SQL Server's rules (lex.BracketIdentifiers) it is GuardReadOnlySQL. SQL Server needs
 // no ";" between statements, so a structure check cannot tell where a statement ends: SELECT
@@ -522,6 +525,8 @@ func readOnlyRefusal(tokens []sqlToken, lex SQLLexicon) string {
 			return token.upper
 		case isNextValueFor(tokens, i):
 			return nextValueFor
+		case settingCall(tokens, i) != "":
+			return settingCall(tokens, i)
 		}
 	}
 	return ""
@@ -550,6 +555,49 @@ const nextValueFor = "NEXT VALUE FOR"
 // sequence. FETCH NEXT 5 ROWS ONLY does not.
 func isNextValueFor(tokens []sqlToken, i int) bool {
 	return tokens[i].isWord("NEXT") && i+2 < len(tokens) && tokens[i+1].isWord("VALUE") && tokens[i+2].isWord("FOR")
+}
+
+// The calls settingCall refuses, as a refusal names them.
+const (
+	setConfigCall      = "set_config()"
+	unicodeEscapedCall = `U&"…"()`
+)
+
+// settingCall names the function call that begins at tokens[i] when it is one the read-only
+// guards refuse for changing a setting, or returns "".
+//
+// That is Postgres's set_config, the function form of SET, which a SELECT can call. SET is
+// refused because a setting outlives the statement: SELECT set_config(
+// 'default_transaction_read_only', 'off', false) switches off the read-only transactions a
+// read_only Postgres datasource asks the server for, on the pooled connection it runs on, for
+// as long as that connection lives, so that every statement anyone sends on it afterwards,
+// guarded or not, may write. The name counts bare, qualified (pg_catalog.set_config) or
+// quoted, in any case, since refusing a quoted "SET_CONFIG" that Postgres would not resolve
+// to the function refuses more, never less. So does a call of a function whose name is a
+// Postgres U&"…" identifier, which may spell set_config in escapes (U&"set\005fconfig") the
+// guard does not decode; U&"…" UESCAPE '!' (…) is such a call too.
+//
+// It is refused under every lexicon: no other engine has a function of that name, and U&"…"
+// is Postgres's alone.
+func settingCall(tokens []sqlToken, i int) string {
+	token := tokens[i]
+	next := i + 1
+	var refused string
+	switch {
+	case token.isWord("SET_CONFIG"), token.kind == sqlQuoted && asciiUpper(token.text) == "SET_CONFIG":
+		refused = setConfigCall
+	case token.kind == sqlQuoted && i >= 2 && tokens[i-1].isPunct("&") && tokens[i-2].isWord("U"):
+		refused = unicodeEscapedCall
+		if next+1 < len(tokens) && tokens[next].isWord("UESCAPE") && tokens[next+1].kind == sqlLiteral {
+			next += 2
+		}
+	default:
+		return ""
+	}
+	if next < len(tokens) && tokens[next].isPunct("(") {
+		return refused
+	}
+	return ""
 }
 
 // lockingClause names the locking clause that begins at tokens[i] — FOR UPDATE, FOR NO KEY
@@ -602,7 +650,8 @@ func readOnlyShapeRefusal(tokens []sqlToken, lex SQLLexicon) string {
 	// reserved on every engine, so a column of that name is quoted), and a nested one is
 	// either invalid or an INSERT … INTO in a CTE, which is a write. A locking clause and
 	// NEXT VALUE FOR are refused at any depth too: a subquery can lock, and draw from a
-	// sequence, as well as the query around it.
+	// sequence, as well as the query around it. So is a call of set_config, which a raw
+	// Select field or condition can carry into the SQL a builder renders (see settingCall).
 	for i := start; i < len(statement); i++ {
 		switch {
 		case statement[i].upper == "INTO":
@@ -611,6 +660,8 @@ func readOnlyShapeRefusal(tokens []sqlToken, lex SQLLexicon) string {
 			return lockingClause(statement, i)
 		case isNextValueFor(statement, i):
 			return nextValueFor
+		case settingCall(statement, i) != "":
+			return settingCall(statement, i)
 		}
 	}
 	if refused := queryRefusal(statement, start); refused != "" {

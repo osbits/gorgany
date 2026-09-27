@@ -22,12 +22,13 @@
 // block, MySQL's PREPARE … FROM, SQL Server's EXEC (…) and sp_executesql — is refused under
 // either policy rather than trusted, since the guard cannot read what it would run.
 //
-// Gorgany is to refuse what it can see coming earlier, and say more precisely why: a command
-// refusing an external-schema datasource before it runs any SQL, and a dialect refusing to
-// render a write for a read-only one, in the changes that add them. None of those checks sees
-// what an app, or gorm itself, sends to the handle directly. The guard does, before the
-// driver sees it. So these are the last check, not the only one, and like the core guards
-// they call they are a safety net: the database principal's own rights are the guarantee.
+// Gorgany refuses what it can see coming earlier, and says more precisely why: the db
+// commands refuse an external-schema or read-only datasource before they run any SQL, and the
+// Postgres and MySQL dialects refuse to render a write for a read-only one. None of those
+// checks sees what an app, or gorm itself, sends to the handle directly. The guard does,
+// before the driver sees it. So these are the last check, not the only one, and like the core
+// guards they call they are a safety net: the database principal's own rights are the
+// guarantee.
 //
 // Only gorgany's own engines can mark a statement as rendered by their dialect, which gives
 // it the read-only shape check in the callback (see InstallReadOnly); the mark is internal to
@@ -68,7 +69,8 @@ const (
 // clause such as FOR UPDATE, a NEXT VALUE FOR or a data-modifying CTE; on SQL Server's lexicon
 // every word of it is checked (see core.GuardReadOnlyShape), so a table hint that locks, such
 // as WITH (UPDLOCK), is refused there as FOR UPDATE is elsewhere. On Postgres and MySQL the
-// words of such a fragment are not: a function it calls, which may write, runs.
+// words of such a fragment are not, and a function it calls, which may write, runs; only a
+// call of Postgres's set_config, which is SET as a function, is refused there too.
 //
 // The SAVEPOINT (SAVE TRANSACTION on SQL Server), and its ROLLBACK TO, that gorm itself sends
 // for a nested Transaction are let through on purpose; a read-only transaction takes

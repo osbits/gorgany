@@ -13,7 +13,7 @@ import (
 )
 
 // The datasource flags added alongside the SQL Server engine: which of them MySQL refuses, and
-// what it does with the rest.
+// what it does with the rest. read_only has read_only_test.go to itself.
 //
 // Every test here runs against 127.0.0.1:1, where nothing listens and a connection is refused
 // at once. A constructor that dials therefore fails, fast, so a constructor that succeeds
@@ -186,34 +186,6 @@ func TestLazyConnectDoesNotQueryTheVersionOnMySQL(t *testing.T) {
 	require.True(t, ok, "gorm.io/driver/mysql's dialector must be the one in use")
 	assert.True(t, dialector.SkipInitializeWithVersion)
 	assert.Empty(t, dialector.ServerVersion, "nothing was asked, so nothing was answered")
-}
-
-// TestReadOnlyIsRefusedUntilEnforced: nothing on MySQL enforces read_only yet, and a flag that
-// is accepted but not enforced reads as a guarantee it is not. The refusal points at the
-// guarantee that does exist. It is replaced when MySQL enforces the flag.
-func TestReadOnlyIsRefusedUntilEnforced(t *testing.T) {
-	_, err := NewDataSource(map[string]any{
-		"driver":    "mysql_gorm",
-		"host":      "127.0.0.1",
-		"port":      1,
-		"db":        "Example-db",
-		"read_only": true,
-	})
-
-	requireUnsupported(t, err, "read_only")
-	assert.Contains(t, hintOf(t, err), "read-only database role")
-
-	// Saying false is saying nothing, and is accepted.
-	ds, err := NewDataSource(map[string]any{
-		"driver":       "mysql_gorm",
-		"host":         "127.0.0.1",
-		"port":         1,
-		"db":           "Example-db",
-		"read_only":    false,
-		"lazy_connect": true,
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { assert.NoError(t, ds.Close()) })
 }
 
 // TestPolicyReportsTheExternalSchemaFlag: the policy is what the commands and providers ask

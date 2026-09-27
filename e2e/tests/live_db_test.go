@@ -36,6 +36,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/osbits/gorgany/v2/app/core"
 	dbCmd "github.com/osbits/gorgany/v2/command/db"
 	"github.com/osbits/gorgany/v2/db"
@@ -2035,4 +2036,249 @@ func TestASweepWithNothingExpiredIsOneStatement(t *testing.T) {
 
 	assert.Equal(t, 1, runBatchedSweep(t, ds, 10))
 	assert.Equal(t, int64(1), countSessions(t, gormDb))
+}
+
+// ============================================================ read_only on Postgres and MySQL
+
+// readOnlyProbe is the table the read_only cases read, and try to write, through a read_only
+// datasource on the same database as the one that owns it. It is the name gorm's naming
+// strategy gives readOnlyProbeRow as well as the one its TableName returns, since the ORM's
+// All and Count name the table from a nil entity, on which TableName cannot be called.
+const readOnlyProbe = "read_only_probe_rows"
+
+type readOnlyProbeRow struct {
+	orm.BaseEntity
+	ID    int64  `gorm:"primaryKey;autoIncrement;column:id"`
+	Label string `gorm:"column:label;size:64"`
+}
+
+func (readOnlyProbeRow) TableName() string { return readOnlyProbe }
+
+// readOnlyConfig is config() with read_only: true.
+func readOnlyConfig(config func() map[string]any) map[string]any {
+	cfg := config()
+	cfg["read_only"] = true
+	return cfg
+}
+
+// assertReadOnlyRefusesWrites writes to the probe every way an app can through readOnly —
+// the builder, raw SQL, the gorm handle GetDriver returns, the ORM, and a transaction — and
+// asserts that each is refused with core.ErrReadOnly and that the owner's row is all the
+// table holds afterwards. Then it reads the probe every way an app can, which must work.
+func assertReadOnlyRefusesWrites(t *testing.T, owner, readOnly dbCore.IDataSource) {
+	t.Helper()
+
+	ownerGorm := gormOf(t, owner)
+	reset := func() { assert.NoError(t, ownerGorm.Migrator().DropTable(readOnlyProbe)) }
+	reset()
+	t.Cleanup(reset)
+	require.NoError(t, ownerGorm.AutoMigrate(&readOnlyProbeRow{}))
+	require.NoError(t, ownerGorm.Create(&readOnlyProbeRow{Label: "owner"}).Error)
+
+	require.True(t, dbCore.IsReadOnly(readOnly))
+	session, err := readOnly.NewSession()
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, session.Close()) })
+	ctx := context.Background()
+	driverGorm := gormOf(t, readOnly)
+
+	writes := map[string]func() error{
+		"builder Exec": func() error {
+			return session.Executor().Exec(ctx, session.Query().Insert(readOnlyProbe).Columns("label").Values("builder")).Error
+		},
+		"builder Exec of an UPDATE": func() error {
+			return session.Executor().Exec(ctx, session.Query().Update(readOnlyProbe).Set("label", "builder")).Error
+		},
+		"ExecRaw": func() error {
+			return session.Executor().ExecRaw(ctx, "UPDATE "+readOnlyProbe+" SET label = ?", "raw").Error
+		},
+		"GetDriver().Exec": func() error {
+			return driverGorm.Exec("DELETE FROM " + readOnlyProbe).Error
+		},
+		"gorm Create": func() error {
+			return driverGorm.Create(&readOnlyProbeRow{Label: "gorm"}).Error
+		},
+		"ORM Create": func() error {
+			return orm.New[*readOnlyProbeRow](session).Create(&readOnlyProbeRow{Label: "orm"})
+		},
+		"a transaction": func() error {
+			return session.Transaction(ctx, func(tx dbCore.IDBTransaction) error {
+				return tx.ExecRaw(ctx, "INSERT INTO "+readOnlyProbe+" (label) VALUES ('tx')").Error
+			})
+		},
+	}
+	for name, write := range writes {
+		t.Run(name, func(t *testing.T) {
+			assert.ErrorIs(t, write(), dbCore.ErrReadOnly)
+		})
+	}
+
+	var labels []string
+	require.NoError(t, ownerGorm.Model(&readOnlyProbeRow{}).Order("id").Pluck("label", &labels).Error)
+	assert.Equal(t, []string{"owner"}, labels, "no write may reach the table")
+
+	t.Run("reads", func(t *testing.T) {
+		var found []readOnlyProbeRow
+		res := session.Executor().Find(ctx, session.Query().Select("id", "label").From(readOnlyProbe), &found)
+		require.NoError(t, res.Error)
+		require.Len(t, found, 1)
+		assert.Equal(t, "owner", found[0].Label)
+
+		var raw []readOnlyProbeRow
+		require.NoError(t, session.Executor().FindRaw(ctx, &raw, "SELECT id, label FROM "+readOnlyProbe+" WHERE label = ?", "owner").Error)
+		assert.Len(t, raw, 1)
+
+		count, err := session.Executor().Count(ctx, session.Query().Select("COUNT(*)").From(readOnlyProbe))
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), count)
+
+		all, err := orm.New[*readOnlyProbeRow](session).All()
+		require.NoError(t, err)
+		require.Len(t, all, 1)
+		assert.Equal(t, "owner", all[0].Label)
+		ormCount, err := orm.New[*readOnlyProbeRow](session).Count()
+		require.NoError(t, err)
+		assert.Equal(t, int64(1), ormCount)
+
+		require.NoError(t, session.Transaction(ctx, func(tx dbCore.IDBTransaction) error {
+			var inTx []readOnlyProbeRow
+			if err := tx.Find(ctx, tx.Query().Select("id", "label").From(readOnlyProbe), &inTx).Error; err != nil {
+				return err
+			}
+			assert.Len(t, inTx, 1)
+			return nil
+		}), "a read-only transaction commits")
+	})
+}
+
+// TestReadOnlyRefusesWritesOnPostgres: the dialect, the guard and the server each refuse a
+// write on a read_only Postgres datasource. The server's refusal is the one layer that sees a
+// write sent on the *sql.DB that DB() returns, which the guard does not.
+func TestReadOnlyRefusesWritesOnPostgres(t *testing.T) {
+	owner := waitForDatasource(t, func() (dbCore.IDataSource, error) {
+		return pgv2.NewDataSource(pgConfig())
+	})
+	t.Cleanup(func() { assert.NoError(t, owner.Close()) })
+	readOnly, err := pgv2.NewDataSource(readOnlyConfig(pgConfig))
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, readOnly.Close()) })
+
+	assertReadOnlyRefusesWrites(t, owner, readOnly)
+
+	t.Run("the server makes every transaction read-only", func(t *testing.T) {
+		session, err := readOnly.NewSession()
+		require.NoError(t, err)
+		t.Cleanup(func() { assert.NoError(t, session.Close()) })
+
+		var setting []struct{ Setting string }
+		require.NoError(t, session.Executor().FindRaw(context.Background(), &setting,
+			"SELECT current_setting('default_transaction_read_only') AS setting").Error)
+		require.Len(t, setting, 1)
+		assert.Equal(t, "on", setting[0].Setting)
+
+		sqlDB, err := gormOf(t, readOnly).DB()
+		require.NoError(t, err)
+		_, err = sqlDB.ExecContext(context.Background(), "INSERT INTO "+readOnlyProbe+" (label) VALUES ('bypass')")
+		requireServerReadOnlyRefusal(t, err, "the guard does not see the *sql.DB")
+	})
+
+	// set_config is a SELECT that would switch the server's check off for good on the pooled
+	// connection it ran on, and let every write sent there afterwards through: a writing
+	// function through the guard, an INSERT on DB(). With one connection in the pool, each
+	// statement below runs on the connection it would have switched.
+	t.Run("set_config cannot switch the server's check off", func(t *testing.T) {
+		cfg := readOnlyConfig(pgConfig)
+		cfg["properties"] = map[string]any{"maxOpenConnections": 1}
+		single, err := pgv2.NewDataSource(cfg)
+		require.NoError(t, err)
+		t.Cleanup(func() { assert.NoError(t, single.Close()) })
+		session, err := single.NewSession()
+		require.NoError(t, err)
+		t.Cleanup(func() { assert.NoError(t, session.Close()) })
+		ctx := context.Background()
+
+		const off = "set_config('default_transaction_read_only', 'off', false)"
+		var rows []map[string]any
+		assert.ErrorIs(t, session.Executor().FindRaw(ctx, &rows, "SELECT "+off).Error, dbCore.ErrReadOnly)
+		assert.ErrorIs(t, session.Executor().Find(ctx, session.Query().Select(off), &rows).Error, dbCore.ErrReadOnly)
+		assert.ErrorIs(t, gormOf(t, single).Raw("SELECT "+off).Scan(&rows).Error, dbCore.ErrReadOnly)
+
+		var setting []struct{ Setting string }
+		require.NoError(t, session.Executor().FindRaw(ctx, &setting,
+			"SELECT current_setting('default_transaction_read_only') AS setting").Error)
+		require.Len(t, setting, 1)
+		assert.Equal(t, "on", setting[0].Setting)
+
+		// A function that writes is no word the guard refuses; the server refuses what it does.
+		err = session.Executor().FindRaw(ctx, &rows, "SELECT nextval(pg_get_serial_sequence('"+readOnlyProbe+"', 'id'))").Error
+		requireServerReadOnlyRefusal(t, err, "the guard lets a function call through")
+		sqlDB, err := gormOf(t, single).DB()
+		require.NoError(t, err)
+		_, err = sqlDB.ExecContext(ctx, "INSERT INTO "+readOnlyProbe+" (label) VALUES ('bypass')")
+		requireServerReadOnlyRefusal(t, err, "the guard does not see the *sql.DB")
+	})
+
+	// An operator's own setting in options wins, spelt any way Postgres reads it, and an empty
+	// key of its own sends nothing, as behind a PgBouncer that refuses the parameter. The
+	// server then keeps its default, off, and the dialect and the guard refuse writes alone.
+	t.Run("options decide what the server is asked", func(t *testing.T) {
+		for name, options := range map[string]map[string]any{
+			"an empty key, to send nothing": {"default_transaction_read_only": ""},
+			"a -c switch spelt with dashes": {"options": "-c default-transaction-read-only=off"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				cfg := readOnlyConfig(pgConfig)
+				cfg["options"] = options
+				ds, err := pgv2.NewDataSource(cfg)
+				require.NoError(t, err)
+				t.Cleanup(func() { assert.NoError(t, ds.Close()) })
+				session, err := ds.NewSession()
+				require.NoError(t, err)
+				t.Cleanup(func() { assert.NoError(t, session.Close()) })
+				ctx := context.Background()
+
+				var setting []struct{ Setting string }
+				require.NoError(t, session.Executor().FindRaw(ctx, &setting,
+					"SELECT current_setting('default_transaction_read_only') AS setting").Error)
+				require.Len(t, setting, 1)
+				assert.Equal(t, "off", setting[0].Setting)
+				assert.ErrorIs(t, session.Executor().ExecRaw(ctx, "INSERT INTO "+readOnlyProbe+" (label) VALUES ('opt-out')").Error, dbCore.ErrReadOnly)
+			})
+		}
+	})
+}
+
+// requireServerReadOnlyRefusal asserts err is Postgres's own refusal of a write in a read-only
+// transaction, SQLSTATE 25006, which arrives as the driver's error: only gorgany's own
+// refusals wrap core.ErrReadOnly.
+func requireServerReadOnlyRefusal(t *testing.T, err error, why string) {
+	t.Helper()
+
+	require.Error(t, err, "past the guard, the server must refuse the write")
+	assert.NotErrorIs(t, err, dbCore.ErrReadOnly, why)
+	var pgErr *pgconn.PgError
+	require.ErrorAs(t, err, &pgErr)
+	assert.Equal(t, "25006", pgErr.Code, "read_only_sql_transaction")
+}
+
+// TestReadOnlyRefusesWritesOnMySQL: the dialect and the guard refuse a write on a read_only
+// MySQL datasource. The server is not asked to make the session read-only (see the MySQL
+// BuildDSN), which this pins: the session variable stays off.
+func TestReadOnlyRefusesWritesOnMySQL(t *testing.T) {
+	requireMySQL(t)
+
+	owner := waitForDatasource(t, func() (dbCore.IDataSource, error) {
+		return mysqlv2.NewDataSource(mysqlConfig())
+	})
+	t.Cleanup(func() { assert.NoError(t, owner.Close()) })
+	readOnly, err := mysqlv2.NewDataSource(readOnlyConfig(mysqlConfig))
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, readOnly.Close()) })
+
+	assertReadOnlyRefusesWrites(t, owner, readOnly)
+
+	var readOnlySession []struct{ Value int64 }
+	require.NoError(t, gormOf(t, readOnly).Raw("SELECT @@SESSION.transaction_read_only AS value").Scan(&readOnlySession).Error)
+	require.Len(t, readOnlySession, 1)
+	assert.Equal(t, int64(0), readOnlySession[0].Value)
 }

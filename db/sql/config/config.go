@@ -100,27 +100,46 @@ type DataSource struct {
 	// ALTERs, and the session store creates its own table. Against a schema another system
 	// migrates, each of those is a write nobody reviewed.
 	//
-	// In this build the flag does two things. The datasource reports it through
-	// core.PolicyOf, and its connection refuses DDL: Postgres and MySQL install the guard in
-	// db/sql/gorm/guard, which refuses a schema change that reaches gorm. Nothing yet refuses
-	// the rest up front. db:migrate, db:seed and db:diff still run, and fail at the first DDL
-	// they send; a migration or seeder that only writes rows, into migrations and seeders
-	// tables that already exist, still runs and is recorded; and the provider still attaches
-	// the session store's migrations to such a default. Refusing those is the commands' and
-	// the provider's job, which a later change adds. DDL the guard cannot see, such as a Postgres DO block or a procedure that
-	// runs DDL, is not refused either, so a principal without DDL rights is the guarantee.
+	// In this build the datasource reports the flag through core.PolicyOf, which is what
+	// makes db:migrate, db:seed and db:diff refuse it before they send any SQL, db:migrate
+	// leave the session store's migrations out on such a default, and database session
+	// storage refuse one. Its connection refuses DDL as well: Postgres and MySQL install the
+	// guard in db/sql/gorm/guard, which refuses a schema change that reaches gorm. Cascading
+	// saves are not refused yet. DDL the guard cannot see, such as a Postgres DO block or a
+	// procedure that runs DDL, is not refused either, so a principal without DDL rights is the
+	// guarantee.
 	ExternalSchema bool
 
-	// ReadOnly declares that nothing may be written through this datasource. No engine in
-	// this build enforces it, so Postgres and MySQL refuse the key, and driver.New refuses a
-	// datasource from any other driver that does not report it (core.PolicyReporter): a flag
-	// that is accepted but not enforced reads as a guarantee it is not. The SQL Server engine
-	// that follows is to enforce it with a dialect that refuses writes, a guard on the
-	// connection (guard.InstallReadOnly) and ApplicationIntent=ReadOnly.
+	// ReadOnly declares that nothing may be written through this datasource.
+	//
+	// Postgres and MySQL enforce it in layers. Their dialect refuses to render an INSERT,
+	// UPDATE, DELETE or upsert, so a builder from the datasource's sessions and transactions
+	// fails where the write is built. A guard on the connection (guard.InstallReadOnly)
+	// refuses a write that reaches gorm any other way, in its callbacks and again as each
+	// statement is sent. db:migrate, db:seed and db:diff refuse the datasource, and so does
+	// database session storage on a read-only default. Those refusals are gorgany's own, and
+	// each wraps core.ErrReadOnly.
+	//
+	// Postgres also asks the server to make every transaction read-only
+	// (default_transaction_read_only=on), unless options set that parameter themselves; set
+	// empty, it sends nothing, which is what a PgBouncer before 1.26 that does not track the
+	// parameter needs. The server's refusal is the driver's error, SQLSTATE 25006, and does not
+	// wrap core.ErrReadOnly. The guard refuses the SET and set_config calls that would switch
+	// the setting off, but one it does not see, sent on DB() or run by a function a query
+	// calls, switches it off on that pooled connection for as long as the connection lives.
+	// MySQL has no variable every server it meets knows, so it asks for nothing; one an
+	// operator sets under options is refused by the server as error 1792, the driver's error
+	// too.
+	//
+	// driver.New refuses a datasource from any other driver that does not report the flag
+	// (core.PolicyReporter): a flag that is accepted but not enforced reads as a guarantee it
+	// is not. The SQL Server engine that follows is to enforce it with a dialect that refuses
+	// writes, the same guard and ApplicationIntent=ReadOnly.
 	//
 	// It is a safety net, not a permission: the guards recognise write statements, they do
-	// not prove their absence. When a guarantee is what you need, connect as a principal
-	// that can only read.
+	// not prove their absence, and a statement sent on the *sql.DB that DB() returns does not
+	// pass them. When a guarantee is what you need, connect as a principal that can only
+	// read.
 	ReadOnly bool
 
 	// LazyConnect skips connecting at boot, so the first query opens the first connection

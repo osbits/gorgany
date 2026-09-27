@@ -35,6 +35,11 @@ type gormMySQLDataSource struct {
 	// externalSchema carries databases.<name>.external_schema, which Policy reports. The
 	// connection's DDL guard is installed from the same flag, so the two cannot disagree.
 	externalSchema bool
+
+	// readOnly carries databases.<name>.read_only, which Policy reports and Dialect hands
+	// every builder. The connection's write guard is installed from the same flag, so none of
+	// them can disagree.
+	readOnly bool
 }
 
 // NewDataSource creates a MySQL datasource from a raw `databases.<name>` map.
@@ -53,6 +58,17 @@ func NewDataSource(config map[string]any) (dbCore.IDataSource, error) {
 // Settings MySQL cannot honour are refused before anything is opened; see refuseUnsupported.
 // With external_schema, the connection refuses DDL (see guard.InstallExternalSchema) from
 // before the first statement anyone can send on it.
+//
+// With read_only, writes are refused in two places, the second of which sees what the first
+// cannot. The dialect refuses to render a write, so a builder from this datasource's sessions
+// and transactions fails where the write is built (MySQLDialect.ReadOnly). The guard on the
+// connection refuses one that reaches gorm any other way — an app's Exec or Raw, gorm's
+// Create, Update and Delete, the Migrator — from before the first statement anyone can send on
+// it (guard.InstallReadOnly). Unlike Postgres, the server is not asked to make the session
+// read-only; BuildDSN says why. So a write the guard never sees, such as one sent on the
+// *sql.DB that DB() returns, or one a stored routine the statement calls runs, reaches the
+// server as any other would. Both are a safety net; a user that can only read is the
+// guarantee.
 //
 // Without lazy_connect the constructor talks to the server twice, and an unreachable one
 // fails it, as it always has: gorm.io/driver/mysql asks for SELECT VERSION() while it
@@ -86,12 +102,32 @@ func NewDataSourceWithConfig(cfg dsconfig.DataSource) (dbCore.IDataSource, error
 		return nil, fmt.Errorf("mysql: cannot open connection to %s:%d/%s: %w", cfg.Host, cfg.Port, cfg.Database, err)
 	}
 
+	ds, err := fromOpened(db, cfg)
+	if err != nil {
+		return nil, closeAfter(db, err)
+	}
+	return ds, nil
+}
+
+// fromOpened finishes a datasource on db, the handle gorm.Open returned for cfg: it installs
+// the guards cfg's policy asks for, applies the pool settings and statement logging, and
+// carries the flags the datasource reports and the dialect it speaks.
+//
+// It is split from NewDataSourceWithConfig, which opens db from a DSN, so that a test can
+// finish a datasource on a handle over a driver of its own and see exactly what reaches it.
+// The caller closes db when it fails.
+func fromOpened(db *gorm.DB, cfg dsconfig.DataSource) (*gormMySQLDataSource, error) {
 	// Installed on the handle gorm.Open returned, before Debug() below derives one from it:
-	// every handle derived from it shares its callbacks and its guarded pool, so the guard
-	// covers the logging handle, every session and every transaction.
+	// every handle derived from it shares its callbacks and its guarded pool, so the guards
+	// cover the logging handle, every session and every transaction.
 	if cfg.ExternalSchema {
 		if err := guard.InstallExternalSchema(db, dbCore.LexiconMySQL); err != nil {
-			return nil, closeAfter(db, fmt.Errorf("mysql: %w", err))
+			return nil, fmt.Errorf("mysql: %w", err)
+		}
+	}
+	if cfg.ReadOnly {
+		if err := guard.InstallReadOnly(db, dbCore.LexiconMySQL); err != nil {
+			return nil, fmt.Errorf("mysql: %w", err)
 		}
 	}
 
@@ -121,6 +157,7 @@ func NewDataSourceWithConfig(cfg dsconfig.DataSource) (dbCore.IDataSource, error
 		db:                    db,
 		allowUnfaithfulUpsert: cfg.AllowUnfaithfulUpsert,
 		externalSchema:        cfg.ExternalSchema,
+		readOnly:              cfg.ReadOnly,
 	}, nil
 }
 
@@ -137,23 +174,14 @@ func NewDataSourceWithConfig(cfg dsconfig.DataSource) (dbCore.IDataSource, error
 //     username and password, which is what method "sql" and an absent block mean. Any other
 //     method, or any other setting under auth, would be dropped on the floor, and the
 //     sign-in that followed would not be the one configured.
-//   - read_only is refused until this engine enforces it. Accepting a flag that nothing
-//     enforces would read as a guarantee it is not.
 //
-// external_schema and lazy_connect are honoured, so they are not here. search_path is
-// refused by BuildDSN, which is where it would otherwise be dropped.
+// external_schema, read_only and lazy_connect are honoured, so they are not here. search_path
+// is refused by BuildDSN, which is where it would otherwise be dropped.
 func refuseUnsupported(cfg dsconfig.DataSource) error {
 	if cfg.Instance != "" {
 		return dbCore.Unsupported(DialectName, "instance", "named instances are a SQL Server concept")
 	}
-	if err := refuseNonSQLAuth(cfg.Auth); err != nil {
-		return err
-	}
-	if cfg.ReadOnly {
-		return dbCore.Unsupported(DialectName, "read_only",
-			"not yet enforced on this engine in this build; use a read-only database role")
-	}
-	return nil
+	return refuseNonSQLAuth(cfg.Auth)
 }
 
 // refuseNonSQLAuth refuses an auth block that asks for anything but the top-level username
@@ -197,6 +225,19 @@ func closeAfter(db *gorm.DB, err error) error {
 // SearchPath is rejected. MySQL has no schema search path — a schema *is* a
 // database — so honouring it is impossible and ignoring it would silently connect
 // to the wrong place.
+//
+// ReadOnly adds nothing here, though Postgres's BuildDSN asks its server for read-only
+// transactions. MySQL's equivalent is a session variable, and go-sql-driver/mysql sends every
+// parameter it does not know as `SET <name> = <value>` right after it connects, so an unknown
+// variable fails that SET and with it every connection. No one name is known to all the
+// servers this engine meets: transaction_read_only exists from MySQL 5.7.20 and in MariaDB
+// from 11.1, and tx_read_only in MySQL before 8.0.3 and in every MariaDB, so MySQL 8 refuses
+// tx_read_only, and MySQL 5.7 before 5.7.20 and MariaDB before 11.1 refuse
+// transaction_read_only. The DSN is built before the server has said what it is, and with
+// lazy_connect it is never asked. So a read_only MySQL datasource relies on the dialect, the
+// guard and, as the guarantee, a user that can only read. An operator who knows the server
+// can still set the variable its server has under options, which this passes through as it
+// would any other.
 func BuildDSN(cfg dsconfig.DataSource) (string, error) {
 	if cfg.SearchPath != "" {
 		return "", dbCore.Unsupported(DialectName, "search_path",
@@ -339,13 +380,12 @@ func validateDSNParam(key string) error {
 // builders from this method, so a hard-coded &MySQLDialect{} meant no ORM caller could ever
 // set it.
 func (ds *gormMySQLDataSource) Dialect() dbCore.SQLDialect {
-	return &MySQLDialect{AllowUnfaithfulUpsert: ds.allowUnfaithfulUpsert}
+	return &MySQLDialect{AllowUnfaithfulUpsert: ds.allowUnfaithfulUpsert, ReadOnly: ds.readOnly}
 }
 
 // Policy reports what the datasource's configuration allows (see dbCore.DataSourcePolicy).
-// ReadOnly is always false: NewDataSourceWithConfig refuses read_only on this engine.
 func (ds *gormMySQLDataSource) Policy() dbCore.DataSourcePolicy {
-	return dbCore.DataSourcePolicy{ExternalSchema: ds.externalSchema}
+	return dbCore.DataSourcePolicy{ExternalSchema: ds.externalSchema, ReadOnly: ds.readOnly}
 }
 
 // GetDriver returns the underlying *gorm.DB.

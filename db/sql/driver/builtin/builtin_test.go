@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/osbits/gorgany/v2/app/core"
+	dsconfig "github.com/osbits/gorgany/v2/db/sql/config"
+	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
 	"github.com/osbits/gorgany/v2/db/sql/driver"
 	_ "github.com/osbits/gorgany/v2/db/sql/driver/builtin"
 	"github.com/stretchr/testify/assert"
@@ -38,4 +40,27 @@ func TestRegisteredNamesAreSorted(t *testing.T) {
 	require.Contains(t, names, "mysql_gorm")
 	require.Contains(t, names, "postgres_gorm")
 	assert.IsIncreasing(t, names)
+}
+
+// TestBothEnginesAcceptReadOnlyThroughTheRegistry: Postgres and MySQL used to refuse
+// read_only until they enforced it, and driver.New refuses a datasource that does not report a
+// flag its config sets. Both enforce it now, so the registry hands back a datasource that
+// reports it, lazily, since nothing listens on 127.0.0.1:1.
+func TestBothEnginesAcceptReadOnlyThroughTheRegistry(t *testing.T) {
+	for _, name := range []string{"postgres_gorm", "mysql_gorm"} {
+		t.Run(name, func(t *testing.T) {
+			ds, err := driver.New(dsconfig.DataSource{
+				Driver:      name,
+				Host:        "127.0.0.1",
+				Port:        1,
+				Database:    "reports",
+				ReadOnly:    true,
+				LazyConnect: true,
+			})
+			require.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, ds.Close()) })
+
+			assert.Equal(t, dbCore.DataSourcePolicy{ReadOnly: true}, dbCore.PolicyOf(ds))
+		})
+	}
 }

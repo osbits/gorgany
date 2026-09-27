@@ -353,6 +353,52 @@ func TestGuardReadOnlyShapeRefusesLocksAndSequences(t *testing.T) {
 	assert.ErrorContains(t, dbCore.GuardReadOnlyShape("SELECT * FROM legacy WITH ([updlock])", ts), "SELECT … WITH (UPDLOCK) statement refused")
 }
 
+// TestGuardsRefuseSetConfig: set_config is SET as a function, which a SELECT can call, and
+// set_config('default_transaction_read_only', 'off', false) switches off, for the rest of the
+// pooled connection's life, the read-only transactions a read_only Postgres datasource asks
+// the server for. Both guards refuse a call of it however the name is qualified, quoted or
+// spaced, at any depth, and a call through a U&"…" name, whose escapes the guard does not
+// decode. A column of that name, the name in a literal or a comment, and a U&"…" name that is
+// not called are left alone.
+func TestGuardsRefuseSetConfig(t *testing.T) {
+	const off = "('default_transaction_read_only', 'off', false)"
+	refused := corpus{common: []string{
+		"SELECT set_config" + off,
+		"SELECT SET_CONFIG" + off,
+		"SELECT set_config /* spaced */ " + off,
+		"SELECT pg_catalog.set_config" + off,
+		`SELECT "set_config"` + off,
+		`SELECT pg_catalog."set_config"` + off,
+		"SELECT * FROM set_config" + off + " AS s",
+		"SELECT id FROM legacy WHERE set_config" + off + " IS NOT NULL",
+		"SELECT id FROM legacy WHERE id IN (SELECT length(set_config" + off + "))",
+		"WITH s AS (SELECT set_config" + off + " AS v) SELECT v FROM s",
+		`SELECT U&"set\005fconfig"` + off,
+		`SELECT u&"set!005fconfig" UESCAPE '!' ` + off,
+	}, perEngine: map[string][]string{
+		"postgres": {"SELECT set_config($1, $2, false)", "SELECT set_config(E'default_transaction_read_only', 'off', false)"},
+		"mysql":    {"SELECT `set_config`('default_transaction_read_only', 'off', 0)"},
+		"tsql":     {"SELECT [set_config]('default_transaction_read_only', 'off', 0)"},
+	}}
+	refused.each(t, refuses(dbCore.GuardReadOnlySQL, dbCore.ErrReadOnly))
+	refused.each(t, refuses(dbCore.GuardReadOnlyShape, dbCore.ErrReadOnly))
+
+	allowed := corpus{common: []string{
+		"SELECT set_config FROM legacy",
+		"SELECT current_setting('default_transaction_read_only')",
+		"SELECT my_set_config(1) FROM legacy",
+		"SELECT 'set_config(1)' FROM legacy",
+		"SELECT id FROM legacy /* set_config(1) */",
+		`SELECT U&"d\0061ta" FROM legacy`,
+	}}
+	allowed.each(t, allows(dbCore.GuardReadOnlySQL))
+	allowed.each(t, allows(dbCore.GuardReadOnlyShape))
+
+	pg := dbCore.LexiconPostgres
+	assert.ErrorContains(t, dbCore.GuardReadOnlyShape("SELECT pg_catalog.set_config"+off, pg), "set_config() statement refused")
+	assert.ErrorContains(t, dbCore.GuardReadOnlySQL(`SELECT U&"set\005fconfig"`+off, pg), `U&"…"() statement refused`)
+}
+
 // TestGuardReadOnlyShapeOnSQLServerReadsEveryWord: SQL Server needs no ";" before the next
 // statement, so a statement with a SELECT's shape can still end in a write, and builder SQL
 // carries an app's raw fragments. Under its lexicon the shape check is the deep check.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/osbits/gorgany/v2/db/sql/core"
+	"github.com/osbits/gorgany/v2/db/sql/gorm/internal/rendered"
 
 	"gorm.io/gorm"
 )
@@ -14,6 +15,14 @@ import (
 // Every method that renders a builder checks ToSQL's error first, so a construct
 // MySQL cannot express surfaces as QueryResult.Error naming the construct instead
 // of as an opaque driver syntax error.
+//
+// Those methods — Exec, Find, Count and ExecInsert — also mark the statement they send as
+// rendered by a gorgany dialect (see rendered.Mark), and the Raw ones do not. On a read_only
+// datasource the guard then checks a builder's SQL for its shape alone, which is what a
+// dialect's structure can get wrong, and not for words, since the dialect writes an
+// identifier such as a column named copy or handler unquoted; SQL an app wrote gets every
+// word checked. Each marks the handle it derives with WithContext, never e.db, so the mark
+// cannot reach a statement it did not send.
 type Executor struct {
 	db *gorm.DB
 }
@@ -30,7 +39,7 @@ func (e *Executor) Exec(ctx context.Context, query core.IQueryBuilder) core.Quer
 		return core.QueryResult{Error: err}
 	}
 
-	res := e.db.WithContext(ctx).Exec(sql, args...)
+	res := rendered.Mark(e.db.WithContext(ctx)).Exec(sql, args...)
 
 	return core.QueryResult{
 		Error:        res.Error,
@@ -49,7 +58,7 @@ func (e *Executor) Find(ctx context.Context, query core.IQueryBuilder, dest inte
 		return core.QueryResult{Error: err}
 	}
 
-	res := e.db.WithContext(ctx).Raw(sql, args...).Scan(dest)
+	res := rendered.Mark(e.db.WithContext(ctx)).Raw(sql, args...).Scan(dest)
 
 	return core.QueryResult{
 		Error:        res.Error,
@@ -66,7 +75,7 @@ func (e *Executor) Count(ctx context.Context, query core.IQueryBuilder) (int64, 
 	}
 
 	var count int64
-	err = e.db.WithContext(ctx).Raw(sql, args...).Count(&count).Error
+	err = rendered.Mark(e.db.WithContext(ctx)).Raw(sql, args...).Count(&count).Error
 	return count, err
 }
 
@@ -121,14 +130,15 @@ func (e *Executor) CountRaw(ctx context.Context, sql string, args ...interface{}
 // values back with RETURNING instead.
 //
 // Sending on the pool goes past gorm's callbacks, but not past a guard from
-// db/sql/gorm/guard, which guards the pool too: the INSERT is checked as it is sent.
+// db/sql/gorm/guard, which guards the pool too: the INSERT is checked as it is sent, and on a
+// read_only datasource refused there, if a dialect that is not read-only rendered it.
 func (e *Executor) ExecInsert(ctx context.Context, query core.IQueryBuilder) core.InsertResult {
 	sql, args, err := query.ToSQL()
 	if err != nil {
 		return core.InsertResult{QueryResult: core.QueryResult{Error: err}}
 	}
 
-	db := e.db.WithContext(ctx)
+	db := rendered.Mark(e.db.WithContext(ctx))
 	pool := db.Statement.ConnPool
 	if pool == nil {
 		// No pool to read a result from; fall back to a plain exec.
