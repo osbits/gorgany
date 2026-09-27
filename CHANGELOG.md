@@ -7,37 +7,28 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [Unreleased]
+## [2.5.0] - 2026-09-27
+
+SQL Server and Azure SQL join PostgreSQL and MySQL, as a second datasource on a schema another
+system owns, such as an EF Core database, or as the `default` gorgany owns. Two datasource
+flags come with it, `external_schema` and `read_only`, on every engine, and so do ORM fixes that
+change what Postgres and MySQL apps see too. No existing interface gains a method. The
+**Upgrade notes** say what an app on Postgres or MySQL has to check.
 
 ### Added
 
-- A rendering seam for the condition family in `db/sql/core`: `RenderContext`,
-  `ContextRenderer`, and `RenderCondition`, `RenderWhere` and `RenderHaving`. Conditions render
-  themselves and `Condition.ToSQL` takes no dialect, so an engine could not quote the
-  identifiers in a WHERE, HAVING or JOIN ON, or render the subqueries nested in one. Under a
-  context it can: the context says what an identifier is and how it is quoted, how a subquery,
-  an operator and an empty `IN` are rendered, and, with `Strict`, refuses what would otherwise
-  degrade quietly. Every built-in condition gains `ToSQLContext`, and its `ToSQL` is
-  `ToSQLContext(nil)`. `Condition` is unchanged, so app-defined conditions keep compiling and
-  render through their `ToSQL`; one that embeds a built-in condition is rendered through its
-  own `ToSQL` too, not the built-in's promoted `ToSQLContext`. Postgres and MySQL do not use
-  the seam and render what 2.4.3 did, apart from the two fixes below;
-  `db/sql/core/testdata/conditions.golden` and `db/sql/builder/testdata/pg_mysql.golden` now
-  pin that.
-- `core.BindParameterLimiter` / `core.BindParameterLimit(d)` and
-  `core.TriggerSensitiveReturning` / `core.ReturningBlockedByTriggers(d)`: optional dialect
-  capabilities, probed the way `SupportsReturning` is. Postgres and MySQL do not declare them,
-  so both probes answer there what callers assumed before they existed; the SQL Server dialect
-  (below) declares both, 2098 parameters and returning blocked by triggers.
+#### Every engine: datasource flags, policy and guards
+
 - Five datasource keys under `databases.<name>`: `instance`, `external_schema`, `read_only`,
   `lazy_connect`, and an `auth` block (`method`, `tenant_id`, `client_id`, `client_secret`,
   `certificate_path`, `certificate_password`, `send_certificate_chain`, `resource_id`,
-  `object_id`, `token_file_path`, `redirect_url`, `scope`, `login_timeout` in seconds). They are
-  parsed as strictly as the other keys: a flag that is not a boolean (an unresolved `${VAR}`
-  included), an unknown key under `auth` and a negative `login_timeout` all fail the boot.
-  A SQL Server or Azure spelling at the top level, such as `encrypt`, `server`, `fedauth`,
-  `ApplicationIntent` or `tenant_id`, gets a suggestion naming the key it belongs to. The SQL
-  Server engine (below) reads them. On Postgres and MySQL:
+  `object_id`, `token_file_path`, `redirect_url`, `scope`, `login_timeout` in seconds,
+  `token_cache` and `authentication_record_path`). They are parsed as strictly as the other
+  keys: a flag that is not a boolean (an unresolved `${VAR}` included), an unknown key under
+  `auth` and a negative `login_timeout` all fail the boot. A SQL Server or Azure spelling at the
+  top level, such as `encrypt`, `server`, `fedauth`, `ApplicationIntent` or `tenant_id`, gets a
+  suggestion naming the key it belongs to. The SQL Server engine reads them all. On Postgres
+  and MySQL:
   - `instance` is refused, since a named instance is a SQL Server concept.
   - `auth` is refused unless it is absent or `method: sql` with nothing else in it. That is the
     top-level username and password both engines have always used.
@@ -49,14 +40,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     storage refuses one (see Changed). So is a `Save` that would cascade into related
     entities. DDL the guard cannot see is not refused: what server code runs on a statement's
     behalf, such as a `CALL`, or a function or procedure that runs DDL, and a statement sent on
-    the `*sql.DB` that `DB()` returns. Dynamic SQL, whose statement the guard cannot read, is refused
-    instead: a Postgres `DO` block and MySQL's `PREPARE … FROM`. A principal without DDL rights
-    is the guarantee.
-  - `lazy_connect: true` works on both engines. The constructor opens no connection, so the
-    first query opens the first one, and an unreachable server or a bad credential surfaces
-    there rather than at boot. On MySQL it also skips gorm.io/driver/mysql's `SELECT VERSION()`.
-    Without the answer, the driver writes the SQL MySQL 8 takes, and MariaDB and MySQL 5.x
-    reject some of it, so leave the key off against those.
+    the `*sql.DB` that `DB()` returns. Dynamic SQL, whose statement the guard cannot read, is
+    refused instead: a Postgres `DO` block and MySQL's `PREPARE … FROM`. A principal without DDL
+    rights is the guarantee.
+  - `lazy_connect: true` opens no connection in the constructor, so the first query opens the
+    first one, and an unreachable server or a bad credential surfaces there rather than at
+    boot. On MySQL it also skips gorm.io/driver/mysql's `SELECT VERSION()`. Without the answer,
+    the driver writes the SQL MySQL 8 takes, and MariaDB and MySQL 5.x reject some of it, so
+    leave the key off against those.
 
   Each refusal is a `core.UnsupportedError` naming the key. It is returned before anything is
   dialled. A refused `auth` block is named by its method, and no other value from the block
@@ -68,25 +59,26 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `core.UnsupportedError` naming the driver and the key. Only the engine can enforce either
   flag, and a constructor written before they existed ignores them. A config that sets neither
   boots as before.
-- `core.DataSourcePolicy`, `core.PolicyReporter`, `core.PolicyOf`, `core.IsExternalSchema` and
-  `core.IsReadOnly`: what a datasource's configuration lets gorgany do beyond reading, and
-  `DataSourcePolicy.Refusal()`, the sentinel a refusal under it wraps. Any
-  `IDataSource` can be asked. One that does not implement `PolicyReporter`, including one an app
-  wrote, reports the zero policy, which is what gorgany assumed of every datasource before, and
-  `driver.New` refuses it when its config sets either flag (see above). The Postgres and MySQL
-  datasources implement it. Every policy refusal gorgany makes, from whichever of its layers,
-  wraps `core.ErrExternalSchema` or `core.ErrReadOnly`, so `errors.Is` tells a refusal from a
-  database error, and names `external_schema` when both flags are set. A refusal the server
-  makes itself, where a `read_only` datasource asks it to (see below), is a database error.
+- `core.DataSourcePolicy`, `core.PolicyReporter`, `core.PolicyOf`, `core.IsExternalSchema`,
+  `core.IsReadOnly` and the sentinels `core.ErrExternalSchema` and `core.ErrReadOnly`: what a
+  datasource's configuration lets gorgany do beyond reading, and `DataSourcePolicy.Refusal()`,
+  the sentinel a refusal under it wraps. Any `IDataSource` can be asked. One that does not
+  implement `PolicyReporter`, including one an app wrote, reports the zero policy, which is what
+  gorgany assumed of every datasource before, and `driver.New` refuses it when its config sets
+  either flag (see above). The Postgres, MySQL and SQL Server datasources implement it. Every
+  policy refusal gorgany makes, from whichever of its layers, wraps `core.ErrExternalSchema` or
+  `core.ErrReadOnly`, so `errors.Is` tells a refusal from a database error, and names
+  `external_schema` when both flags are set. A refusal the server makes itself, where a
+  `read_only` datasource asks it to (see below), is a database error.
 - SQL guards in `db/sql/core`, which never quote the SQL in their errors. A refusal names what
   it refused in the guard's own words, as in `INSERT statement refused`:
   - `GuardReadOnlySQL` checks every word, for SQL written by hand. It refuses the words that
     write, lock or change the session wherever they stand, `NEXT VALUE FOR`, the locking
     clauses, `FOR SHARE` and `FOR KEY SHARE` included, and a call of Postgres's `set_config`,
     the function form of `SET`, however its name is qualified or quoted, and of a function
-    named with a `U&"…"` identifier, whose escapes could spell it. On SQL Server, which needs no `;`
-    between statements, it also refuses the reserved words that begin a statement and have no
-    place in a query, such as `BEGIN`, `COMMIT`, `IF`, `WAITFOR` and `SETUSER`, so
+    named with a `U&"…"` identifier, whose escapes could spell it. On SQL Server, which needs no
+    `;` between statements, it also refuses the reserved words that begin a statement and have
+    no place in a query, such as `BEGIN`, `COMMIT`, `IF`, `WAITFOR` and `SETUSER`, so
     `SELECT 1 DELETE FROM t` and `SELECT 1 BEGIN TRAN` are refused. SQL Server's locking
     clauses are table hints, and it refuses the ones that lock, `UPDLOCK`, `XLOCK`, `TABLOCK`,
     `TABLOCKX`, `HOLDLOCK`, `SERIALIZABLE` and `REPEATABLEREAD`, with or without `WITH`, and
@@ -98,13 +90,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     `Select` field can carry into a builder's SQL, and CTEs that read. On SQL Server it is
     `GuardReadOnlySQL`, since a structure check cannot tell where a statement ends there, and
     a builder carries an app's raw fragments into the SQL it renders.
-  - `GuardExternalSchemaSQL` refuses DDL and `SELECT … INTO` a permanent table. DDL includes
-    Postgres's `IMPORT FOREIGN SCHEMA`, `REASSIGN OWNED` and `SECURITY LABEL`, MySQL's
-    `IMPORT TABLE`, and the statements that rebuild what the owner manages:
+  - `GuardExternalSchemaSQL` refuses DDL and `SELECT … INTO` a new table. Only SQL Server's
+    `#temp` objects are exempt: a Postgres or MySQL temporary table carries no marker in its
+    name, so `CREATE TEMPORARY TABLE`, and Postgres's `SELECT … INTO TEMP`, are refused there.
+    DDL includes Postgres's `IMPORT FOREIGN SCHEMA`, `REASSIGN OWNED` and `SECURITY LABEL`,
+    MySQL's `IMPORT TABLE`, and the statements that rebuild what the owner manages:
     `REFRESH MATERIALIZED VIEW`, `CLUSTER`, `REINDEX`, `VACUUM FULL`, and MySQL's
-    `OPTIMIZE TABLE` and `REPAIR TABLE`. A plain `VACUUM` and
-    `ANALYZE` pass, since they rewrite no table and block no read or write. An `EXPLAIN` is
-    checked with the statement it explains standing alone, since `EXPLAIN ANALYZE` runs it:
+    `OPTIMIZE TABLE` and `REPAIR TABLE`. A plain `VACUUM` and `ANALYZE` pass, since they
+    rewrite no table and block no read or write. An `EXPLAIN` is checked with the statement it
+    explains standing alone, since `EXPLAIN ANALYZE` runs it:
     `EXPLAIN ANALYZE CREATE TABLE t AS SELECT 1` is refused, and `EXPLAIN SELECT …` passes. On
     MySQL, `SELECT … INTO @var` assigns user variables and passes, and `INTO OUTFILE` and
     `INTO DUMPFILE` are refused, since each writes a file on the database server. It also
@@ -118,19 +112,20 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     Server it also refuses the procedures that change a schema or who may use it, such as
     `sp_rename`, `sp_settriggerorder` and `sp_addrolemember`, `ENABLE TRIGGER` /
     `DISABLE TRIGGER`, and `DBCC`, whose `CHECKIDENT … RESEED` moves an owner's `IDENTITY` for
-    good. `#temp` objects are exempt. There it also refuses
-    `OPENQUERY`, `OPENROWSET` and `OPENDATASOURCE` at any depth, since the linked server or
-    OLE DB provider they reach, which may be this server, runs SQL the guard cannot read, and
-    `OPENROWSET(BULK …)` reads a file. That refusal is reported only when nothing else in the
-    statement is refused, and says to reach the data another way, such as a linked server's
-    four-part name. It compares procedure names folded for width, accents and case, as the
-    database's collation may, so `[sp_rénamé]` and a fullwidth `sp_rename` are refused.
+    good. There it also refuses `OPENQUERY`, `OPENROWSET` and `OPENDATASOURCE` at any depth,
+    since the linked server or OLE DB provider they reach, which may be this server, runs SQL
+    the guard cannot read, and `OPENROWSET(BULK …)` reads a file.
+    That refusal is reported only when nothing else in the statement is refused, and says to
+    reach the data another way, such as a linked server's four-part name. It compares procedure
+    names folded for width, accents and case, as the database's collation may, so
+    `[sp_rénamé]` and a fullwidth `sp_rename` are refused.
 
-  The lexicon presets `core.LexiconTSQL`, `core.LexiconPostgres` and `core.LexiconMySQL` tell
-  the guards how each engine reads literals, quoted identifiers and comments. Text the lexicon
-  cannot finish reading is refused. Where a server setting decides whether a backslash escapes,
-  the text is read both ways. The guards are a safety net: a database principal without the
-  rights is the guarantee.
+  `core.SQLLexicon` tells the guards how an engine reads literals, quoted identifiers and
+  comments, with its presets `core.LexiconTSQL`, `core.LexiconPostgres` and
+  `core.LexiconMySQL`; a driver an app registers describes its engine with a `SQLLexicon` of
+  its own. Text the lexicon cannot finish reading is refused. Where a server setting decides
+  whether a backslash escapes, the text is read both ways. The guards are a safety net: a
+  database principal without the rights is the guarantee.
 - `db/sql/gorm/guard`: `InstallReadOnly` and `InstallExternalSchema` enforce a datasource's
   policy on a gorm handle at two points.
   - A callback on each of gorm's Create, Update, Delete, Query, Row and Raw checks the SQL a
@@ -223,12 +218,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   not see what the server runs on a statement's behalf, such as a function a `SELECT` calls.
   On Postgres the server's check refuses a write made that way; on MySQL nothing refuses it,
   nor a write sent on the `*sql.DB` that `DB()` returns.
-- `IsAzureSQLHost`, `AzureCloudOf` and `Suggest` in `db/sql/config`. The first two recognise
-  Azure SQL, Synapse and Fabric SQL endpoints by whole DNS suffix, and tell which cloud one
-  belongs to. A host is recognised also when written as a connection string writes it, with
-  `tcp:`, `,1433` or `:1433`, or `\instance`, and a comma-separated host list is recognised
-  when any host in it is. `Suggest` is the "did you mean" matcher behind the config's own
-  suggestions, exported so an engine can suggest its own vocabulary with the same threshold.
 - `RequireOwnedDatasource`, `ResolveOwnedGorm`, `DomainDatasourceOf` and `OnOwnedDefault` in
   `command/db`: the ownership check the db commands make (see Changed); the datasource a
   registered domain belongs to, for an app's own schema-changing command, or the error a
@@ -240,47 +229,92 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   otherwise refused (see Changed). It is asked of each entity the cascade would reach, so a
   related entity's own relations cascade only if that entity opts in too. It changes nothing on
   a datasource gorgany owns.
-- `core.GormSQLServer`, the driver name `sqlserver_gorm`. It is registered by
-  `_ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver"`, which `driver/builtin` does not
-  import, so an app on `builtin` links no SQL Server code until it adds that import.
-- A SQL Server and Azure SQL engine, `db/sql/gorm/sqlserver/v2`, behind the `sqlserver_gorm`
-  driver, signing in with a SQL login, or with Microsoft Entra ID through
-  `driver/sqlserver/azuread` (below).
-  It targets SQL Server 2016 or newer and Azure SQL Database. Its dialect brackets every
-  identifier, so EF Core names such as `[dbo].[2024Orders]` and `[Order]` work, in conditions
-  too, through the new rendering seam. It translates `Limit` to `TOP (n)`, `Offset` to
-  `OFFSET … FETCH` (with `ORDER BY (SELECT NULL)` when there is no `ORDER BY`), `RETURNING` to
-  `OUTPUT`, `DO NOTHING` to an `INSERT … WHERE NOT EXISTS` with locking hints, `DO UPDATE` to
-  `MERGE … WITH (HOLDLOCK)`, `LATERAL` to `CROSS`/`OUTER APPLY` and `ILIKE` to `LIKE`, and a
-  `DISTINCT` written into the first select item goes before `TOP`. Unlike Postgres's, the
-  `DO NOTHING` translation fails a statement whose own rows share a key (Msg 2627), so
-  deduplicate them first, and concurrent multi-row upserts whose keys overlap can deadlock (Msg
-  1205, which carries a hint); docs/DIALECTS.md says what to do about both. It refuses what
-  T-SQL cannot express rather than emitting it, among others `DISTINCT ON`, `NATURAL JOIN`,
-  `ORDER BY` in a subquery without `Limit`, a nested `WITH`, `FILTER (WHERE …)`, a `GROUP BY`
-  position, a window frame T-SQL has no form for, Postgres and MySQL operators, and
-  `search_path`; docs/DIALECTS.md, "What SQL Server refuses, and translates", has the full
-  tables, each row with the test that pins it. The executor runs every statement through gorm,
-  so gorm rewrites `?` to `@pN`; it binds a `time.Time` in UTC, since SQL Server stores a
-  zoned time's wall clock in a `datetime2`, and a `json.RawMessage` as text rather than as
-  `varbinary`. A builder write reports its own row count from `ROWCOUNT_BIG()`, not the
-  driver's, which counts trigger rows; `ExecInsert` reads the key with `SCOPE_IDENTITY()`,
-  which works on a table with triggers where `OUTPUT` does not (Msg 334). A statement from the builder, or from
-  a raw path (`ExecRaw`, `FindRaw`, `CountRaw`, gorm's `db.Raw` and `db.Exec`), with more than
-  2098 bind parameters, counted after gorm expands `IN (?)` slices, is refused before it is
-  sent; SQL that gorm builds itself (its chain API, `Create`, `Update`, `Delete`) is not
-  counted, and reaches the server as Msg 8003. Every
-  connection runs `SET XACT_ABORT ON`, so an error dooms the transaction as it does on
-  Postgres. `read_only` and `external_schema` are enforced: the dialect refuses writes, the
-  connection's guards refuse writes or DDL, and `read_only` also sets
-  `ApplicationIntent=ReadOnly`. `ssl` maps to go-mssqldb's `encrypt` and defaults to encrypted
-  with the certificate verified; an Azure SQL host refuses anything weaker, and so does an Entra
-  ID sign-in on any host, which also refuses `options.trust_server_certificate`, since either
-  could hand its access token to whoever answers. `options` is a
-  closed list, with snake_case names for go-mssqldb's spaced keys. A named `instance` is
-  dialled through SQL Server Browser only on premises with no port; a set port wins, and an
-  Azure host drops it, each with a boot warning. Pool settings left unset default to 10 open
-  and 5 idle connections, closed after 5 minutes idle or 30 minutes in all.
+
+#### Every engine: rendering seam and dialect capabilities
+
+- A rendering seam for the condition family in `db/sql/core`: `RenderContext`,
+  `ContextRenderer`, and `RenderCondition`, `RenderWhere` and `RenderHaving`. Conditions render
+  themselves and `Condition.ToSQL` takes no dialect, so an engine could not quote the
+  identifiers in a WHERE, HAVING or JOIN ON, or render the subqueries nested in one. Under a
+  context it can: the context says what an identifier is and how it is quoted, how a subquery,
+  an operator and an empty `IN` are rendered, and, with `Strict`, refuses what would otherwise
+  degrade quietly. Every built-in condition gains `ToSQLContext`, and its `ToSQL` is
+  `ToSQLContext(nil)`. `Condition` is unchanged, so app-defined conditions keep compiling and
+  render through their `ToSQL`; one that embeds a built-in condition is rendered through its
+  own `ToSQL` too, not the built-in's promoted `ToSQLContext`. SQL Server renders through the
+  seam. Postgres and MySQL do not, and render what 2.4.3 did, apart from the `RawCondition` and
+  `Clone()` fixes (see Fixed); `db/sql/core/testdata/conditions.golden` and
+  `db/sql/builder/testdata/pg_mysql.golden` now pin that.
+- `core.BindParameterLimiter` / `core.BindParameterLimit(d)` and
+  `core.TriggerSensitiveReturning` / `core.ReturningBlockedByTriggers(d)`: optional dialect
+  capabilities, probed the way `SupportsReturning` is. Postgres and MySQL do not declare them,
+  so both probes answer there what callers assumed before they existed; the SQL Server dialect
+  declares both, 2098 parameters and returning blocked by triggers.
+
+#### SQL Server and Azure SQL: the engine
+
+- A SQL Server and Azure SQL engine, `db/sql/gorm/sqlserver/v2`, behind the driver name
+  `sqlserver_gorm` (`core.GormSQLServer`).
+  `_ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver"` registers it with a SQL login, and
+  `driver/sqlserver/azuread` (below) registers it with Microsoft Entra ID sign-in as well.
+  `driver/builtin` imports neither, so an app on `builtin` links no SQL Server code until it
+  adds one of them. It targets SQL Server 2016 or newer and Azure SQL Database.
+  - Its dialect brackets every identifier, so EF Core names such as `[dbo].[2024Orders]` and
+    `[Order]` work, in conditions too, through the rendering seam. It translates `Limit` to
+    `TOP (n)`, `Offset` to `OFFSET … FETCH` (with `ORDER BY (SELECT NULL)` when there is no
+    `ORDER BY`), `RETURNING` to `OUTPUT`, `DO NOTHING` to an `INSERT … WHERE NOT EXISTS` with
+    locking hints, `DO UPDATE` to `MERGE … WITH (HOLDLOCK)`, `LATERAL` to `CROSS`/`OUTER APPLY`
+    and `ILIKE` to `LIKE`, and a `DISTINCT` written into the first select item goes before
+    `TOP`. Unlike Postgres's, the `DO NOTHING` translation fails a statement whose own rows
+    share a key (Msg 2627), so deduplicate them first, and concurrent multi-row upserts whose
+    keys overlap can deadlock (Msg 1205, which carries a hint); docs/DIALECTS.md says what to do
+    about both. It refuses what T-SQL cannot express rather than emitting it, among others
+    `DISTINCT ON`, `NATURAL JOIN`, `ORDER BY` in a subquery without `Limit`, a nested `WITH`,
+    `FILTER (WHERE …)`, a `GROUP BY` position, a window frame T-SQL has no form for, Postgres
+    and MySQL operators, and `search_path`; docs/DIALECTS.md, "What SQL Server refuses, and
+    translates", has the full tables, each row with the test that pins it.
+  - Its executor runs every statement through gorm, so gorm rewrites `?` to `@pN`. It binds a
+    `time.Time` in UTC, since SQL Server stores a zoned time's wall clock in a `datetime2`, and a
+    `json.RawMessage` as text rather than as `varbinary`. A builder write reports its own row
+    count from `ROWCOUNT_BIG()`, not the driver's, which counts trigger rows; `ExecInsert` reads
+    the key with `SCOPE_IDENTITY()`, which works on a table with triggers where `OUTPUT` does
+    not (Msg 334). A statement from the builder, or from a raw path (`ExecRaw`, `FindRaw`,
+    `CountRaw`, gorm's `db.Raw` and `db.Exec`), with more than 2098 bind parameters, counted
+    after gorm expands `IN (?)` slices, is refused before it is sent; SQL that gorm builds
+    itself (its chain API, `Create`, `Update`, `Delete`) is not counted, and reaches the server
+    as Msg 8003. Every connection runs `SET XACT_ABORT ON`, so an error dooms the transaction
+    as it does on Postgres. Server errors with a known cause, such as Msg 334, 544, 272, 8003
+    and 1205, carry a hint that says what to change.
+  - `read_only` and `external_schema` are enforced: the dialect refuses writes, the
+    connection's guards refuse writes or DDL, and `read_only` also sets
+    `ApplicationIntent=ReadOnly`.
+  - `ssl` maps to go-mssqldb's `encrypt` and defaults to encrypted with the certificate
+    verified; an Azure SQL host refuses anything weaker, and so does an Entra ID sign-in on any
+    host, which also refuses `options.trust_server_certificate`, since either could hand its
+    access token to whoever answers. `options` is a closed list, with snake_case names for
+    go-mssqldb's spaced keys. A named `instance` is dialled through SQL Server Browser only on
+    premises with no port; a set port wins, and an Azure host drops it, each with a boot
+    warning. Pool settings left unset default to 10 open and 5 idle connections, closed after
+    5 minutes idle or 30 minutes in all. At boot the datasource takes its first token, under an
+    Entra ID method, and pings the server, trying five times over about fifteen seconds while
+    Azure SQL answers that the database is resuming or busy (40613, 40501, 40197 and others),
+    and failing at once on a failed login (18456) or a database the login cannot open (4060).
+    With `lazy_connect` it does neither, and the first query does both.
+
+  docs/SQLSERVER.md, new, is the guide: the imports, the keys a DataGrip or SSMS connection maps
+  to, signing in, adding an externally owned datasource to an app, mapping EF Core tables, SQL
+  Server as the owned `default`, and the known limitations.
+- In `db/sql/config`: `Auth`, the parsed `auth` block, whose `IsZero` reports a datasource
+  without one; and `IsAzureSQLHost`, `AzureCloudOf` and `Suggest`. The first two recognise
+  Azure SQL, Synapse and Fabric SQL endpoints by whole DNS suffix, and tell which cloud one
+  belongs to: `AzureCloudPublic`, `AzureCloudUSGov` or `AzureCloudChina`. A host is recognised
+  also when written as a connection string writes it, with `tcp:`, `,1433` or `:1433`, or
+  `\instance`, and a comma-separated host list is recognised when any host in it is. `Suggest`
+  is the "did you mean" matcher behind the config's own suggestions, exported so an engine can
+  suggest its own vocabulary with the same threshold.
+
+#### SQL Server: signing in with Microsoft Entra ID
+
 - An authenticator registry for SQL Server's token sign-ins: `sqlserver.RegisterAuthenticator`,
   `RegisteredAuthMethods`, and the `Authenticator`, `AuthRequest` and `TokenSource` types, with
   the method names as `AuthMethod*` constants. `auth.method` picks a registered method, and a
@@ -295,23 +329,23 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `sqlserver.DefaultLoginTimeout`, one minute, for every other method. An `AuthRequest` names
   the database as the engine's errors do, in `Target` (`host:port/db`), so an authenticator's
   errors name it the same way, and the engine wraps them with the method and the database,
-  which the authenticator therefore leaves out.
+  which the authenticator therefore leaves out. `sqlserver.ResolveScope` and
+  `sqlserver.ResolveCloud` give the token scope and the cloud a host's sign-in goes to.
 - `db/sql/driver/sqlserver/azuread`, the Microsoft Entra ID sign-in for SQL Server and Azure SQL.
   Importing it, in place of `driver/sqlserver`, registers the driver and seven `auth.method`
   values: `interactive` (the system browser), `device_code`, `azure_cli`, `azure_default`
   (azidentity's DefaultAzureCredential), `service_principal`, with a client secret or a PEM or
   PKCS#12 certificate, and `managed_identity` and `workload_identity` (next entry). Each method
   that signs in at an Entra ID authority builds its azidentity credential with the authority of
-  the host's cloud, public, US Government or China, as the token scope already follows the host;
+  the host's cloud, public, US Government or China, as the token scope follows the host;
   `azure_cli` signs in to the cloud `az cloud set` chose, and `managed_identity` asks the
   platform's identity endpoint. For a host that is not an Azure SQL endpoint, such as a private
   endpoint's own DNS name, an `auth.scope` naming a cloud's Azure SQL selects that cloud's
-  authority too; on an Azure SQL host, one naming another cloud is refused at boot
-  (`sqlserver.ResolveCloud`). A certificate that cannot be read is named by its path, and the
-  error says what is wrong with it: a PEM file given a password, an encrypted PEM key, or a
-  PKCS#12 file in the AES and SHA-256 profile OpenSSL 3 and current Windows export by default,
-  which azidentity cannot read (re-export it with `openssl pkcs12 -export -legacy`). Its content
-  is never quoted.
+  authority too; on an Azure SQL host, one naming another cloud is refused at boot. A
+  certificate that cannot be read is named by its path, and the error says what is wrong with
+  it: a PEM file given a password, an encrypted PEM key, or a PKCS#12 file in the AES and
+  SHA-256 profile OpenSSL 3 and current Windows export by default, which azidentity cannot read
+  (re-export it with `openssl pkcs12 -export -legacy`). Its content is never quoted.
 
   Each datasource has one credential and one token source, and shares neither with another
   datasource. The source hands every connection the same token. From its `RefreshOn` it renews
@@ -327,11 +361,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   the next connection tries again, and never opens a second prompt. No error contains a token.
   The package does not link go-mssqldb's own `azuread` package, which builds a credential, and
   so prompts, for every connection, nor azidentity's persistent cache, which links the operating
-  system's keychain. CI compiles its manual Azure SQL test, behind the `azuresql` tag, with
-  `go vet -tags=azuresql`.
-  docs/SQLSERVER.md, new, covers the imports, the keys a DataGrip or SSMS connection maps to,
-  `ssl`, `options`, the methods and what each takes, sovereign clouds, development and deployed
-  methods, and a second, externally owned datasource.
+  system's keychain. The manual test against a real Azure SQL Database, behind the `azuresql`
+  build tag, is compiled in CI by `go vet -tags=azuresql`.
 - `auth.method: managed_identity` and `auth.method: workload_identity`, registered by
   `driver/sqlserver/azuread` as `sqlserver.AuthMethodManagedIdentity` and
   `sqlserver.AuthMethodWorkloadIdentity`, for deployed apps that should store no secret.
@@ -343,11 +374,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   workload identity webhook mutated it still signs in as the identity the config names. A
   platform that cannot select a user-assigned identity the requested way, such as Cloud Shell or
   Azure Arc, refuses it at boot. It asks the platform's identity endpoint, so it has no authority
-  to choose, and only its token scope follows the host. Its `auth.login_timeout` defaults to
-  `sqlserver.DefaultManagedIdentityLoginTimeout`, two minutes, which covers the hundred or so
-  seconds azidentity spends retrying an instance metadata service that answers 410 while it
-  updates. MSAL caches its tokens for the whole process, so datasources on the same identity and
-  scope may be handed the same token.
+  to choose, and only its token scope follows the host. Its `auth.login_timeout` default of two
+  minutes covers the hundred or so seconds azidentity spends retrying an instance metadata
+  service that answers 410 while it updates. MSAL caches its tokens for the whole process, so
+  datasources on the same identity and scope may be handed the same token.
   `workload_identity` exchanges the Kubernetes service-account token projected into the pod.
   `auth.tenant_id`, `auth.client_id` and `auth.token_file_path` are each optional: one left empty
   comes from `AZURE_TENANT_ID`, `AZURE_CLIENT_ID` or `AZURE_FEDERATED_TOKEN_FILE`, which the AKS
@@ -359,8 +389,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   refusal of `resource_id`, `object_id` or `token_file_path` names the method that takes it, and
   `azure_default`'s refusal of `client_id` names `managed_identity`. The go-mssqldb and ADO.NET
   spellings, such as `activedirectorymsi` and `activedirectoryworkloadidentity`, get a suggestion
-  naming the new method. docs/SQLSERVER.md lists both methods, and says which variables each
-  deployed method reads by itself.
+  naming the gorgany method. docs/SQLSERVER.md says which variables each deployed method reads
+  by itself.
 - `auth.token_cache` (`memory`, the default, or `persistent`) and `auth.authentication_record_path`
   for `interactive` and `device_code`, and `db/sql/driver/sqlserver/azuread/persistentcache`, so
   that on a development machine a restarted process signs in without asking the person again.
@@ -390,120 +420,39 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   without cgo, or for a system azidentity keeps no cache on, the package still compiles and fails
   the boot with the reason. It is for development: the production image is built without cgo for
   `scratch`. docs/SQLSERVER.md, "Remembering the sign-in across restarts (development)", covers it.
-- `testsupport.Config.AllowAnyTarget` and `GORGANY_TEST_ALLOW_ANY_TARGET`, which switch off the
-  harness's new target guard (see Changed). Like `KeepData`, the variable switches it on, never
-  off.
-- A live SQL Server for the framework's own tests: an `mssql-live` service under the
-  `sqlserver` profile of `e2e/docker-compose.yml`, which `E2E_REQUIRE_SQLSERVER=1 sh e2e/run.sh`
-  starts, and an `mssql` service in the CI live-db job. Both run the same pinned image,
-  `mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04`, which is amd64-only.
-  `E2E_REQUIRE_SQLSERVER=1` makes the SQL Server cases fail rather than skip when the server is
-  unreachable, and fails a run in which none of them executed; `E2E_REQUIRE_LIVE` keeps meaning
-  Postgres and MySQL, so a run without SQL Server is unaffected. The cases are in
-  `e2e/tests/live_sqlserver_test.go`, and the ORM cases that run on every engine gain a
-  `sqlserver` subtest; docs/TESTING.md says how to run them, under Rosetta on Apple Silicon.
-- SQL Server as the `default` gorgany owns: it migrates up and down, seeds, diffs, stores and
-  sweeps database sessions, and runs under testsupport. docs/SQLSERVER.md, "SQL Server as the
-  owned `default`", covers each. The pieces:
-  - `auth.BatchedExpiredDeleteSQLServer`,
-    `DELETE TOP (?) FROM [sessions] WHERE [expiry] < SYSDATETIMEOFFSET()`, and
-    `auth.BatchedExpiredDeleteSQLFor(dialect)`, which returns it for `"sqlserver"` and
-    `auth.BatchedExpiredDeleteSQL` for any other name. `DbSessionRepository.DeleteExpired` runs
-    the statement for the dialect the `default` datasource reports, and a datasource that
-    reports none gets `BatchedExpiredDeleteSQL`, which is unchanged. SQL Server has neither
-    `LIMIT` nor `NOW()`, and `SYSDATETIMEOFFSET()` compares instants against the
-    `datetimeoffset` expiry, whatever the server's time zone. `AttributesMap` declares the
-    attribute bag `nvarchar(max)` on SQL Server, where `text` is deprecated and not Unicode,
-    and `text` elsewhere, as before.
-  - `migration.SessionsTableModelFor(dialect)`, the model the sessions migration uses on a
-    dialect: on SQL Server `id` and `user_id` are `nvarchar(255)` and `attributes`
-    `nvarchar(max)`, and elsewhere it is `SessionsTableModel()`, unchanged. The migration
-    picks the model by the connection's dialect. On SQL Server the version migration's `Down`
-    drops the column's DEFAULT constraint, which SQL Server names itself, before the column,
-    which SQL Server otherwise refuses (Msg 5074). It runs in the transaction `db:migrate down`
-    opens, so a failure takes both back. On SQL Server both migrations look `sessions` and its
-    `version` column up where the unqualified name resolves, the login's default schema and
-    then `dbo`, and so do `db:migrate` and `db:seed` for `migrations` and `seeders`. gorm's SQL
-    Server migrator finds a table or column of that name in any schema, so a same-named table
-    in another schema of the database, such as an externally owned one's, would otherwise be
-    taken for gorgany's.
-  - `dbCmd.TransactionalDDLDialects` gains `"sqlserver"`, so `db:diff` runs on a SQL Server
-    datasource. A live test runs `CREATE TABLE`, `CREATE INDEX`, `ALTER TABLE … ADD`, a foreign
-    key and a column comment in a transaction and finds them gone after its rollback, and
-    another runs the real `db:diff` on SQL Server, finds nothing it ran left behind, and then
-    runs its draft there. On SQL Server the draft adds an extended domain's struct column as
-    ``ALTER TABLE [<table>] ADD [<column>] nvarchar(255) NULL``; the Postgres statement is
-    unchanged. A statement the diff runs with bound arguments, which on SQL Server is the
-    `sp_addextendedproperty` call that stores a column comment, is drafted with its string
-    arguments written in as literals, since the draft runs statements without arguments; one
-    that binds anything else stops the diff before it writes a draft, with an error naming the
-    statement. On every dialect the diff records only the statements its own transaction
-    runs, and stops recording when it returns. The recorder sits on the handle every session of
-    the datasource shares, and it used to stay there, so a statement another session ran on the
-    pool during the diff was recorded into the draft. No statement the diff runs on Postgres
-    binds an argument, so the statements in a Postgres draft are byte for byte what they were.
-    The comment on the drafted migration's `Up` now says that `db:diff` drafts only for
-    PostgreSQL and SQL Server, whose DDL a transaction rolls back, so a new draft differs from
-    an older one in that comment.
-  - testsupport runs against SQL Server: `testsupport.DriverSQLServer` (`sqlserver_gorm`) and
-    `Database.IsSQLServer()`. With `GORGANY_TEST_DRIVER=sqlserver_gorm` the environment's
-    defaults follow the driver: port 14330, user `sa`, password `Gorgany-Test-1` and `SSL`
-    `true`. A SQL Server database gets `options.trust_server_certificate: true` for a host that
-    is not Azure SQL's and an `SSL` other than `strict`; `DatabaseConfig.TrustServerCertificate`
-    and `GORGANY_TEST_TRUST_SERVER_CERT` override that, and a value other than true or false is
-    a config error. So is an `SSL` the engine does not accept, such as a Postgres `require`
-    left in `GORGANY_TEST_SSL`. The harness creates the test database through `master` when it
-    is missing, with `READ_COMMITTED_SNAPSHOT ON`, and only for a name of letters, digits and
-    underscores and a host that is not Azure SQL's. A database with any other name that does
-    not exist fails the test at once, saying so. It empties tables by switching their
-    constraints off, deleting their rows in reverse order, reseeding each identity that has
-    issued a value so that the next row gets the identity's seed, and switching the
-    constraints back on `WITH CHECK`, reporting a failure of that last step even after an
-    earlier one. Truncations on one engine run one at a time, since two could deadlock.
-    testsupport still links no SQL Server code: a suite imports `driver/sqlserver`, and without
-    it the harness fails the test naming that import. Postgres and MySQL get the settings and
-    the statements they got before. docs/TESTING.md, "SQL Server", has the details.
 
-  **Upgrade note:** nothing changes on Postgres or MySQL. A testsupport suite that listed a
-  `sqlserver_gorm` database and failed with "truncation is not implemented for SQL Server
-  yet" now runs. With `GORGANY_TEST_DRIVER=sqlserver_gorm`, the port, user, password and SSL
-  the environment leaves unset now default to 14330, `sa`, `Gorgany-Test-1` and `true`, where
-  they were 5433, `postgres`, `test` and `disable` (the harness never sent that `disable` to
-  SQL Server). A `Databases` list set in code gets no defaults: its `Password` is used as
-  written, and an empty `SSL` means the engine's default, encrypted. What changed for such an
-  entry is that its `SSL` now reaches SQL Server, where it used to be dropped, so an entry
-  that copied `SSL: "disable"` from the Postgres example now really turns encryption off, and
-  that it gets `options.trust_server_certificate: true` unless it sets
-  `TrustServerCertificate`, its host is Azure SQL's or its `SSL` is `strict`.
+#### ORM on tables another system owns
 
 - `orm.TableWithTriggers`, `interface{ TableHasTriggers() bool }`. A model whose table has an
   enabled DML trigger that blocks `RETURNING` returns true, and `Create` and `Update` then read
   generated columns back without it. SQL Server refuses the `OUTPUT` clause `RETURNING` becomes
   on a table with a trigger on the statement's own action (Msg 334): a trigger on INSERT refuses
   every `Create`, one on UPDATE every `Update` of a model with `grgorm:"readback"` fields, and
-  one on DELETE nothing the ORM sends. The hint Msg 334 carries now names this interface.
-  `Create` then inserts through the executor's `ExecInsert`, which on SQL Server reads the key
-  with `SCOPE_IDENTITY()` in the same batch, the INSERT's own key and never one a trigger's
-  INSERT made, and reads any other generated column with a `SELECT` keyed on it; `Update`
-  re-reads the read-back fields with a `SELECT`. `SCOPE_IDENTITY()` reports only an `IDENTITY`
-  key, so on such a table a key from a default or a sequence, a `NEWSEQUENTIALID()` key, and
-  any key under an `INSTEAD OF INSERT` trigger has to be assigned by the entity; `VerifyModel`
-  says so. It is asked only where the dialect reports that triggers block its `RETURNING`
-  (`core.ReturningBlockedByTriggers`), so a model shared with Postgres keeps `RETURNING` there.
-- `grgorm:"readback"` (`core.GorganyORMReadBack`) marks a field whose column the server sets,
-  such as a rowversion, a computed column or a default the app never writes. `Create` reads it
-  back with the generated key, and `Update` reads it back after a write that succeeded, so the
-  entity holds the row's value and the next update guarded on it matches. Where the dialect's
-  `RETURNING` can be used, it is read in the statement itself: `UPDATE … RETURNING` on Postgres,
-  and on SQL Server `UPDATE … SET … OUTPUT INSERTED.… WHERE …`, whose rows are the rows the
-  UPDATE matched, so a guard still tells a lost write from a row that is gone. On MySQL, and on
-  a table whose model implements `TableWithTriggers`, it is a `SELECT` by every key column after
-  the INSERT or UPDATE, a statement of its own: a write another session commits between the two
-  is what it reads, so the entity can take that write's rowversion without its values, and a
-  guard on the rowversion then matches over it. On such a table, `Refresh` the entity before a
-  guarded update that must not overwrite a write it has not seen. The tag does not stop a field
-  being written, so a server-set column is usually tagged `gorm:"->"` too. It is matched as one
-  whole comma-separated value.
+  one on DELETE nothing the ORM sends. The hint Msg 334 carries names this interface for an ORM
+  model, and `ExecInsert` for the builder. `Create` then inserts through the executor's
+  `ExecInsert`, which on SQL Server reads the key with `SCOPE_IDENTITY()` in the same batch, the
+  INSERT's own key and never one a trigger's INSERT made, and reads any other generated column
+  with a `SELECT` keyed on it; `Update` re-reads the read-back fields with a `SELECT`.
+  `SCOPE_IDENTITY()` reports only an `IDENTITY` key, so on such a table a key from a default or
+  a sequence, a `NEWSEQUENTIALID()` key, and any key under an `INSTEAD OF INSERT` trigger has to
+  be assigned by the entity; `VerifyModel` says so. It is asked only where the dialect reports
+  that triggers block its `RETURNING` (`core.ReturningBlockedByTriggers`), so a model shared with
+  Postgres keeps `RETURNING` there.
+- `grgorm:"readback"` (`core.GorganyORMReadBack`, in `app/core`) marks a field whose column the
+  server sets, such as a rowversion, a computed column or a default the app never writes.
+  `Create` reads it back with the generated key, and `Update` reads it back after a write that
+  succeeded, so the entity holds the row's value and the next update guarded on it matches.
+  Where the dialect's `RETURNING` can be used, it is read in the statement itself:
+  `UPDATE … RETURNING` on Postgres, and on SQL Server
+  `UPDATE … SET … OUTPUT INSERTED.… WHERE …`, whose rows are the rows the UPDATE matched, so a
+  guard still tells a lost write from a row that is gone. On MySQL, and on a table whose model
+  implements `TableWithTriggers`, it is a `SELECT` by every key column after the INSERT or
+  UPDATE, a statement of its own: a write another session commits between the two is what it
+  reads, so the entity can take that write's rowversion without its values, and a guard on the
+  rowversion then matches over it. On such a table, `Refresh` the entity before a guarded
+  update that must not overwrite a write it has not seen. The tag does not stop a field being
+  written, so a server-set column is usually tagged `gorm:"->"` too. It is matched as one whole
+  comma-separated value.
 - `orm.VerifyModel(ctx, session, model)`, which compares a hand-written model with the table
   it maps and returns an `orm.ModelProblem` (`Table`, `Column`, `Kind`, `Detail`) for each
   disagreement: a mapped column the table does not have, a NULLable column mapped to a Go type
@@ -515,14 +464,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   statement the ORM sends without `TableHasTriggers`, a server-generated key `Create` cannot
   read back without `RETURNING`, and a primary key that is not the table's. The kinds are the
   `orm.Problem*` constants. It only reads, generates nothing and runs on a `read_only` and an
-  `external_schema` datasource. On a datasource that reports its table traits (below), which
-  the SQL Server one does, every check reads that one catalog query, which finds the table as
-  the server resolves the name in the ORM's own statements: gorm's migrator is not asked, since
-  for an unqualified name gorm.io/driver/sqlserver mixes in the columns of every schema's table
-  of that name, and it cannot read a bracketed name. On one that does not, the column checks use
-  gorm's migrator, and the trigger, computed-column and key-generation checks are skipped. It is
-  meant to be run once per model mapped onto a schema another system owns, before the first
-  write.
+  `external_schema` datasource. On a datasource that reports its table traits (next entry),
+  which the SQL Server one does, every check reads that one catalog query, which finds the
+  table as the server resolves the name in the ORM's own statements: gorm's migrator is not
+  asked, since for an unqualified name gorm.io/driver/sqlserver mixes in the columns of every
+  schema's table of that name, and it cannot read a bracketed name. On one that does not, the
+  column checks use gorm's migrator, and the trigger, computed-column and key-generation checks
+  are skipped. It is meant to be run once per model mapped onto a schema another system owns,
+  before the first write; docs/SQLSERVER.md, "Mapping EF Core tables", has a worked model and
+  the authoring rules.
 - `core.TableTraits` (the columns and which allow NULL, the enabled triggers that fire on INSERT,
   those of them that are `INSTEAD OF`, and those that fire on UPDATE, the IDENTITY column, the
   computed, rowversion and `GENERATED ALWAYS` columns, the defaulted columns, the primary key)
@@ -535,7 +485,87 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   a three- or four-part name, another database's table, is refused. Postgres and MySQL do not
   implement it.
 
+#### SQL Server as the owned `default`
+
+SQL Server can be the `default` gorgany owns: it migrates up and down, seeds, diffs, stores and
+sweeps database sessions, and runs under testsupport. docs/SQLSERVER.md, "SQL Server as the
+owned `default`", covers each.
+
+- `auth.BatchedExpiredDeleteSQLServer`,
+  `DELETE TOP (?) FROM [sessions] WHERE [expiry] < SYSDATETIMEOFFSET()`, and
+  `auth.BatchedExpiredDeleteSQLFor(dialect)`, which returns it for `"sqlserver"` and
+  `auth.BatchedExpiredDeleteSQL` for any other name. `DbSessionRepository.DeleteExpired` runs
+  the statement for the dialect the `default` datasource reports, and a datasource that
+  reports none gets `BatchedExpiredDeleteSQL`, which is unchanged. SQL Server has neither
+  `LIMIT` nor `NOW()`, and `SYSDATETIMEOFFSET()` compares instants against the
+  `datetimeoffset` expiry, whatever the server's time zone. `AttributesMap` declares the
+  attribute bag `nvarchar(max)` on SQL Server, where `text` is deprecated and not Unicode,
+  and `text` elsewhere, as before.
+- `migration.SessionsTableModelFor(dialect)`, the model the sessions migration uses on a
+  dialect: on SQL Server `id` and `user_id` are `nvarchar(255)` and `attributes`
+  `nvarchar(max)`, and elsewhere it is `SessionsTableModel()`, unchanged. The migration picks
+  the model by the connection's dialect. On SQL Server the version migration's `Down` drops the
+  column's DEFAULT constraint, which SQL Server names itself, before the column, which SQL
+  Server otherwise refuses (Msg 5074). It runs in the transaction `db:migrate down` opens, so a
+  failure takes both back. On SQL Server both migrations look `sessions` and its `version`
+  column up where the unqualified name resolves, the login's default schema and then `dbo`, and
+  so do `db:migrate` and `db:seed` for `migrations` and `seeders`. gorm's SQL Server migrator
+  finds a table or column of that name in any schema, so a same-named table in another schema
+  of the database, such as an externally owned one's, would otherwise be taken for gorgany's.
+- `dbCmd.TransactionalDDLDialects` gains `"sqlserver"`, so `db:diff` runs on a SQL Server
+  datasource. A live test runs `CREATE TABLE`, `CREATE INDEX`, `ALTER TABLE … ADD`, a foreign
+  key and a column comment in a transaction and finds them gone after its rollback, and
+  another runs the real `db:diff` on SQL Server, finds nothing it ran left behind, and then
+  runs its draft there. On SQL Server the draft adds an extended domain's struct column as
+  ``ALTER TABLE [<table>] ADD [<column>] nvarchar(255) NULL``; the Postgres statement is
+  unchanged. A statement the diff runs with bound arguments, which on SQL Server is the
+  `sp_addextendedproperty` call that stores a column comment, is drafted with its string
+  arguments written in as literals, since the draft runs statements without arguments; one
+  that binds anything else stops the diff before it writes a draft, with an error naming the
+  statement. No statement the diff runs on Postgres binds an argument, so the statements in a
+  Postgres draft are byte for byte what they were. The comment on the drafted migration's `Up`
+  now says that `db:diff` drafts only for PostgreSQL and SQL Server, whose DDL a transaction
+  rolls back, so a new draft differs from an older one in that comment.
+- testsupport runs against SQL Server: `testsupport.DriverSQLServer` (`sqlserver_gorm`) and
+  `Database.IsSQLServer()`. With `GORGANY_TEST_DRIVER=sqlserver_gorm` the environment's
+  defaults follow the driver: port 14330, user `sa`, password `Gorgany-Test-1` and `SSL`
+  `true`. A SQL Server database gets `options.trust_server_certificate: true` for a host that
+  is not Azure SQL's and an `SSL` other than `strict`; `DatabaseConfig.TrustServerCertificate`
+  and `GORGANY_TEST_TRUST_SERVER_CERT` override that, and a value other than true or false is
+  a config error. So is an `SSL` the engine does not accept, such as a Postgres `require`
+  left in `GORGANY_TEST_SSL`. A `Databases` list set in code gets no defaults: its `Password`
+  is used as written, an empty `SSL` means the engine's default, encrypted, and an
+  `SSL: "disable"` copied from the Postgres example turns encryption off. The harness creates
+  the test database through `master` when it is missing, with `READ_COMMITTED_SNAPSHOT ON`,
+  and only for a name of letters, digits and underscores and a host that is not Azure SQL's. A
+  database with any other name that does not exist fails the test at once, saying so. It
+  empties tables by switching their constraints off, deleting their rows in reverse order,
+  reseeding each identity that has issued a value so that the next row gets the identity's
+  seed, and switching the constraints back on `WITH CHECK`, reporting a failure of that last
+  step even after an earlier one. SQL Server truncations on one engine run one at a time, since
+  two could deadlock. testsupport still links no SQL Server code: a suite imports
+  `driver/sqlserver`, and without it the harness fails the test naming that import. Postgres
+  and MySQL get the settings and the statements they got before. docs/TESTING.md, "SQL Server",
+  has the details.
+
+#### Tests and CI
+
+- `testsupport.Config.AllowAnyTarget` and `GORGANY_TEST_ALLOW_ANY_TARGET`, which switch off the
+  harness's new target guard (see Changed). Like `KeepData`, the variable switches it on, never
+  off.
+- A live SQL Server for the framework's own tests: an `mssql-live` service under the
+  `sqlserver` profile of `e2e/docker-compose.yml`, which `E2E_REQUIRE_SQLSERVER=1 sh e2e/run.sh`
+  starts, and an `mssql` service in the CI live-db job. Both run the same pinned image,
+  `mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04`, which is amd64-only.
+  `E2E_REQUIRE_SQLSERVER=1` makes the SQL Server cases fail rather than skip when the server is
+  unreachable, and fails a run in which none of them executed; `E2E_REQUIRE_LIVE` keeps meaning
+  Postgres and MySQL, so a run without SQL Server is unaffected. The cases are in
+  `e2e/tests/live_sqlserver*_test.go`, and the ORM cases that run on every engine gain a
+  `sqlserver` subtest; docs/TESTING.md says how to run them, under Rosetta on Apple Silicon.
+
 ### Changed
+
+#### db commands, the provider and session storage
 
 - `db:migrate`, `db:seed` and `db:diff` refuse a datasource with `external_schema: true` or
   `read_only: true` before they send any SQL, their own `migrations` or `seeders` table
@@ -572,15 +602,6 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   down` logs `Nothing to roll back on datasource "<name>"` followed by `: no migrations target
   it` or ``: it has no `migrations` table``. A pipeline that looks for the old lines has to
   look for these as well.
-- `db:diff`'s refusal of a dialect it does not run on says that the dialect commits DDL
-  immediately only for MySQL, which does. Any other dialect missing from
-  `TransactionalDDLDialects`, such as an app's own driver's, is told that its DDL is not known
-  to roll back, rather than something that may not be true of it. Both name the dialects
-  `db:diff` supports, now Postgres and SQL Server (see Added).
-
-  **Upgrade note:** the MySQL refusal keeps its wording, with `sqlserver` added to the dialects
-  it lists. A script that matches the refusal of another dialect by its text has to match the
-  new wording.
 - `db:diff` diffs only the domains of the selected datasource. A domain belongs to the
   datasource its `DbConnectionName()` (`core.DbConnectionNamer`) names, else its
   `DataSourceName()`, else `default`, and each one skipped is listed. In an app with no
@@ -603,6 +624,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   keeps drafting its table for `default`, and never for the datasource it is on. In an app
   with no `default`, `db:diff --datasource=<name>` diffs such a domain against `<name>`, as
   2.4.3 did, whichever `<name>` is selected.
+- `db:diff`'s refusal of a dialect it does not run on says that the dialect commits DDL
+  immediately only for MySQL, which does. Any other dialect missing from
+  `TransactionalDDLDialects`, such as an app's own driver's, is told that its DDL is not known
+  to roll back, rather than something that may not be true of it. Both name the dialects
+  `db:diff` supports, now Postgres and SQL Server.
+
+  **Upgrade note:** the MySQL refusal keeps its wording, with `sqlserver` added to the dialects
+  it lists. A script that matches the refusal of another dialect by its text has to match the
+  new wording.
 - `db:migrate` runs the two sessions migrations only on a `default` configured without
   `external_schema` or `read_only`. Otherwise it leaves them out of the run, whichever
   datasource it selects, and logs why at info level: their DDL would create a table in
@@ -628,8 +658,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   database sessions, configure the database gorgany owns as `default` and this one under its
   own name, or switch to `memory`, which is only correct for a single instance
   (DEPLOYMENT.md, "More than one instance").
+
+#### Configuration and boot
+
 - An unresolved placeholder in `databases.<name>.auth.client_secret` or
-  `databases.<name>.auth.certificate_password` now stops the boot, as one in `auth.jwt.secret`
+  `databases.<name>.auth.certificate_password` stops the boot, as one in `auth.jwt.secret`
   does. It is not blanked, and `KeepUnresolvedLiterals()` does not change that. A blank
   credential sends whoever debugs the sign-in failure to the wrong place: an empty secret reads
   as "none configured", an empty certificate password as "not encrypted". With `lazy_connect`,
@@ -644,6 +677,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   as an unknown key. So this affects only an app that reads `databases` itself and keeps one of
   these two keys there under a placeholder. Set the variable in every environment, or move the
   key.
+- The unknown-driver error names the one import that registers a framework driver, and says
+  that `driver/builtin` does not include SQL Server, and where the import goes:
+  `pkg/provider/bootstrap.go`, next to the other driver import. For `sqlserver_gorm` it also
+  names `driver/sqlserver/azuread`, which registers the driver with the Entra ID sign-in. The
+  empty-registry hint lists `driver/sqlserver` and `driver/sqlserver/azuread` as well.
+
+  **Upgrade note:** the text of both messages changed after their first sentence, which is
+  unchanged. MIGRATION_v2.md §21 quotes the new empty-registry message.
+
+#### ORM
+
 - `orm.Find` returns the error of a query that failed. It checked the error from rendering the
   query where it meant the result of running it, so a lost connection, a missing table or a
   column the driver could not scan came back as a nil entity and no error, which reads as "not
@@ -680,71 +724,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   all the same. `SaveRelations` refuses the same way. A datasource gorgany owns cascades as
   before.
 
-  **Upgrade note:** a model on an `external_schema` datasource whose `Save` relied on the
-  cascade now gets the refusal. Save the related entities with their own ORM, or implement
+  **Upgrade note:** `external_schema` is new in this release, so nothing that saved on 2.4.3
+  is refused. A model on an `external_schema` datasource whose `Save` relies on the cascade
+  gets the refusal: save the related entities with their own ORM, or implement
   `CascadeSaves()` returning true once the related tables are known to be safe to write.
-- testsupport refuses a target it must not empty, since it empties every table its migrations
-  create: an Azure SQL, Azure Database for PostgreSQL or Azure Database for MySQL host on any
-  driver, a driver other than `postgres_gorm`, `mysql_gorm` and `sqlserver_gorm`, and a
-  `sqlserver_gorm` database without `test`, `tests` or `testing` as a word of its name (so
-  `gorgany_test` passes and `LatestOrders` does not) or that is `master`, `model`, `msdb` or
-  `tempdb`. The refusal is a config error, so it fails the test
-  whether `RequireDatabase` or `MustDatabase` asked, and it covers a `Databases` list set in
-  code as well as the environment. A driver that is not registered in the test binary now fails
-  at once, naming the import that registers it; it used to be retried for the whole engine wait
-  and then skipped, as though the engine were down. So does a setting the driver refuses. The
-  harness truncates Postgres and MySQL as before, and SQL Server with a sequence of its own (see
-  Added); any other driver is an error, where it used to be emptied as though it were MySQL.
-
-  **Upgrade note:** a Postgres or MySQL suite on a local engine is unaffected. A suite pointed at
-  an Azure database host, or at an app's own driver, now fails; set
-  `GORGANY_TEST_ALLOW_ANY_TARGET=1` for a target known to be disposable, and use
-  `IsolateByRollback` with an app's own driver. A suite whose driver is not imported into the
-  test binary now fails where it skipped; add the import the error names.
-- The unknown-driver error names the one import that registers a framework driver, and says
-  that `driver/builtin` does not include SQL Server, and where the import goes:
-  `pkg/provider/bootstrap.go`, next to the other driver import. For `sqlserver_gorm` it also
-  names `driver/sqlserver/azuread`, which registers the driver with the Entra ID sign-in. The
-  empty-registry hint lists `driver/sqlserver` and `driver/sqlserver/azuread` as well.
-
-  **Upgrade note:** the text of both messages changed after their first sentence, which is
-  unchanged. MIGRATION_v2.md §21 quotes the new empty-registry message.
-- `go.mod` requires `github.com/microsoft/go-mssqldb v1.11.2` and `gorm.io/driver/sqlserver
-  v1.6.4`, and moves `github.com/stretchr/testify` to v1.12.1 (with `github.com/stretchr/objx`
-  v0.5.3), `golang.org/x/crypto` to v0.55.0, `golang.org/x/text` to v0.41.0 and
-  `golang.org/x/net` to v0.58.0. go-mssqldb is required at v1.11.2 by name: without it, module
-  selection picks v1.9.6, which lacks two v1.10.0 fixes the engine relies on: reading a
-  table with triggers, and refusing a statement after the server has rolled back a transaction
-  under `XACT_ABORT`, which v1.9.6 ran as its own auto-committed statement. The go and
-  toolchain directives are unchanged. Only an app that imports `driver/sqlserver` links the
-  SQL Server packages, but the Azure SDK, MSAL and Kerberos modules go-mssqldb requires are now
-  in every consumer's module graph and `go.sum`.
-
-  `go.mod` also requires `github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.1` and
-  `github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.1` directly, with
-  `github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0`,
-  `github.com/AzureAD/microsoft-authentication-library-for-go v1.8.0`, `github.com/pkg/browser`
-  and `github.com/kylelemons/godebug` as indirect requirements. Only `driver/sqlserver/azuread`
-  links them.
-
-  `go.mod` also requires `github.com/Azure/azure-sdk-for-go/sdk/azidentity/cache v0.4.0`
-  directly, with `github.com/AzureAD/microsoft-authentication-extensions-for-go/cache v0.1.1`
-  and `github.com/keybase/go-keychain v0.0.1` as indirect requirements. Only
-  `driver/sqlserver/azuread/persistentcache` links them. No other requirement moved, and the go
-  and toolchain directives are unchanged.
-
-  **Upgrade note:** run `go mod tidy` after upgrading; expect `go.sum` to grow, and the
-  testify, x/crypto, x/text and x/net versions of your own module to move up with it.
-- The CI live-db job is named `live PostgreSQL, MySQL and SQL Server`, and proves each engine
-  ran by the PASS lines of cases pinned by name rather than by a case-insensitive grep for the
-  engine's name, which any case named for the engine satisfied whether it passed or not. Its
-  testsupport step requires a SQL Server pass as well as a Postgres and a MySQL one, and the
-  testsupport live suite finds each engine through the same `E2E_*_HOST` and `E2E_*_PORT`
-  variables as the e2e live suite, where it used to hard-code the ports.
-
-  **Upgrade note:** a branch protection rule that requires the check `live PostgreSQL and
-  MySQL` has to require the new name instead.
-
 - The ORM writes what gorm's permission tags allow. An INSERT leaves out a field gorm will not
   create and an UPDATE one it will not update: `gorm:"->"` (and `->:false`), `<-:false`,
   `<-:create` on an update, `<-:update` on an insert, and `-:all`. The walks read only the
@@ -767,10 +750,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   but the generated key could not be read back ([<columns>]); the row exists: the INSERT left
   primary key column "<column>" to the server, which did not report the value it generated`. It
   was a warning in the log and a nil error, which left the entity with a zero key that every
-  relation saved against it then stored, and a retry wrote the row twice. A key column the
-  INSERT wrote is now keyed on the value the entity holds, zero included, since that is the
-  row's key, so a key the caller assigned, such as a GUID, keys the read-back of the other
-  generated columns, which it never did; and the read-back is keyed by every key column. A model
+  relation saved against it then stored, and a retry wrote the row twice. The read-back is
+  keyed by every key column; for the value of a key column the INSERT wrote, see Fixed. A model
   with several auto-increment key columns is refused before its INSERT is sent rather than
   after. A model without a primary key has nothing to select its row by and no key to lose, so
   its defaulted columns are still only warned about, and its `Create` succeeds.
@@ -779,9 +760,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   reached only where `RETURNING` is not used — MySQL, and a SQL Server table with
   `TableHasTriggers` — and only for a key column the INSERT left to the server, an
   auto-increment key left zero or a `gorm:"->"` key, that the server did not report: a table
-  whose key is not its auto-increment column behind a model that says it is, or on SQL Server a
-  key from a default or a sequence, a `NEWSEQUENTIALID()` key, or any key under an `INSTEAD OF
-  INSERT` trigger. `VerifyModel` reports each of these before the first write.
+  whose key is not its auto-increment column behind a model that says it is, or on SQL Server
+  one of the keys the `orm.TableWithTriggers` entry lists as ones `SCOPE_IDENTITY()` cannot
+  report. `VerifyModel` reports each of these before the first write.
+- `Create` of a model gorm cannot parse is refused with `cannot create domain: orm: cannot read
+  the primary key of <type>: <gorm's error>` before its `BeforeSave` and `BeforeCreate` hooks
+  run and before anything is sent, as `Update` and `Delete` already were. It used to be inserted
+  all the same, with the Go field names standing in for the columns the schema could not name,
+  and the server's refusal of that INSERT was the only error.
+
+  **Upgrade note:** such a model's hooks no longer run on `Create`; fix what gorm's error names.
 - A many-to-many load joins the related table on the column the join row references, its
   primary key or the column a `references:` tag names, where it compared the join column with a
   column called `id`. The `ON` is still built from `?.` identifier placeholders, now four, so
@@ -805,33 +793,73 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
   **Upgrade note:** only SQL Server declares a limit, so nothing that worked on Postgres or
   MySQL changes.
-- The hint on SQL Server's Msg 334 names `TableHasTriggers() returning true`
-  (`orm.TableWithTriggers`) for an ORM model, before `ExecInsert`.
 
-  **Upgrade note:** the text of the hint changed; match on the error number.
-- `Create` of a model gorm cannot parse is refused with `cannot create domain: orm: cannot read
-  the primary key of <type>: <gorm's error>` before its `BeforeSave` and `BeforeCreate` hooks
-  run and before anything is sent, as `Update` and `Delete` already were. It used to be inserted
-  all the same, with the Go field names standing in for the columns the schema could not name,
-  and the server's refusal of that INSERT was the only error.
+#### testsupport and CI
 
-  **Upgrade note:** such a model's hooks no longer run on `Create`; fix what gorm's error names.
+- testsupport refuses a target it must not empty, since it empties every table its migrations
+  create: an Azure SQL, Azure Database for PostgreSQL or Azure Database for MySQL host on any
+  driver, a driver other than `postgres_gorm`, `mysql_gorm` and `sqlserver_gorm`, and a
+  `sqlserver_gorm` database without `test`, `tests` or `testing` as a word of its name (so
+  `gorgany_test` passes and `LatestOrders` does not) or that is `master`, `model`, `msdb` or
+  `tempdb`. The refusal is a config error, so it fails the test whether `RequireDatabase` or
+  `MustDatabase` asked, and it covers a `Databases` list set in code as well as the
+  environment. A driver that is not registered in the test binary now fails at once, naming
+  the import that registers it; it used to be retried for the whole engine wait and then
+  skipped, as though the engine were down. So does a setting the driver refuses. The harness
+  truncates Postgres and MySQL as before, and SQL Server with a sequence of its own (see
+  Added); any other driver is an error, where it used to be emptied as though it were MySQL.
+
+  **Upgrade note:** a Postgres or MySQL suite on a local engine is unaffected. A suite pointed at
+  an Azure database host, or at an app's own driver, now fails; set
+  `GORGANY_TEST_ALLOW_ANY_TARGET=1` for a target known to be disposable, and use
+  `IsolateByRollback` with an app's own driver. A suite whose driver is not imported into the
+  test binary now fails where it skipped; add the import the error names.
+- The CI live-db job is named `live PostgreSQL, MySQL and SQL Server`, and proves each engine
+  ran by the PASS lines of cases pinned by name rather than by a case-insensitive grep for the
+  engine's name, which any case named for the engine satisfied whether it passed or not, and
+  it fails when a live case skipped. Its testsupport step requires a SQL Server pass as well as
+  a Postgres and a MySQL one, and the testsupport live suite finds each engine through the
+  same `E2E_*_HOST` and `E2E_*_PORT` variables as the e2e live suite, where it used to
+  hard-code the ports.
+
+  **Upgrade note:** a branch protection rule that requires the check `live PostgreSQL and
+  MySQL` has to require the new name instead.
+
+#### Dependencies
+
+- `go.mod` requires `github.com/microsoft/go-mssqldb v1.11.2` and
+  `gorm.io/driver/sqlserver v1.6.4`, linked only through `driver/sqlserver`. go-mssqldb is
+  required at v1.11.2 by name: without it, module selection picks v1.9.6, which lacks two
+  v1.10.0 fixes the engine relies on: reading a table with triggers, and refusing a statement
+  after the server has rolled back a transaction under `XACT_ABORT`, which v1.9.6 ran as its
+  own auto-committed statement. It brings `github.com/golang-sql/civil`,
+  `github.com/golang-sql/sqlexp` and `github.com/shopspring/decimal` as indirect requirements.
+- `go.mod` requires `github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.1` and
+  `github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.1`, with
+  `github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0`,
+  `github.com/AzureAD/microsoft-authentication-library-for-go v1.8.0`, `github.com/pkg/browser`
+  and `github.com/kylelemons/godebug` as indirect requirements, linked only through
+  `driver/sqlserver/azuread`; and `github.com/Azure/azure-sdk-for-go/sdk/azidentity/cache
+  v0.4.0`, with `github.com/AzureAD/microsoft-authentication-extensions-for-go/cache v0.1.1` and
+  `github.com/keybase/go-keychain v0.0.1` as indirect requirements, linked only through
+  `driver/sqlserver/azuread/persistentcache`. `db/sql/driver/builtin/split_test.go` pins
+  which package links what.
+- Module selection moves `github.com/stretchr/testify` to v1.12.1 (with
+  `github.com/stretchr/objx` v0.5.3), `golang.org/x/crypto` to v0.55.0, `golang.org/x/text` to
+  v0.41.0 and `golang.org/x/net` to v0.58.0. testify 1.12 no longer requires
+  `github.com/davecgh/go-spew` and `github.com/pmezard/go-difflib`, and `go mod tidy` drops them
+  and two other indirect requirements nothing needs any more, `github.com/rogpeppe/go-internal`
+  and `github.com/sourcegraph/conc`. The go and toolchain directives are unchanged.
+
+  **Upgrade note:** run `go mod tidy` after upgrading. The modules gorgany now requires enter
+  your module graph, and `go.sum` grows with them, although your app links none of the SQL
+  Server or Azure code unless it imports `driver/sqlserver`, `driver/sqlserver/azuread` or
+  `persistentcache`. Your own module's testify, x/crypto, x/text and x/net move up with it.
 
 ### Fixed
 
-- The Postgres and MySQL executors' `ExecInsert` sent its INSERT on the handle's pool,
-  `db.ConnPool`, which gorm keeps as the `*sql.DB` even inside a transaction. On a
-  transaction's executor the INSERT therefore ran on another pooled connection, outside the
-  transaction, and survived its rollback. On MySQL that is the path the ORM's `Create` takes.
-  It now goes to the statement's pool, which is the transaction there.
+#### Query builder
 
-  **Upgrade note:** an `ExecInsert` inside a transaction now commits or rolls back with it.
-  Code that relied on the INSERT surviving a rollback has to run it outside the transaction.
-- A type error in `databases.<name>.password`, or in a value under `options`, put the value
-  into the boot error, as in `key 'password' must be a string, got float64 (1234.5678)`. The
-  error lands in the deploy log, and options are where a driver's own credentials go. Both
-  errors now name the key and the type only. An unquoted int or bool is still read as the
-  password it spells, as before.
 - `core.RawCondition` consumed its own `Args` while expanding `"?."` placeholders, so it
   rendered correctly once. Rendering it again — a builder rendered twice, or a builder and its
   `Clone()`, which share their conditions — found the identifier args gone and sent the SQL
@@ -862,12 +890,33 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `createdat`. Pass a column to `OrderBy`, or quote it yourself. Text passed to `OrderByRaw`
   is SQL and is no longer bound, so request-derived input must never reach it, as its
   documentation has always said.
+
+#### Executors and db commands
+
+- The Postgres and MySQL executors' `ExecInsert` sent its INSERT on the handle's pool,
+  `db.ConnPool`, which gorm keeps as the `*sql.DB` even inside a transaction. On a
+  transaction's executor the INSERT therefore ran on another pooled connection, outside the
+  transaction, and survived its rollback. On MySQL that is the path the ORM's `Create` takes.
+  It now goes to the statement's pool, which is the transaction there.
+
+  **Upgrade note:** an `ExecInsert` inside a transaction now commits or rolls back with it.
+  Code that relied on the INSERT surviving a rollback has to run it outside the transaction.
 - `db:migrate --datasource=<name>` failed in an app with no `default` datasource, whichever
   datasource it named, with `migration "create_sessions_table" targets datasource "default",
   which is not configured`. `DbProvider.Boot` attaches the sessions migrations, which run on
   `default`, whatever is configured. `db:migrate` now leaves them out when there is no
   `default` (see Changed), so an app with only named datasources, and its sessions in memory,
   can migrate them.
+- `db:diff` recorded into its draft every statement sent through gorm's `Exec` on the
+  datasource while it ran, another session's on the pool included, since gorm keeps callbacks
+  on the handle every session of the datasource shares rather than on the diff's transaction,
+  and it left the recorder registered after it returned. It now records only what runs on its
+  own transaction's connection, and removes the recorder when it returns. The CLI exits after
+  the command, so what met this was a test, an embedding tool or anything else sharing the
+  pool in the same process.
+
+#### ORM
+
 - `orm.All`, `orm.Count` and `Preload`'s loads read a model whose `TableName()` differs from
   its type's default name from the default-named table. They have no entity to ask, so they
   asked `var sample T`, a nil `*T` for a pointer model, and `GetTableName` answered a nil
@@ -876,6 +925,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   ask the schema too, and `GetTableName` calls `TableName()` on a zero value of the type for a
   nil pointer or a zero value, whichever receiver it has, as gorm does. A non-zero value whose
   `TableName()` has a pointer receiver is now answered by it as well.
+
+  **Upgrade note:** on a model whose `TableName()` differs from the default name, `All`,
+  `Count` and `Preload` now return the rows of the table it names, not of the default-named one,
+  and `GetTableName` names that table.
 - `orm.CountByQuery` counted the wrong thing in most shapes. It called
   `Select("COUNT(*)").From(<model table>)` on the caller's builder, so:
   - ORDER BY, LIMIT and OFFSET stayed, and a page's total was at most the page size;
@@ -921,6 +974,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `orm.Delete` addressed the row by its primary key's Go field name, `WHERE UserID = ?` for a
   column called `user_id`, and wrote that name into `meta.PrimaryKey`. It now uses the column
   name for both.
+
+  **Upgrade note:** after `Delete`, `meta.PrimaryKey` holds the column name, `user_id`, where it
+  held the Go field name, `UserID`, as after the other operations.
 - On a composite primary key, `Update`, `UpdateExisting`, `Delete` and `Refresh` addressed the
   row by the first key column only. `Update` rewrote, and `Delete` removed, every row sharing
   that column, and `Update` wrote the other key columns back into the row.
@@ -936,16 +992,19 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
   **Upgrade note:** `Update`, `UpdateExisting` and `Refresh` refuse an entity whose schema gorm
   cannot parse, as `Delete` already did, instead of addressing it through a column called `id`.
+  A composite key with a zero part, or a pointer key pointing at a zero value, is now refused by
+  `Update`, `UpdateExisting`, `Delete` and `Refresh`, where it was sent; address such a row with
+  the query builder.
 - `orm.Update`, `UpdateExisting` and `Save` wrote to the wrong row when a key column was changed
   in memory and named in `meta.DirtyColumns`. The ORM does not remember the key a row was
   loaded with, so the WHERE read the new key, and the key column was left out of the SET list:
   the row holding the new key had its other columns overwritten with this entity's, the row the
-  entity was loaded from was left untouched, and no error was returned. Before the composite-key
-  fix above, such an update of a composite key rewrote every row that shared the first key
-  column instead. A dirty set that names a key column is now refused before anything is sent,
-  with `orm: cannot change primary key column "<column>" of <table> through Update; delete the
-  row and create it again`. A key changed in memory without being named in `DirtyColumns` still
-  addresses the row that holds the new key, as it always has.
+  entity was loaded from was left untouched, and no error was returned. On a composite key such
+  an update rewrote every row that shared the first key column instead. A dirty set that names
+  a key column is now refused before anything is sent, with `orm: cannot change primary key
+  column "<column>" of <table> through Update; delete the row and create it again`. A key
+  changed in memory without being named in `DirtyColumns` still addresses the row that holds
+  the new key, as it always has.
 
   **Upgrade note:** code that moved a row to a new key this way, on purpose, now gets the
   refusal. Delete the row and create it under the new key, or run an UPDATE of the key column
@@ -956,10 +1015,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   skipped with it. The check now runs without the statement, as a read of the key and any
   guard, and when a guard misses, a second read of the key alone: a row that is gone is
   `orm.ErrRowGone`, and one whose guard does not match is `orm.ErrRowConflict`.
+
+  **Upgrade note:** on such a model, a missing row is now `orm.ErrRowGone` and a guard that does
+  not match `orm.ErrRowConflict`, where both returned nil; handle them as for any other model.
 - `orm.Refresh` overwrote every relation field with nil, since it reads the row and not its
   relations, while the meta still recorded the relations as loaded. The next `Save` read a
   loaded many-to-many relation as cleared and deleted all of the entity's join rows. `Refresh`
   now leaves relation fields as they were.
+
+  **Upgrade note:** code that relied on `Refresh` to clear relation fields finds them as they
+  were; clear them itself, or load them again with `LoadRelation`.
 - Saving a many-to-many relation addressed its join rows by one owner column and one related
   column, picked by overwriting a variable in a loop over the relation's references. On a
   composite key the stale-row DELETE for an owner keyed by (tenant, id) removed its join rows in
@@ -981,7 +1046,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `Create` matched the generated columns an engine reported to the model's columns by exact
   name only, so a column Postgres folds, such as `RETURNING Id` coming back as `id`, was silently
   left unset. A name that differs only in case now matches when no exact one does.
-- Where `Create` reads generated columns without `RETURNING` — MySQL, and now a SQL Server table
+- Where `Create` reads generated columns without `RETURNING` — MySQL, and a SQL Server table
   with `TableHasTriggers` — the generated key the executor reported replaced the key column the
   INSERT had just written. The reported value is the table's auto-increment or `IDENTITY`
   column's, which need not be the key: on a table keyed by a caller-assigned column beside a
@@ -990,6 +1055,49 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   now keys only an auto-increment key column the INSERT left out; a key the INSERT wrote stays
   the entity's. `VerifyModel` reports such a key as `autoincrement_without_identity`: tag it
   `autoIncrement:false`.
+
+### Security
+
+- A type error in `databases.<name>.password`, or in a value under `options`, put the value
+  into the boot error, as in `key 'password' must be a string, got float64 (1234.5678)`. The
+  error lands in the deploy log, and options are where a driver's own credentials go. Both
+  errors now name the key and the type only, and so do those for the new `auth` secrets. An
+  unquoted int or bool is still read as the password it spells, as before.
+
+### Verification
+
+- `go build ./...`, `go vet ./...`, `go vet -tags=azuresql ./db/sql/driver/sqlserver/azuread`
+  and `go test -race -count=1 ./...` pass. `db/sql/core/testdata/conditions.golden` and
+  `db/sql/builder/testdata/pg_mysql.golden` were generated from 2.4.3 and have not been
+  regenerated since, so every Postgres and MySQL rendering they pin is 2.4.3's, byte for byte.
+- The live e2e suite, run as the CI live-db job runs it (`go test -tags=livedb ./e2e/tests`
+  under `E2E_REQUIRE_LIVE=1` and `E2E_REQUIRE_SQLSERVER=1`, with the cases that compile without
+  the tag left out by `-skip`; docs/TESTING.md, "The framework's live suite"), passes against
+  SQL Server 2022 CU27 (`mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04`), PostgreSQL 16
+  and MySQL 8, with no case skipped. The testsupport live suite
+  (`go test -tags=livedb ./testsupport`) passes on all three; its one skip is the subtest that
+  proves an unreachable engine skips. `E2E_REQUIRE_SQLSERVER=1 sh e2e/run.sh`, which builds the
+  images and runs the fixture and live suites inside the compose network, passes too; its two
+  skips are the SQL Server gate's own tests of skipping. All of these ran on Apple Silicon,
+  with the amd64-only SQL Server image under Rosetta, which Microsoft does not support. The CI
+  live-db job runs the same suites on amd64, with the new SQL Server cases it requires and its
+  check that no live case skipped. It had not run on this branch when these notes were written;
+  its first run is the push of this release.
+- Microsoft Entra ID: every `auth.method` is tested with stand-in credentials, and the
+  datasource end to end, through the engine, the token source and go-mssqldb's connector,
+  against an in-test server that speaks just enough TDS to take a login
+  (`azuread/data_source_test.go`). No method has signed in to a real Azure SQL Database for
+  this release. The manual test for that,
+  `go test -tags=azuresql ./db/sql/driver/sqlserver/azuread -run AzureSQL -v` with the
+  `GORGANY_AZURESQL_*` variables, is compiled by CI and has not been run. The persistent token
+  cache's silent sign-in after a restart is tested with a stand-in cache; it has not been tried
+  by hand against a real keychain and Entra ID.
+- `govulncheck ./...` (govulncheck v1.8.0, vulnerability database of 2026-09-24, Go 1.26.6)
+  reports no vulnerability in code gorgany calls or in a package it imports. It lists five in
+  modules gorgany requires, in packages it does not import: GO-2026-6354 and GO-2026-6355 in
+  `golang.org/x/crypto/ssh` (x/crypto v0.55.0, fixed in v0.56.0), GO-2026-6179 and
+  GO-2026-6180 in `golang.org/x/mod/sumdb` (x/mod v0.38.0, as in 2.4.3, fixed in v0.40.0), and
+  GO-2026-5932, `golang.org/x/crypto/openpgp`, which is unmaintained and has no fix.
 
 ---
 

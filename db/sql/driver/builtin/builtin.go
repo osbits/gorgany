@@ -1,6 +1,6 @@
 // Package builtin registers every datasource driver that ships with the framework.
 //
-// It is the convenience import — both engines, one line:
+// It is the convenience import — Postgres and MySQL, one line:
 //
 //	import _ "github.com/osbits/gorgany/v2/db/sql/driver/builtin"
 //

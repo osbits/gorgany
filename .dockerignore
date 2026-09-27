@@ -1,4 +1,4 @@
-# The e2e images (e2e/docker-compose.yml, and CI's `docker build -f e2e/Dockerfile .`)
+# The e2e images (e2e/docker-compose.yml, which e2e/run.sh and CI's e2e job build from)
 # use the repository root as their context and `COPY . .`, so whatever is not listed
 # here is sent to the daemon and baked into the image, git-ignored or not.
 #

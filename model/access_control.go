@@ -1173,16 +1173,16 @@ func (rbac *RoleBasedAccessControl) CanAccessEntity(ctx context.Context, entity 
 
 // canAccessEntity decides one entity, in a fixed order. First rule that matches wins:
 //
-//	0. identity unresolved                                     → DENY
-//	1. anonymous and !AllowGuestAccess                          → DENY
-//	2. AllowedAccessLevels set and the level is not in it        → DENY
-//	3. IsOwner and `<op>_owner` exists and it denies             → DENY
-//	4. IsOwner and `<op>_owner` exists and it allows             → ALLOW
-//	5. AccessLevel set and `<op>_<level>` exists and it denies    → DENY
-//	6. AccessLevel set and `<op>_<level>` exists and it allows    → ALLOW
-//	7. `<op>` missing, or it denies                              → DENY
-//	8. `<op>` allows                                             → ALLOW
-//	9. fallthrough                                               → DENY
+//  0. identity unresolved                                     → DENY
+//  1. anonymous and !AllowGuestAccess                          → DENY
+//  2. AllowedAccessLevels set and the level is not in it        → DENY
+//  3. IsOwner and `<op>_owner` exists and it denies             → DENY
+//  4. IsOwner and `<op>_owner` exists and it allows             → ALLOW
+//  5. AccessLevel set and `<op>_<level>` exists and it denies    → DENY
+//  6. AccessLevel set and `<op>_<level>` exists and it allows    → ALLOW
+//  7. `<op>` missing, or it denies                              → DENY
+//  8. `<op>` allows                                             → ALLOW
+//  9. fallthrough                                               → DENY
 //
 // Two things changed. Rows 4 and 6 now read RequiredRoles: they used to check only `Allowed`
 // and return true, so an entity reporting AccessLevel "admin" selected `read_admin` and was
@@ -1721,7 +1721,7 @@ func fullAccessDBFilter() DBFilter {
 // noAccessDBFilter is the predicate that admits nothing.
 //
 // Previously `id = -1`, which assumes the table has a column called id and that -1 is not a
-// valid value in it. `1 = 0` assumes neither and is portable to both engines.
+// valid value in it. `1 = 0` assumes neither and is portable to every engine.
 func noAccessDBFilter() DBFilter {
 	return DBFilter{RawSQL: "1 = 0", Logic: "AND"}
 }
@@ -1828,8 +1828,9 @@ func (rbac *RoleBasedAccessControl) substituteUserContext(
 // own tenant, and — depending on how the app used the result — either hid their data or
 // scoped them to whichever tenant happened to share the id.
 //
-// An empty scoping attribute is likewise refused rather than emitted. `tenant_id = ''` is not
-// "this caller's tenant"; it is a predicate whose meaning nobody chose.
+// An empty scoping attribute is likewise refused rather than emitted. A predicate comparing
+// tenant_id with the empty string is not "this caller's tenant"; it is one whose meaning
+// nobody chose.
 func (rbac *RoleBasedAccessControl) getUserContextValue(
 	user core.Authenticable, fieldName string) (string, error) {
 

@@ -260,7 +260,7 @@ func (o *ORM[T]) createEntity(entity T) error {
 	// RETURNING is the efficient way and it is what Postgres supports, but MySQL has
 	// no such clause: appending it unconditionally is what made `orm.Create` fail
 	// with MySQL error 1064 for the whole of v2. Which path to take is decided by
-	// asking the dialect, not by naming an engine, so a third dialect gets the right
+	// asking the dialect, not by naming an engine, so any other dialect gets the right
 	// behaviour without touching this code.
 	//
 	// A dialect can also say that a trigger on the table makes the server refuse its
@@ -336,7 +336,8 @@ func (o *ORM[T]) createEntity(entity T) error {
 // rows unless the DSN carries clientFoundRows, and this framework's MySQL DSN does not set
 // it, so an update that writes the values a row already holds legitimately reports zero.
 // Turning zero into an error unconditionally would therefore break correct code on one of
-// the two engines the ORM supports.
+// the engines the ORM supports. (SQL Server's executor reports matched rows, as Postgres
+// does, from ROWCOUNT_BIG().)
 //
 // What is unconditional is recording the result on the entity's meta. Before, the statement
 // result was thrown away entirely: an update against a deleted row was indistinguishable
@@ -345,7 +346,7 @@ func (o *ORM[T]) createEntity(entity T) error {
 // EntityMeta.UpdateGuard turns the same zero-row result into a decidable one without needing
 // requireRow, and the MySQL caveat above is why: a guarded write, by construction, sets a
 // column to a value the row does not currently hold — the version it is guarding on — so a
-// guard that matched always reports at least one changed row on both engines. Zero rows under
+// guard that matched always reports at least one changed row on every engine. Zero rows under
 // a guard therefore means either the row is gone or the guard lost, and the existence probe
 // below tells them apart.
 func (o *ORM[T]) updateEntity(entity T, requireRow bool) error {

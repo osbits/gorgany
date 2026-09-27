@@ -5,8 +5,8 @@ import (
 	dbCore "github.com/osbits/gorgany/v2/db/sql/core"
 )
 
-// Builder is an alias for the engine-agnostic builder, mirroring the Postgres
-// package so both engines read the same way at call sites.
+// Builder is an alias for the engine-agnostic builder, mirroring the Postgres and
+// SQL Server packages so every engine reads the same way at call sites.
 type Builder = builder.Builder
 
 // NewBuilder creates a query builder speaking MySQL.

@@ -312,10 +312,10 @@ The cross-dialect file lives in the external test package `builder_test`, which 
 what lets it import the concrete dialects: `v2` imports `builder`, and `builder`
 never imports the test package, so there is no cycle.
 
-Aim for ≥90% statement coverage. Counting the statements of each engine's dialect
-files, the shipped dialects are at 96.0% (Postgres, `dialect.go`), 94.7% (MySQL,
-`dialect.go`) and 98.0% (SQL Server, `dialect.go`, `dialect_dml.go`,
-`identifier.go` and `conditions.go`), with `db/sql/builder` at 97.3%.
+Aim for ≥90% statement coverage, counted over the statements of the engine's
+dialect files: `dialect.go`, and on SQL Server also `dialect_dml.go`,
+`identifier.go` and `conditions.go`. Every shipped dialect is above it, and so is
+`db/sql/builder`; `go test -coverprofile` on the package shows the figure per file.
 
 String assertions prove what a dialect renders, not that the server accepts it.
 The live suite in `e2e/tests` runs each engine's SQL against a real server: see
@@ -430,7 +430,7 @@ Postgres datasource ignores it — the same way it is the Postgres-only
 
 `ON CONFLICT DO NOTHING` is unaffected. Its self-assignment translation
 (``ON DUPLICATE KEY UPDATE `col` = `col` ``) is faithful, so it needs no opt-in —
-which is what lets the ORM's many-to-many path work on both engines unchanged.
+which is what lets the ORM's many-to-many path work on every engine unchanged.
 
 ### Why the translation is not faithful
 

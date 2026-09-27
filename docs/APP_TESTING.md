@@ -23,7 +23,7 @@ against the template's production image.
 |------|-----------|----------|-------|---------------------------|
 | Static | – | – | – | Every pipeline: `make verify` (`gofmt`, `go vet ./...`, `go vet -tags=integration,e2e ./...`, `go mod tidy -diff`), `make lint`, `make lint-api`, secret detection |
 | Unit | none | `x_test.go` next to `x.go`, plus `test/arch` | Nothing | Every pipeline: `go test -race -count=1 ./...` |
-| Integration | `integration` | `x_integration_test.go` in the package under test | Postgres through `testsupport` | Every pipeline, against a service container |
+| Integration | `integration` | `x_integration_test.go` in the package under test | The app's engine through `testsupport`: Postgres, MySQL or SQL Server. An externally owned SQL Server datasource adds a SQL Server with a fixture schema (SQLSERVER.md) | Every pipeline, against a service container |
 | E2E | `e2e` | `test/e2e/` | Docker and the production image | Every pipeline, against the image the `build` job pushed |
 
 `vuln` runs in every pipeline too. Create a daily pipeline schedule in GitLab (Build >
@@ -186,7 +186,11 @@ The harness is the framework's own `e2e/` harness, with the changes an applicati
 - **It runs the production image, not `go run`.** Packaging defects then surface here instead
   of in production: a binary renamed in the Dockerfile but not in CI, or a directory the image
   does not contain.
-- **It has one database engine**, at the production major version.
+- **It has one database engine**, at the production major version. The exception is an
+  externally owned datasource, such as a SQL Server another application owns: the stack may
+  add a SQL Server service standing in for that external system, with the fixture schema the
+  integration tier uses (SQLSERVER.md, "Adding an externally owned SQL Server datasource to an
+  app").
 
 Both harnesses give every run its own compose project, `<name>-e2e-$$` unless
 `COMPOSE_PROJECT_NAME` is set, so runs in parallel, in CI jobs or in git worktrees, cannot

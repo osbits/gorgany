@@ -1004,8 +1004,8 @@ grep -rnE "v2\.(Simple|In|Between|Raw|Composite)Condition|v2\.(Equal|NotEqual|Gr
 | `http.upload.maxMultipartSize` | `33554432` (32 MB) | Was a compile-time constant. |
 | `http.upload.maxFiles` | `100` | Was a compile-time constant. |
 | `http.upload.maxFileSize` | `10485760` (10 MB) | Was a compile-time constant. |
-| `databases.<name>.search_path` | unset | New. Postgres only; the MySQL driver rejects it, since a MySQL schema *is* a database. |
-| `databases.<name>.options` | unset | New. Arbitrary driver DSN parameters. |
+| `databases.<name>.search_path` | unset | New. Postgres only; the MySQL driver rejects it, since a MySQL schema *is* a database, and the SQL Server driver rejects it, since SQL Server has no per-connection search path (qualify the schema in `TableName()`). |
+| `databases.<name>.options` | unset | New. Driver DSN parameters, passed through on Postgres and MySQL. On SQL Server a closed list, and a key a typed key owns is refused (`docs/SQLSERVER.md`, "`options`"). |
 
 All defaults preserve v1.5.1 behaviour, so an app that configures nothing is
 unaffected. A configured `0` for an upload limit falls back to the default rather

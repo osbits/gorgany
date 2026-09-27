@@ -25,10 +25,11 @@ type Identifier string
 // simpleIdentifier matches a bare column or a dotted table.column reference, e.g.
 // "created_at" or "members.created_at".
 //
-// The two dialects each had their own copy of this expression and applied it only to ORDER BY.
-// It lives here so the condition family — which is where an unvalidated identifier actually
-// became injectable — can use the same rule, and so the two engines cannot drift apart on what
-// counts as a column name.
+// The Postgres and MySQL dialects each had their own copy of this expression and applied it
+// only to ORDER BY. It lives here so the condition family — which is where an unvalidated
+// identifier actually became injectable — can use the same rule, and so those two engines
+// cannot drift apart on what counts as a column name. SQL Server's dialect brackets every
+// identifier and has a wider rule of its own (db/sql/gorm/sqlserver/v2/identifier.go).
 var simpleIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*)*$`)
 
 // IsSimpleIdentifier reports whether s is a bare or dotted column reference and nothing else.

@@ -104,8 +104,10 @@ jobs:
       # because SQL Server is often not there (see requireSQLServerEnvVar in e2e_test.go).
       #
       # e2e_test.go's cases need the fixture app, which only the e2e job starts, so under
-      # E2E_REQUIRE_LIVE they would fail here. They are exactly the cases that compile
-      # without the livedb tag, so they are listed that way and skipped. The listing clears
+      # E2E_REQUIRE_LIVE they would fail here. They compile without the livedb tag, and so do
+      # the SQL Server gate's own tests in sqlserver_gate_test.go, which need no engine and
+      # skip subtests on purpose; the e2e job and `go test ./...` run those. Every case that
+      # compiles without the tag is therefore listed that way and skipped. The listing clears
       # both switches, since each also fails a run in which no case of its engine executed,
       # and a listing executes none. pipefail keeps a failing `go test` from being reported
       # as tee's success.
@@ -131,6 +133,12 @@ jobs:
       # named for the engine matched whether it passed or not, and the ORM cases drop MySQL
       # with only a log line when it is unreachable. An engine with no case named proves
       # nothing, so that fails too.
+      #
+      # SQL Server's cases are the ones its release rests on: the engine and its guards, the
+      # server behaviour the dialect relies on (trigger rows, XACT_ABORT, the parameter limit,
+      # DISTINCT under a synthetic ORDER BY), the ORM on an EF Core-shaped schema, and SQL
+      # Server as an owned database. Under both switches nothing may skip either: a skip there
+      # is a case that did not run, which the switches exist to make impossible.
       - name: assert every engine actually executed
         run: |
           set -euo pipefail
@@ -150,9 +158,21 @@ jobs:
                 echo TestSQLServerConnectsWithSQLLogin
                 echo TestSQLServerQueriesRoundTripThroughTheDialect
                 echo TestExternalSchemaRefusesMigrateSeedAndDiffOnSQLServer
+                echo TestSQLServerReadOnlyRefusesWritesThroughEveryPath
+                echo TestSQLServerRowsAffectedIgnoresTriggerRows
+                echo TestSQLServerXactAbortDoomsASwallowedError
+                echo TestSQLServerParameterLimit
+                echo TestSQLServerDistinctWithSelectNullOrderBy
+                echo TestSQLServerEFShapedTable
+                echo TestSQLServerEFShapedSchema
+                echo TestSQLServerTriggerTableCreate
+                echo TestVerifyModelOnEveryEngine/sqlserver
                 echo TestT15_SessionsMigrationOnSQLServer
                 echo TestT17_SessionsMigrationsRollBackThroughDbMigrateOnSQLServer
+                echo TestSQLServerDDLRollsBackInATransaction
                 echo TestDiffRollsBackAndItsDraftRunsOnSQLServer
+                echo TestSeedCommitsEachSeederWithItsRecordOnSQLServer
+                echo TestTheSessionSweepBatchesOnSQLServer
                 ;;
             esac
           }
@@ -169,6 +189,10 @@ jobs:
               fi
             done
           done
+          if grep -- '--- SKIP' live-db.log; then
+            echo "::error::a live case skipped, so part of a suite did not run"
+            exit 1
+          fi
 
       # testsupport has no E2E_REQUIRE_LIVE: an unreachable engine skips its subtest and the
       # run still exits 0. So every engine must show a pass, and the only skip allowed is
@@ -200,6 +224,10 @@ jobs:
   # run.sh builds e2e/Dockerfile for every service, so this still proves the image builds
   # on the pinned toolchain; it then runs the fixture and live suites in the compose network
   # under E2E_REQUIRE_LIVE, and dumps container logs when it fails.
+  #
+  # It does not set E2E_REQUIRE_SQLSERVER, so it starts no SQL Server and its SQL Server cases
+  # skip: the live-db job above already runs them on amd64, and the image would add a pull of
+  # about 1.5 GB to every run for no case that job does not cover.
   e2e:
     name: dockerised e2e harness
     runs-on: ubuntu-latest

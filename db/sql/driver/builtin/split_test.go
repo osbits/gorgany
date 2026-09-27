@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// F7: provider.DbProvider used to blank-import builtin, which registers both engines — so
+// F7: provider.DbProvider used to blank-import builtin, which registers Postgres and MySQL — so
 // every app on the standard bootstrap linked gorm.io/driver/mysql, go-sql-driver/mysql and
 // filippo.io/edwards25519 whether or not it would ever speak MySQL. DbProvider now imports
 // nothing and the app chooses.
@@ -39,7 +39,7 @@ func TestBothEnginesResolveThroughBuiltin(t *testing.T) {
 
 // TestASingleEngineImportDoesNotLinkTheOther is the dependency-hygiene claim, and it has to
 // be checked with the build tool rather than at runtime: once this test binary imports
-// builtin, both engines are linked into *it* by construction.
+// builtin, Postgres and MySQL are both linked into *it* by construction.
 //
 // `go list -deps` on the single-engine package is the assertion. It is skipped when the
 // toolchain is unavailable rather than failing, since that is an environment problem and not

@@ -329,10 +329,12 @@ v2.4.3, a datasource has no `auth` block, so that check does not exist there.
 - **The package must be called `provider`.** `domains:register` writes `package provider` into
   `pkg/provider/domains.go`. Import the framework's package as `grgprovider`, so the
   framework's `AppProvider{}` and the app's `&AppProvider{}` read as different things.
-- **The database driver's blank import lives here**, next to the bootstrapper:
+- **The database driver's blank import lives here**, in `bootstrap.go`:
   `_ "github.com/osbits/gorgany/v2/db/sql/driver/postgres"`. `DbProvider` registers no
   driver of its own (MIGRATION_v2 §21). Without the import, the app compiles and then refuses
-  to boot.
+  to boot. An app that also reaches SQL Server adds its import beside it, `driver/sqlserver`
+  for a SQL login or `driver/sqlserver/azuread` for Entra ID; `driver/builtin` includes neither
+  (SQLSERVER.md, "Imports").
 - **Two bindings are mandatory, even in an API-only app.** Bind `core.IUserService`, because
   both built-in auth strategies inject it. Bind a `core.IEngineRenderer`, because `http.Message`
   injects one. An app that renders no templates binds a no-op renderer. One that does
@@ -347,7 +349,7 @@ v2.4.3, a datasource has no `auth` block, so that check does not exist there.
 | Path | Holds | Must not hold |
 |------|-------|---------------|
 | `cmd/app`, `cmd/cli` | One `main.go` each | Flags, configuration reads, wiring, a third binary. A new task is a console command |
-| `pkg/provider` | Wiring, configuration reads, the driver import, one file per extension point, route-contract tests | Handlers, business rules, middleware types |
+| `pkg/provider` | Wiring, configuration reads, the driver imports, one file per extension point, route-contract tests | Handlers, business rules, middleware types |
 | `pkg/domain` | Entities: the generated base plus a hand-written wrapper with the same file name, relations, `TableName` | Anything that is not an entity. `domains:register` and `db:diff` treat **every struct here** as a table, so error types, value objects and helpers live elsewhere. Service calls, request or response types, HTTP |
 | `pkg/model/**` | Request commands (`ContentType()`, `validate` tags) and response DTOs | Imports of `pkg/service`; authorisation. A request DTO that asks a service locator whether the caller may proceed hides access control where no route test sees it |
 | `pkg/service/**` | Use cases, embedding the generated CRUD service when there is one; their error types, such as `NotFoundError`; response building in `service/dto` | `core.HttpMessage`, vendor HTTP clients, one-off data-migration code. The generator's `pkg/service/*_hateos_service.go` builds links from the request; leave it where the generator puts it |
@@ -358,7 +360,7 @@ v2.4.3, a datasource has no `auth` block, so that check does not exist there.
 | `pkg/job` | `core.IJob` implementations, registered as pointers when they inject anything | Jobs nothing registers. Delete them |
 | `pkg/event`, `pkg/subscriber` | Event name constants, one payload type per event with its context accessors; one subscriber per file, and one subscriber per event name | String literals at publish sites |
 | `pkg/adapter/<vendor>` | A client for one external system, with an injectable `http.Client` | Domain rules; package-global client registries |
-| `pkg/<capability>` | A cohesive feature: a pure service, a `Store` interface, its Postgres implementation, its tests. Wired by `pkg/provider/<capability>_provider.go` | HTTP handlers, wire DTOs |
+| `pkg/<capability>` | A cohesive feature: a pure service, a `Store` interface, its Postgres implementation, its tests. Wired by `pkg/provider/<capability>_provider.go`. The models of a database another system owns live in one too, such as `pkg/legacy` (SQLSERVER.md) | HTTP handlers, wire DTOs |
 | `pkg/grgcompat` | Workarounds for framework defects, each with a canary test | Anything not tied to a named framework defect |
 | `db/migration` | One migration per file, `registry.go` | Imports of `pkg/`. Migrations are frozen history |
 | `db/seeder` | Reference data every environment needs; `fixture/` for development and e2e data | Real personal data, credentials, working-directory-relative file reads |

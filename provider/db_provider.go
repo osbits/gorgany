@@ -12,7 +12,7 @@ import (
 	"github.com/osbits/gorgany/v2/log"
 
 	// No driver package is imported here on purpose (F7). This provider used to
-	// blank-import db/sql/driver/builtin, which registers both engines — so every app
+	// blank-import db/sql/driver/builtin, which registers Postgres and MySQL — so every app
 	// using the standard bootstrap linked gorm.io/driver/mysql, go-sql-driver/mysql and
 	// filippo.io/edwards25519 whether or not it would ever speak MySQL, with no way to
 	// opt out.
@@ -21,7 +21,8 @@ import (
 	//
 	//	_ "github.com/osbits/gorgany/v2/db/sql/driver/postgres"
 	//	_ "github.com/osbits/gorgany/v2/db/sql/driver/mysql"
-	//	_ "github.com/osbits/gorgany/v2/db/sql/driver/builtin"  // both
+	//	_ "github.com/osbits/gorgany/v2/db/sql/driver/builtin"  // Postgres and MySQL
+	//	_ "github.com/osbits/gorgany/v2/db/sql/driver/sqlserver"  // SQL Server, never in builtin
 	//
 	// This is compile-clean and shows up only at boot, so driver.New has a dedicated
 	// message for an empty registry that names those import lines.

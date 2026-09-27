@@ -187,7 +187,7 @@ var SessionSweepMaxBatches = 10_000
 // repository cannot name keeps the statement it always ran.
 //
 // It is exported for two reasons: the portability check in e2e has to run this exact
-// statement against both live engines, and an app that prefers to sweep from its own
+// statement against live Postgres and MySQL, and an app that prefers to sweep from its own
 // migration or cron can reuse it rather than writing a fourth version of it.
 const BatchedExpiredDeleteSQL = `DELETE FROM sessions WHERE id IN ` +
 	`(SELECT id FROM (SELECT id FROM sessions WHERE expiry < NOW() LIMIT ?) AS batch)`

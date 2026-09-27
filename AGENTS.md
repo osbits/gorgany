@@ -72,8 +72,19 @@ auth/          # JWT and session-based authentication strategies
 command/       # CLI command resolution and built-in commands (migrate, seed, diff)
 config/        # Viper config parser
 db/            # Database layer
-db/orm/        # Custom ORM wrapper around GORM
-db/sql/gorm/postgres/v2/  # PostgreSQL dialect (query builder, executor)
+db/migration/  # The framework's own migrations (the sessions table)
+db/orm/        # Custom ORM wrapper around GORM; VerifyModel checks a model against its table
+db/sql/builder/  # Engine-agnostic query builder; every byte of SQL comes from a dialect
+db/sql/config/   # Typed datasource config: flags (external_schema, read_only, lazy_connect), auth
+db/sql/core/     # SQL interfaces, conditions and their rendering seam, datasource policy, SQL guards
+db/sql/driver/   # Driver-name registry
+db/sql/driver/{postgres,mysql,sqlserver}/  # Each registers one engine
+db/sql/driver/builtin/  # Registers Postgres and MySQL; never SQL Server
+db/sql/driver/sqlserver/azuread/  # Opt-in Entra ID sign-in for SQL Server (links the Azure identity SDK)
+db/sql/driver/sqlserver/azuread/persistentcache/  # Opt-in OS-keychain token cache (development)
+db/sql/gorm/{postgres,mysql,sqlserver}/v2/  # One engine each: dialect, datasource, session, executor
+db/sql/gorm/guard/  # gorm callbacks enforcing read_only and external_schema
+db/sql/internal/goldentest/  # Golden-file helpers for the db/sql tests
 decoder/       # Query string and multipart form decoders
 docs/          # Guides; docs/app-template is a separate Go module, outside ./...
 e2e/           # Dockerised e2e harness and its fixture app (cmd/app, cmd/cli)
@@ -81,11 +92,10 @@ err/           # Custom error types
 event/         # Event bus (pub/sub, sync/async)
 http/          # HTTP context, middleware, controllers, router (Chi)
 i18n/          # Internationalization manager
-job/           # Background job scheduler (gocron)
+job/           # Background job scheduler
 log/           # Pluggable logger
 mail/          # Email service
 model/         # Base domain class, binder, pagination, access control, DTOs
-other/         # Request/response/session/view scopes
 provider/      # Service providers
 service/       # IoC container, pagination service, cache
 testsupport/   # Database harness for tests (docs/TESTING.md)
@@ -123,15 +133,23 @@ All core contracts are defined in `app/core/`:
 | Package | Purpose |
 |---------|---------|
 | `gorm.io/gorm` + `gorm.io/driver/postgres` | ORM + PostgreSQL |
-| `github.com/go-chi/chi` | HTTP router |
+| `gorm.io/driver/mysql` | MySQL, linked through `db/sql/driver/mysql` or `builtin` |
+| `gorm.io/driver/sqlserver` + `github.com/microsoft/go-mssqldb` | SQL Server and Azure SQL, linked only through `db/sql/driver/sqlserver` (opt-in) |
+| `github.com/Azure/azure-sdk-for-go/sdk/azidentity` + `azcore` | Entra ID sign-in, linked only through `db/sql/driver/sqlserver/azuread` (opt-in) |
+| `github.com/Azure/azure-sdk-for-go/sdk/azidentity/cache` | Persistent Entra token cache, linked only through `db/sql/driver/sqlserver/azuread/persistentcache` (opt-in) |
+| `github.com/go-chi/chi/v5` | HTTP router |
 | `github.com/go-playground/validator/v10` | Struct validation |
 | `github.com/golang-jwt/jwt/v5` | JWT auth |
 | `github.com/spf13/viper` | Configuration |
 | `github.com/joho/godotenv` | `.env` loading |
 | `github.com/google/uuid` | UUID generation |
 | `github.com/stretchr/testify` | Test assertions |
-| `github.com/jasonlvhit/gocron` | Job scheduling |
 | `github.com/eknkc/amber` | Amber templates |
+
+`db/sql/driver/builtin/split_test.go` keeps the opt-in dependencies opt-in: `builtin`,
+`provider`, `auth`, `command/db`, `db/migration`, `db/orm` and `testsupport` link no SQL Server
+code, `driver/sqlserver` links no Azure SDK, and `driver/sqlserver/azuread` no keychain. Framework
+code picks SQL Server behaviour by dialect name (`"sqlserver"`), never by importing the engine.
 
 ## Authentication
 
@@ -157,4 +175,7 @@ Built-in middleware: `http/middleware/auth_middleware.go`, `http/middleware/jwt_
 
 - Test files use `testify/assert` and standard `testing` package
 - Mock auth context available at `model/mock_auth_context.go`
-- Tests exist in: `auth/`, `db/orm/`, `db/sql/gorm/postgres/v2/`, `http/`, `model/`, `service/`
+- Tests exist in most packages; the database ones are in `auth/`, `command/db/`, `db/migration/`, `db/orm/`, `db/sql/...`, `provider/`, `testsupport/` and `e2e/tests/`
+- Golden files pin what Postgres and MySQL render: `db/sql/core/testdata/conditions.golden` and `db/sql/builder/testdata/pg_mysql.golden`. A package's `-update` flag rewrites its file (`go test ./db/sql/core -run Golden -update`); a changed golden is changed SQL, so it needs a CHANGELOG entry
+- Live tests carry the `livedb` build tag and need running engines (`docs/TESTING.md`): `go test -tags=livedb ./e2e/tests` and `go test -tags=livedb ./testsupport`. `E2E_REQUIRE_LIVE=1` makes the Postgres and MySQL cases fail instead of skip, and `E2E_REQUIRE_SQLSERVER=1` the SQL Server ones; `E2E_REQUIRE_SQLSERVER=1 sh e2e/run.sh` starts SQL Server in the dockerised harness
+- The manual Azure SQL test carries the `azuresql` tag, reads `GORGANY_AZURESQL_*` and fails without them; CI only compiles it (`go vet -tags=azuresql ./db/sql/driver/sqlserver/azuread`)

@@ -358,6 +358,19 @@ the three containers in [Quick start](#quick-start). The SQL Server cases create
 E2E_REQUIRE_SQLSERVER=1 go test -tags=livedb ./e2e/tests/ -run SQLServer -count=1 -v
 ```
 
+`-run SQLServer` selects the cases named for SQL Server, not the `sqlserver` subtests of the
+cases that run on every engine. The whole suite, as the CI live-db job runs it, leaves out every
+case that compiles without the tag:
+
+```bash
+fixture_cases=$(go test -list . ./e2e/tests | grep '^Test' | paste -sd '|' -)
+E2E_REQUIRE_LIVE=1 E2E_REQUIRE_SQLSERVER=1 go test -tags=livedb ./e2e/tests/ -count=1 -v -skip "^(${fixture_cases})\$"
+```
+
+Those are the cases in `e2e_test.go`, which need the fixture app that `sh e2e/run.sh` starts,
+and the SQL Server gate's own tests in `sqlserver_gate_test.go`, which need no engine and skip
+subtests on purpose. `sh e2e/run.sh` runs both, and `go test ./...` the gate's.
+
 | Variable | Effect |
 |----------|--------|
 | `E2E_REQUIRE_LIVE=1` | A Postgres or MySQL case that cannot reach its engine fails instead of skipping, and a run in which no live case executed fails |

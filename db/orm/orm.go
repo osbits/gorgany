@@ -36,9 +36,10 @@ func New[T EntityWithMeta](db dbCore.ISession) *ORM[T] {
 // simply never asked.
 //
 // Reads, updates and deletes happened to survive that, because PostgresDialect
-// emits bare unquoted identifiers and both engines accept `LIMIT n OFFSET m`. That
-// was luck, not design: any dialect-specific emission added later would have broken
-// all of them at once.
+// emits bare unquoted identifiers and Postgres and MySQL both accept
+// `LIMIT n OFFSET m`. That was luck, not design: any dialect-specific emission added
+// later would have broken all of them at once, as SQL Server's TOP, OFFSET … FETCH and
+// bracketed identifiers would have.
 func (o *ORM[T]) newBuilder() dbCore.IQueryBuilder {
 	if o.db == nil {
 		// The ORM is always constructed with a session (New) or has one injected.

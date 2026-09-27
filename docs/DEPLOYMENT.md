@@ -389,18 +389,28 @@ seeds `default` only, so keep seeders there.
   run each in the migrate step. If that datasource has seeders, add a `seed-<name>` service the
   same way, with `command: ["/app/cli", "db:seed", "--datasource=<name>"]`, and run it in the
   seed step.
-- A datasource with `external_schema: true` is migrated by the system that owns its schema.
-  Give it no `migrate-<name>` or `seed-<name>` service, and no migration or seeder:
-  `db:migrate`, `db:seed` and `db:diff` refuse it before they send any SQL. `db:migrate` also
-  refuses every run, whichever datasource it selects, while a registered migration targets
+- A datasource with `external_schema: true` is migrated and backed up by the system that owns
+  its schema. Give it no `migrate-<name>`, `seed-<name>` or backup service, and no migration or
+  seeder: `db:migrate`, `db:seed` and `db:diff` refuse it before they send any SQL. `db:migrate`
+  also refuses every run, whichever datasource it selects, while a registered migration targets
   it, and `db:seed` while a registered seeder does. Each refusal exits 2. They refuse
   `read_only: true` the same way.
+- Every `cli` run boots every datasource, the migrate and seed steps included. Set
+  `lazy_connect: true` on a secondary external datasource, so that those steps neither dial it
+  nor sign in to it (SQLSERVER.md, "Flags").
 - The sessions table lives on `default`. `db:migrate` runs the sessions migrations only on a
   `default` without `external_schema` or `read_only`, and `auth.session.storage: database`
   refuses such a `default` at boot. Configure the database gorgany owns as `default` and the
   external one under its own name ("More than one instance").
-- Back up each database.
-- Make `/readyz` ping every datasource the application cannot serve without.
+- Back up each database gorgany owns.
+- **Decide what `/readyz` pings.** The template's pings `default` only. Add another datasource
+  only when no request can be served without it: a failing probe takes every replica out of
+  rotation at once, routes that never touch that database included. A probe that pings Azure
+  SQL needs a longer timeout than the template's one second, and must read a failed ping as
+  "not ready yet": a serverless database that paused refuses logins with error 40613 while it
+  resumes, a gateway failover does the same for seconds, and under `lazy_connect` the first ping
+  is also the first sign-in, bounded by `auth.login_timeout`. `/healthz` pings nothing, so none
+  of this restarts the app.
 
 ## More than one instance
 
@@ -425,9 +435,11 @@ seeds `default` only, so keep seeders there.
   outside a transaction, on the pool, would read `-999` as "held elsewhere" and skip its work on
   every replica, every time. The lock is released when the transaction ends. Either lock belongs
   to one connection, so do the job's work on the connection that took it, in that transaction,
-  not on the pool. The framework's own session
-  sweep needs neither: each replica deletes a batch of expired sessions at a time, and a row
-  another replica deleted first is simply not there.
+  not on the pool. The framework's own session sweep needs neither: each replica deletes a
+  batch of expired sessions at a time, and a row another replica deleted first is simply not
+  there. On every engine, the sweep does not stop when the scheduler cancels its job: it runs
+  until the expired rows run out or `auth.SessionSweepMaxBatches` batches have run, so a long
+  backlog can hold a graceful shutdown until its deadline.
 - **Sessions must live in the database.** `auth.session.storage` defaults to `memory`, which one
   replica cannot see from another. Use `database`, as the template does.
 - **Rate limits are per instance** ([RATE_LIMITING.md](RATE_LIMITING.md)).
@@ -523,6 +535,13 @@ row each time.
 - Anything secret that was ever committed is rotated. Deleting it from the tree does not remove
   it from history.
 - The runtime image runs as a non-root user and has no shell.
+- No datasource signs in interactively in production: `interactive`, `device_code`, `azure_cli`
+  and `token_cache: persistent` are for development. A deployed SQL Server datasource signs in
+  with a SQL login, its password in the host's env file, or with `managed_identity`,
+  `workload_identity`, `service_principal`, or `azure_default` with `AZURE_TOKEN_CREDENTIALS=prod`
+  (SQLSERVER.md, "Development and deployed apps").
+- The principal of an `external_schema` datasource has no DDL rights, and write rights only once
+  the app writes there.
 - The pipeline runs secret detection, `govulncheck` and container scanning.
 - SSH host keys are pinned. Deploys run as a dedicated deploy user, on a runner of their own,
   only from the protected default branch or a protected `v*` tag, one at a time.

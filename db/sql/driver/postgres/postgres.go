@@ -6,13 +6,14 @@
 //	import _ "github.com/osbits/gorgany/v2/db/sql/driver/postgres"
 //
 // It exists so a Postgres-only app does not link the MySQL driver. driver/builtin
-// registers both, and provider.DbProvider used to import builtin unconditionally — so
-// every app that used the standard bootstrap pulled in gorm.io/driver/mysql,
-// go-sql-driver/mysql and filippo.io/edwards25519 whether or not it would ever speak
-// MySQL. Not a defect, but it is dependency surface and attack surface an app did not
-// choose.
+// registers Postgres and MySQL, and provider.DbProvider used to import builtin
+// unconditionally — so every app that used the standard bootstrap pulled in
+// gorm.io/driver/mysql, go-sql-driver/mysql and filippo.io/edwards25519 whether or not it
+// would ever speak MySQL. Not a defect, but it is dependency surface and attack surface an
+// app did not choose.
 //
-// Use driver/builtin instead if you want both engines, or want the pre-F7 behaviour.
+// Use driver/builtin instead if you want Postgres and MySQL, or want the pre-F7 behaviour.
+// SQL Server is never in builtin: import driver/sqlserver beside it.
 package postgres
 
 import (

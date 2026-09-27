@@ -783,12 +783,16 @@ func TestSQLServerQueriesRoundTripThroughTheDialect(t *testing.T) {
 							break
 						}
 						mu.Lock()
-						if sqlServerErrorNumber(err) == 1205 && attempt < 20 {
+						if sqlServerErrorNumber(err) == 1205 && attempt < 200 {
 							deadlocks++
 							if !strings.Contains(err.Error(), "safe to run again") {
 								failures = append(failures, fmt.Errorf("the deadlock carries no hint: %w", err))
 							}
 							mu.Unlock()
+							// Retrying at once, in step with the batch it lost to, deadlocks again
+							// on a slow server (an emulated one under Compose most of all), so each
+							// worker backs off by a different, growing amount before it retries.
+							time.Sleep(time.Duration((worker+1)*(attempt%8+1)) * 2 * time.Millisecond)
 							continue
 						}
 						failures = append(failures, err)

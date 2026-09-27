@@ -6,7 +6,8 @@
 //
 // See the sibling postgres package for why the engines are registered separately.
 //
-// Use driver/builtin instead if you want both engines.
+// Use driver/builtin instead if you want Postgres and MySQL. SQL Server is never in builtin:
+// import driver/sqlserver beside it.
 package mysql
 
 import (

@@ -231,7 +231,7 @@ var ordinalItem = regexp.MustCompile(`^\d+$`)
 // Such an item means something only beside the select list it refers to. When countQuery
 // replaces that list with 1 AS gorgany_one, a position groups by the constant, which counts
 // one group whatever the data holds, and an alias names a column that is no longer there,
-// which both engines reject. Only an item that is the whole alias or a whole number counts:
+// which every engine rejects. Only an item that is the whole alias or a whole number counts:
 // anything else is an expression over the table's columns, which the replacement does not
 // touch.
 func groupByReferencesSelectList(q *dbCore.Query) string {

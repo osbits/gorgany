@@ -35,8 +35,9 @@ var packagesAllowedToNameADialect = []string{
 // bypassing the dialect's own translation.
 //
 // Reads, updates and deletes survived only because PostgresDialect happens to emit
-// bare unquoted identifiers and both engines accept `LIMIT n OFFSET m`. Every one of
-// those sites was a latent break for the next dialect-specific emission.
+// bare unquoted identifiers and Postgres and MySQL both accept `LIMIT n OFFSET m`. Every
+// one of those sites was a latent break for the next dialect-specific emission, such as
+// SQL Server's TOP and bracketed names.
 //
 // A comment asking people not to do it again would not have held. This fails the
 // build instead. Obtain a builder from the session (`session.Query()`), from the ORM

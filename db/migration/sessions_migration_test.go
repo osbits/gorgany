@@ -366,8 +366,8 @@ func TestSQLServerSessionsSchemaAvoidsNonUnicodeAndDeprecatedTypes(t *testing.T)
 }
 
 // TestTheSQLServerSnapshotHasTheSameColumnsAndIndexes: the SQL Server snapshot differs from
-// sessionsSchema in its string types and nothing else, so the two engines' tables cannot drift
-// apart in a column or an index.
+// sessionsSchema in its string types and nothing else, so SQL Server's table cannot drift apart
+// from Postgres's and MySQL's in a column or an index.
 func TestTheSQLServerSnapshotHasTheSameColumnsAndIndexes(t *testing.T) {
 	portable := reflect.TypeOf(sessionsSchema{})
 	sqlServer := reflect.TypeOf(sessionsSchemaSQLServer{})
