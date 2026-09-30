@@ -286,6 +286,41 @@ func TestARenewalThatFailsInsideTheMarginHandsOutTheOldToken(t *testing.T) {
 
 // TestAnExpiredOrEmptyTokenIsNeverHandedOut: a token without an expiry is not cached, and an
 // empty one is an error rather than a login that fails at the server.
+// TestExpiringTokenSaysWhenTheTokenItHandsOutExpires, on every path a token leaves the source
+// by: acquired, cached, the last resort after a renewal inside the margin failed, and the old
+// token again within retryAfter of that. The last two hand out a token with as little as a
+// minute left, which is the one most likely to expire before a slow handshake reaches its login,
+// so the engine must hear when.
+func TestExpiringTokenSaysWhenTheTokenItHandsOutExpires(t *testing.T) {
+	c := newClock()
+	expiresOn := c.Now().Add(time.Hour)
+	cred := &fakeCredential{clock: c, getToken: func(_ context.Context, n int) (azcore.AccessToken, error) {
+		if n == 1 {
+			return azcore.AccessToken{Token: standInToken, ExpiresOn: expiresOn}, nil
+		}
+		return azcore.AccessToken{}, errors.New("Entra ID unreachable")
+	}}
+	s, _ := source(t, sqlserver.AuthMethodAzureCLI, cred, c)
+
+	for _, path := range []struct {
+		name    string
+		advance time.Duration
+	}{
+		{"acquired", 0},
+		{"cached", 0},
+		{"the last resort", 56 * time.Minute},
+		{"within retryAfter", 0},
+	} {
+		c.advance(path.advance)
+		token, at, err := s.ExpiringToken(context.Background())
+		require.NoError(t, err, path.name)
+		assert.Equal(t, standInToken, token, path.name)
+		assert.True(t, expiresOn.Equal(at), "%s: expires at %v, not %v", path.name, at, expiresOn)
+	}
+	getTokens, _ := cred.counts()
+	assert.Equal(t, 2, getTokens, "the one renewal that failed")
+}
+
 func TestAnExpiredOrEmptyTokenIsNeverHandedOut(t *testing.T) {
 	c := newClock()
 	cred := &fakeCredential{clock: c, getToken: func(_ context.Context, n int) (azcore.AccessToken, error) {

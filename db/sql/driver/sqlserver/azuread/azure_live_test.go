@@ -21,7 +21,7 @@ import (
 // The manual check against a real Azure SQL database, run by hand; CI only compiles it (go vet
 // -tags=azuresql), so that an API change cannot break it unnoticed:
 //
-//	GORGANY_AZURESQL_HOST=example.database.windows.net GORGANY_AZURESQL_DB=Example-db \
+//	GORGANY_AZURESQL_HOST=set_me.database.windows.net GORGANY_AZURESQL_DB=Example-db \
 //	GORGANY_AZURESQL_USER=user@example.com GORGANY_AZURESQL_METHOD=azure_cli \
 //	  go test -tags=azuresql ./db/sql/driver/sqlserver/azuread -run AzureSQL -count=1 -v
 //
@@ -35,6 +35,10 @@ import (
 // the resource's default identity, and workload_identity takes _TENANT_ID, _CLIENT_ID and
 // _TOKEN_FILE_PATH, each optional in a pod the workload identity webhook mutated. They are not
 // AZURE_* names, which azidentity reads by itself.
+//
+// GORGANY_AZURESQL_LAZY=1 sets lazy_connect, so that the first query signs in, as an app with
+// lazy_connect does: with interactive or device_code, take your time over the sign-in, well
+// over a minute, and the query must still succeed, since the connection is opened only after it.
 //
 // The datasource is read_only and external_schema, and the test only reads. One datasource
 // serves every subtest, so interactive prompts once for the whole run.
@@ -60,6 +64,7 @@ func liveConfig(t *testing.T) dsconfig.DataSource {
 		Username:       liveEnv(t, "USER", false),
 		ReadOnly:       true,
 		ExternalSchema: true,
+		LazyConnect:    liveEnv(t, "LAZY", false) == "1",
 		Auth: dsconfig.Auth{
 			// Lowercased as the config parser does, so that the checks below see the method
 			// the engine signs in with.
@@ -97,6 +102,7 @@ func TestAzureSQLWithTheConfiguredMethod(t *testing.T) {
 	}
 	t.Cleanup(func() { credentialFor = saved })
 
+	t.Logf("auth.method %s, lazy_connect %v", cfg.Auth.Method, cfg.LazyConnect)
 	ds, err := sqlserver.NewDataSourceWithConfig(cfg)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, ds.Close()) })
@@ -122,6 +128,12 @@ func TestAzureSQLWithTheConfiguredMethod(t *testing.T) {
 			assert.True(t, strings.EqualFold(cfg.Username, who[0].LoginName),
 				"signed in as %s, not %s", who[0].LoginName, cfg.Username)
 		}
+
+		var options []struct{ XactAbort int }
+		require.NoError(t, session.Executor().FindRaw(ctx, &options,
+			"SELECT CAST(@@OPTIONS & 16384 AS int) AS [xact_abort]").Error)
+		require.Len(t, options, 1)
+		assert.Equal(t, 16384, options[0].XactAbort, "the session's init set XACT_ABORT ON")
 	})
 
 	t.Run("probe", func(t *testing.T) {
@@ -140,7 +152,8 @@ func TestAzureSQLWithTheConfiguredMethod(t *testing.T) {
 	})
 
 	// Eight connections opened at once, each a new physical login, sign in with the token the
-	// warm-up fetched: the credential is asked once for the whole run.
+	// warm-up fetched, or under LAZY the first query: the credential is asked once for the whole
+	// run.
 	t.Run("concurrent logins fetch one token", func(t *testing.T) {
 		handle, err := ds.GetDriver()
 		require.NoError(t, err)

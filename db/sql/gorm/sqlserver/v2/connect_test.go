@@ -62,20 +62,23 @@ func TestSessionInitSQLSetsXactAbort(t *testing.T) {
 
 	connector, err := newConnector(dsn, nil)
 	require.NoError(t, err)
+	require.IsType(t, &mssql.Connector{}, connector, "a SQL login gets go-mssqldb's connector as it is")
 	assert.Equal(t, "SET XACT_ABORT ON", connector.(*mssql.Connector).SessionInitSQL)
 
 	tokens := &datasourceTokens{source: staticTokens("t"), root: context.Background(), cancel: func() {}}
 	connector, err = newConnector(dsn, tokens)
 	require.NoError(t, err)
 	assert.Equal(t, "SET XACT_ABORT ON", connector.(*tokenFirstConnector).connector.SessionInitSQL)
+	assert.IsType(t, &mssql.Driver{}, connector.Driver(), "the driver is go-mssqldb's either way")
 }
 
 // connectSteps is a token source and a go-mssqldb Dialer that record, in order, each token
-// request and each dial, with the token the dial's context carries to the login and what that
-// context prints. It refuses every dial.
+// request and each dial, with the token the dial's context carries to the login, its expiry, and
+// what that context prints. It refuses every dial.
 type connectSteps struct {
 	mu      sync.Mutex
 	steps   []string
+	expiry  time.Time
 	printed string
 }
 
@@ -90,9 +93,13 @@ func (s *connectSteps) Token(context.Context) (string, error) {
 func (s *connectSteps) DialContext(ctx context.Context, _, _ string) (net.Conn, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	token, _ := tokenTaken(ctx)
-	s.steps = append(s.steps, "dial with "+token)
-	s.printed = fmt.Sprint(ctx)
+	var token accessToken
+	if taken, ok := tokenTaken(ctx); ok {
+		token = *taken
+	}
+	s.steps = append(s.steps, "dial with "+token.value())
+	s.expiry = token.expiresOn
+	s.printed = fmt.Sprintf("%v %+v %#v %s", ctx, ctx, ctx, ctx)
 	return nil, &net.OpError{Op: "dial", Err: syscall.ECONNREFUSED}
 }
 
@@ -100,6 +107,23 @@ func (s *connectSteps) seen() ([]string, string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.steps, s.printed
+}
+
+func (s *connectSteps) dialledExpiry() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.expiry
+}
+
+// expiringTokens is source, saying that every token it hands out expires at expiresOn.
+type expiringTokens struct {
+	TokenSource
+	expiresOn time.Time
+}
+
+func (e expiringTokens) ExpiringToken(ctx context.Context) (string, time.Time, error) {
+	token, err := e.Token(ctx)
+	return token, e.expiresOn, err
 }
 
 // recordedConnector is the connector newConnector makes over tokens, dialling through steps to
@@ -126,8 +150,18 @@ func TestAConnectionTakesItsTokenBeforeItDials(t *testing.T) {
 	require.ErrorIs(t, err, syscall.ECONNREFUSED)
 	seen, printed := steps.seen()
 	assert.Equal(t, []string{"token", "dial with token-1"}, seen)
+	assert.Zero(t, steps.dialledExpiry(), "a source that does not say when its token expires")
 	assert.NotEmpty(t, printed)
-	assert.NotContains(t, printed, "token-1", "a logger that prints the context does not print the token")
+	assert.NotContains(t, printed, "token-1", "a logger that prints the context, with any verb, does not print the token")
+
+	steps = &connectSteps{}
+	expiresOn := time.Now().Add(time.Hour)
+	expiring := &datasourceTokens{source: expiringTokens{steps, expiresOn}, root: context.Background(), cancel: func() {}}
+	_, err = recordedConnector(t, expiring, steps).Connect(ctx)
+	require.ErrorIs(t, err, syscall.ECONNREFUSED)
+	seen, _ = steps.seen()
+	assert.Equal(t, []string{"token", "dial with token-1"}, seen)
+	assert.True(t, expiresOn.Equal(steps.dialledExpiry()), "the expiry the source gave rides with the token")
 
 	steps = &connectSteps{}
 	failing := &datasourceTokens{source: failingTokens{errors.New("no browser to open")}, root: context.Background(), cancel: func() {}}
@@ -137,22 +171,107 @@ func TestAConnectionTakesItsTokenBeforeItDials(t *testing.T) {
 	assert.Empty(t, seen, "a connection without a token is never dialled")
 }
 
+// TestAConnectionsTokenRequestEndsWithItsDial: the token a connection takes before it dials is
+// asked for under the context database/sql connects with, so a query that gives up is not left
+// waiting on a sign-in, and nothing is dialled. So is the one a login asks for in place of a
+// token that expired during the handshake, from either kind of source.
+func TestAConnectionsTokenRequestEndsWithItsDial(t *testing.T) {
+	for name, source := range map[string]TokenSource{
+		"a source":                           newBlockingTokens(),
+		"a source that says when it expires": expiringTokens{TokenSource: newBlockingTokens()},
+	} {
+		t.Run(name, func(t *testing.T) {
+			steps := &connectSteps{}
+			tokens := &datasourceTokens{source: source, root: context.Background(), cancel: func() {}}
+			connector := recordedConnector(t, tokens, steps)
+			requireDeadline(t, "the token request before the dial", func(dial context.Context) error {
+				_, err := connector.Connect(dial)
+				return err
+			})
+			seen, _ := steps.seen()
+			assert.Empty(t, seen, "nothing was dialled")
+
+			expired := newAccessToken("taken", time.Now().Add(-time.Second))
+			requireDeadline(t, "the token request at the login", func(login context.Context) error {
+				_, err := tokens.loginToken(context.WithValue(login, takenTokenKey{}, &expired))
+				return err
+			})
+		})
+	}
+}
+
+// requireDeadline runs request under a context that times out at once, and requires it to
+// return promptly with that deadline.
+func requireDeadline(t *testing.T, what string, request func(context.Context) error) {
+	t.Helper()
+	bounded, cancel := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- request(bounded) }()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.DeadlineExceeded, what)
+	case <-time.After(5 * time.Second):
+		t.Fatalf("%s outlived its context", what)
+	}
+}
+
 // TestTheLoginPrefersTheTokenTakenForIt: loginToken, which go-mssqldb's login calls, answers
 // with the token the connector took without asking the source again, whether or not the source
-// caches, and asks the source only when the context carries none.
+// caches. It asks the source only when that token has expired by the time of the login, or when
+// the context carries none.
 func TestTheLoginPrefersTheTokenTakenForIt(t *testing.T) {
 	steps := &connectSteps{}
 	tokens := &datasourceTokens{source: steps, root: context.Background(), cancel: func() {}}
+	taken := func(expiresOn time.Time) context.Context {
+		token := newAccessToken("taken", expiresOn)
+		return context.WithValue(ctx, takenTokenKey{}, &token)
+	}
 
-	token, err := tokens.loginToken(context.WithValue(ctx, takenTokenKey{}, &takenToken{token: "taken"}))
-	require.NoError(t, err)
-	assert.Equal(t, "taken", token)
+	for what, expiresOn := range map[string]time.Time{
+		"valid for a minute":     time.Now().Add(time.Minute),
+		"valid for five seconds": time.Now().Add(5 * time.Second),
+		"of unknown life":        {},
+	} {
+		token, err := tokens.loginToken(taken(expiresOn))
+		require.NoError(t, err)
+		assert.Equal(t, "taken", token, what)
+	}
 	seen, _ := steps.seen()
 	assert.Empty(t, seen, "the source was not asked again")
 
-	token, err = tokens.loginToken(ctx)
+	// A redirect's login, or a failover partner's, asks under the same context as the first.
+	login := taken(time.Now().Add(-time.Second))
+	for range 2 {
+		token, err := tokens.loginToken(login)
+		require.NoError(t, err)
+		assert.Equal(t, "token-1", token, "a token that expired before the login is asked for again, once")
+	}
+
+	token, err := tokens.loginToken(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, "token-1", token, "a login without one asks the source")
+	assert.Equal(t, "token-2", token, "a login without one asks the source")
+}
+
+func TestATokenExpiresAtItsExpiry(t *testing.T) {
+	at := time.Now()
+	assert.True(t, newAccessToken("t", at).expired(at))
+	assert.False(t, newAccessToken("t", at).expired(at.Add(-time.Nanosecond)))
+	assert.False(t, newAccessToken("t", time.Time{}).expired(at), "an expiry nobody gave never comes")
+	assert.Empty(t, accessToken{}.value())
+}
+
+// TestAnAccessTokenPrintsRedacted: the token a login takes rides a context, which go-mssqldb
+// hands to its logger, so neither the token nor that context prints it, with any verb.
+func TestAnAccessTokenPrintsRedacted(t *testing.T) {
+	token := newAccessToken("eyJ0eXAi", time.Now())
+	carried := context.WithValue(ctx, takenTokenKey{}, &token)
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d", "%t", "%p", "%o", "%b",
+		"%e", "%g", "%c", "%U"} {
+		for _, printed := range []any{token, &token, carried} {
+			assert.NotContains(t, fmt.Sprintf(verb, printed), "eyJ0eXAi", "%s of %T", verb, printed)
+		}
+	}
 }
 
 type timeoutError struct{}
@@ -347,10 +466,15 @@ func TestAnEmptyTokenIsAnError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "empty token")
 
+	tokens.source = expiringTokens{TokenSource: staticTokens("")}
+	_, err = tokens.token(ctx)
+	require.Error(t, err, "from a source that says when it expires too")
+	assert.Contains(t, err.Error(), "empty token")
+
 	tokens.source = staticTokens("eyJ0eXAi")
 	token, err := tokens.token(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, "eyJ0eXAi", token)
+	assert.Equal(t, "eyJ0eXAi", token.value())
 }
 
 func TestWarmUpIsBoundedByTheLoginTimeout(t *testing.T) {

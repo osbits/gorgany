@@ -70,12 +70,29 @@ func loginTimeoutFor(method string, configured time.Duration) time.Duration {
 
 // TokenSource hands out the access token a connection signs in with.
 //
-// The datasource calls Token for every physical connection it opens, before it dials and with
-// the context of the dial, so a pool of ten asks ten times: an implementation caches its token
-// and shares one acquisition between callers that arrive together. It must return promptly
-// once ctx is done. Its errors must never contain the token or a secret.
+// The datasource calls Token, or ExpiringToken for an ExpiringTokenSource, for every physical
+// connection it opens, before it dials and with the context of the dial, so a pool of ten asks
+// ten times: an implementation caches its token and shares one acquisition between callers
+// that arrive together. It must return promptly once ctx is done. Its errors must never contain
+// the token or a secret.
 type TokenSource interface {
 	Token(ctx context.Context) (string, error)
+}
+
+// ExpiringTokenSource is a TokenSource that also says when each token it hands out expires.
+//
+// The datasource then calls ExpiringToken in place of Token, for every request, so it caches
+// and shares acquisitions as Token does. A connection signs in with the token it took before it
+// dialled, once the handshake is done. Should that token have expired by then, by the local
+// clock, after a dial or a handshake as slow as that, the source is asked again, with the
+// connection open and waiting on the answer, so that request must be answered from a cache or
+// a renewal that needs no person. The token of any other source is sent as taken. The Entra ID
+// package's source implements it.
+type ExpiringTokenSource interface {
+	TokenSource
+	// ExpiringToken is Token with the token's expiry. A zero expiresOn says nothing about it,
+	// and the token is sent as taken.
+	ExpiringToken(ctx context.Context) (token string, expiresOn time.Time, err error)
 }
 
 // AuthRequest is what an Authenticator is given to build the TokenSource of one datasource.

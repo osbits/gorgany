@@ -13,6 +13,7 @@ import (
 	"encoding/binary"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"net"
@@ -34,47 +35,57 @@ import (
 
 // The datasource end to end: the engine's constructor, this package's authenticator, the token
 // source and go-mssqldb's connector, against a server that speaks just enough TDS to take a
-// login and refuse it. The login it refuses carries the token the connection signed in with, so
-// the tests see which token each connection used, and how often the credential was asked.
+// login, and to refuse it or accept it. The login carries the token the connection signed in
+// with, so the tests see which token each connection used, and how often the credential was
+// asked.
 
-// fakeTDS accepts connections on 127.0.0.1 over TLS from the first byte, as TDS 8.0 (ssl:
-// strict) has it, with a certificate made for the test. It records the LOGIN7 message it
-// decrypts and every byte it read off the wire, and refuses the login with error 18456, which
-// the engine does not retry. A token method refuses weaker encryption, so the fake needs TLS to
-// be reached at all, and the wire it records shows the token never crossed it in clear.
+// fakeTDS accepts connections on 127.0.0.1 over TLS, with a certificate made for the test: from
+// the first byte, as TDS 8.0 (ssl: strict) has it, or, with inBand, negotiated inside prelogin
+// packets after a prelogin in clear, as TDS 7.x (ssl: true, the default) has it. It records the
+// LOGIN7 message it decrypts and every byte it read off the wire. By default it refuses the
+// login with error 18456, which the engine does not retry; with accept it takes the login and
+// answers every SQL batch after it as done, recording its text. A token method refuses weaker
+// encryption, so the fake needs TLS to be reached at all, and the wire it records shows the
+// token never crossed it in clear.
 type fakeTDS struct {
 	listener net.Listener
 	tls      *tls.Config
 	// certPath is the server's certificate as a PEM file, which options.certificate verifies
 	// the connection against.
 	certPath string
-	// idle, when set, is how long the fake waits for the login after its prelogin reply before it
-	// closes the connection, as the Azure SQL gateway closes one that sits idle.
+	// inBand, when set, negotiates TLS as TDS 7.x does, for a client with ssl: true.
+	inBand bool
+	// accept, when set, takes every login instead of refusing it.
+	accept bool
+	// idle, when set, is how long the fake waits for the login after its prelogin reply, and TLS,
+	// before it aborts the connection, as the Azure SQL gateway drops one that sits idle.
 	idle time.Duration
-	wg   sync.WaitGroup
+	// stall, when set, is how long the fake waits before its prelogin reply, as a slow network or
+	// a busy gateway might.
+	stall time.Duration
+	wg    sync.WaitGroup
 
 	mu         sync.Mutex
+	dials      int
 	logins     [][]byte
+	sessions   [][]string
 	wire       []byte
 	idleClosed int
 }
 
-func startFakeTDS(t *testing.T) *fakeTDS { return startGateway(t, 0) }
+// startFakeTDS starts a fake that refuses every login.
+func startFakeTDS(t *testing.T) *fakeTDS { return startServer(t, &fakeTDS{}) }
 
-// startGateway is startFakeTDS closing each connection that sends no login within idle of the
-// prelogin reply.
-func startGateway(t *testing.T, idle time.Duration) *fakeTDS {
+// startServer starts server, which carries the settings it behaves by, on a port of its own.
+func startServer(t *testing.T, server *fakeTDS) *fakeTDS {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
 	cert, certPEM := newServerCertificate(t)
-	server := &fakeTDS{
-		listener: listener,
-		tls:      &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"tds/8.0"}},
-		certPath: writeFile(t, "server.pem", certPEM),
-		idle:     idle,
-	}
+	server.listener = listener
+	server.tls = &tls.Config{Certificates: []tls.Certificate{cert}, NextProtos: []string{"tds/8.0"}}
+	server.certPath = writeFile(t, "server.pem", certPEM)
 	server.wg.Add(1)
 	go server.serve()
 	t.Cleanup(func() {
@@ -103,6 +114,7 @@ func (f *fakeTDS) serve() {
 
 // The TDS packet types and prelogin options the fake needs (MS-TDS 2.2.3.1.1, 2.2.6.5).
 const (
+	tdsSQLBatch = 0x01
 	tdsReply    = 0x04
 	tdsLogin7   = 0x10
 	tdsPrelogin = 0x12
@@ -148,20 +160,19 @@ func (r recordingConn) Read(p []byte) (int, error) {
 
 func (f *fakeTDS) handle(raw net.Conn) {
 	defer func() { _ = raw.Close() }()
-	_ = raw.SetDeadline(time.Now().Add(30 * time.Second))
+	deadline := time.Now().Add(30 * time.Second)
+	_ = raw.SetDeadline(deadline)
+	f.mu.Lock()
+	f.dials++
+	f.mu.Unlock()
 
-	conn := tls.Server(recordingConn{Conn: raw, record: func(read []byte) {
+	wire := recordingConn{Conn: raw, record: func(read []byte) {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.wire = append(f.wire, read...)
-	}}, f.tls)
-	if conn.Handshake() != nil {
-		return
-	}
-	if kind, _, err := readTDS(conn); err != nil || kind != tdsPrelogin {
-		return
-	}
-	if writeTDS(conn, tdsReply, preloginReply()) != nil {
+	}}
+	conn, ok := f.encrypt(wire)
+	if !ok {
 		return
 	}
 	if f.idle > 0 {
@@ -173,6 +184,11 @@ func (f *fakeTDS) handle(raw net.Conn) {
 		f.mu.Lock()
 		f.idleClosed++
 		f.mu.Unlock()
+		// Aborted rather than closed, so the client's next write fails as the gateway's does:
+		// "write: broken pipe".
+		if tcp, ok := raw.(*net.TCPConn); ok {
+			_ = tcp.SetLinger(0)
+		}
 	}
 	if err != nil || kind != tdsLogin7 {
 		return
@@ -180,13 +196,149 @@ func (f *fakeTDS) handle(raw net.Conn) {
 	f.mu.Lock()
 	f.logins = append(f.logins, login)
 	f.mu.Unlock()
-	_ = writeTDS(conn, tdsReply, loginFailed())
+	if !f.accept {
+		_ = writeTDS(conn, tdsReply, loginFailed())
+		return
+	}
+	_ = raw.SetReadDeadline(deadline)
+	if writeTDS(conn, tdsReply, loginAck()) != nil {
+		return
+	}
+	f.serveBatches(conn)
+}
+
+// encrypt exchanges prelogin with the client on wire and negotiates TLS as the fake's mode has
+// it, pausing for stall before its prelogin reply. It returns the encrypted connection the
+// login arrives on.
+func (f *fakeTDS) encrypt(wire net.Conn) (net.Conn, bool) {
+	if !f.inBand {
+		conn := tls.Server(wire, f.tls)
+		if conn.Handshake() != nil {
+			return nil, false
+		}
+		return conn, f.prelogin(conn)
+	}
+
+	if !f.prelogin(wire) {
+		return nil, false
+	}
+	// At most TLS 1.2 and no session tickets, as SQL Server negotiates in prelogin packets, so
+	// the handshake ends with the server's last flight and nothing follows it in that framing.
+	config := f.tls.Clone()
+	config.MaxVersion = tls.VersionTLS12
+	config.SessionTicketsDisabled = true
+	handshake := &preloginTLS{Conn: wire, handshaking: true}
+	conn := tls.Server(handshake, config)
+	if conn.Handshake() != nil || handshake.flush() != nil {
+		return nil, false
+	}
+	handshake.handshaking = false
+	return conn, true
+}
+
+// prelogin reads the client's prelogin from conn and answers it after stall.
+func (f *fakeTDS) prelogin(conn net.Conn) bool {
+	if kind, _, err := readTDS(conn); err != nil || kind != tdsPrelogin {
+		return false
+	}
+	time.Sleep(f.stall)
+	return writeTDS(conn, tdsReply, preloginReply()) == nil
+}
+
+// preloginTLS carries the server's side of a TLS handshake inside TDS prelogin packets, as TDS
+// 7.x negotiates encryption (MS-TDS 3.2.5.2): while handshaking, what the client sends arrives
+// in prelogin packets, and what the server writes goes back as one prelogin message when it
+// next reads, as go-mssqldb's tlsHandshakeConn frames the client's side. After the handshake,
+// TLS records travel bare.
+type preloginTLS struct {
+	net.Conn
+	handshaking bool
+	in, out     []byte
+}
+
+func (p *preloginTLS) Read(b []byte) (int, error) {
+	if !p.handshaking {
+		return p.Conn.Read(b)
+	}
+	if err := p.flush(); err != nil {
+		return 0, err
+	}
+	for len(p.in) == 0 {
+		kind, payload, err := readTDS(p.Conn)
+		if err != nil {
+			return 0, err
+		}
+		if kind != tdsPrelogin {
+			return 0, fmt.Errorf("fakeTDS: packet type %#x inside the TLS handshake", kind)
+		}
+		p.in = payload
+	}
+	n := copy(b, p.in)
+	p.in = p.in[n:]
+	return n, nil
+}
+
+func (p *preloginTLS) Write(b []byte) (int, error) {
+	if !p.handshaking {
+		return p.Conn.Write(b)
+	}
+	p.out = append(p.out, b...)
+	return len(b), nil
+}
+
+// flush sends what the server has written since it last read, as one prelogin message.
+func (p *preloginTLS) flush() error {
+	if len(p.out) == 0 {
+		return nil
+	}
+	out := p.out
+	p.out = nil
+	return writeTDS(p.Conn, tdsPrelogin, out)
+}
+
+// serveBatches answers every SQL batch conn sends as done, recording its text as one session's,
+// until the client closes the connection.
+func (f *fakeTDS) serveBatches(conn net.Conn) {
+	f.mu.Lock()
+	session := len(f.sessions)
+	f.sessions = append(f.sessions, nil)
+	f.mu.Unlock()
+	for {
+		kind, batch, err := readTDS(conn)
+		if err != nil || kind != tdsSQLBatch {
+			return
+		}
+		f.mu.Lock()
+		f.sessions[session] = append(f.sessions[session], batchText(batch))
+		f.mu.Unlock()
+		if writeTDS(conn, tdsReply, done(0)) != nil {
+			return
+		}
+	}
 }
 
 func (f *fakeTDS) loginCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return len(f.logins)
+}
+
+// dialCount is how many connections reached the fake.
+func (f *fakeTDS) dialCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.dials
+}
+
+// batches returns, for each login the fake took, the text of every batch sent on it.
+func (f *fakeTDS) batches() [][]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	sessions := make([][]string, len(f.sessions))
+	for i, session := range f.sessions {
+		sessions[i] = append([]string(nil), session...)
+	}
+	return sessions
 }
 
 // idleCloses is how many connections the fake closed for sending no login within idle.
@@ -266,6 +418,46 @@ func preloginReply() []byte {
 	return append(append(table, 0xff), data...)
 }
 
+// batchText is the SQL of a SQL batch's payload, after its ALL_HEADERS (MS-TDS 2.2.6.7).
+func batchText(batch []byte) string {
+	if len(batch) < 4 {
+		return ""
+	}
+	headers := int(binary.LittleEndian.Uint32(batch))
+	if headers > len(batch) {
+		return ""
+	}
+	text := batch[headers:]
+	units := make([]uint16, len(text)/2)
+	for i := range units {
+		units[i] = binary.LittleEndian.Uint16(text[2*i:])
+	}
+	return string(utf16.Decode(units))
+}
+
+// loginAck is a LOGINACK token for T-SQL over TDS 7.4 and the DONE token that ends the reply.
+func loginAck() []byte {
+	program := ucs2("fake")
+	body := []byte{1} // interface: T-SQL
+	body = binary.BigEndian.AppendUint32(body, 0x74000004)
+	body = append(body, byte(len(program)/2))
+	body = append(body, program...)
+	body = append(body, 16, 0, 0x07, 0xd0) // program version
+
+	reply := []byte{0xad}
+	reply = binary.LittleEndian.AppendUint16(reply, uint16(len(body)))
+	reply = append(reply, body...)
+	return append(reply, done(0)...)
+}
+
+// done is a DONE token that ends a reply, with status.
+func done(status uint16) []byte {
+	reply := []byte{0xfd}
+	reply = binary.LittleEndian.AppendUint16(reply, status)
+	reply = binary.LittleEndian.AppendUint16(reply, 0)
+	return binary.LittleEndian.AppendUint64(reply, 0)
+}
+
 // loginFailed is an ERROR token for 18456 and the DONE token that ends the reply with an error.
 func loginFailed() []byte {
 	message := ucs2("Login failed for user '<token-identified principal>'.")
@@ -284,10 +476,7 @@ func loginFailed() []byte {
 	reply := []byte{0xaa}
 	reply = binary.LittleEndian.AppendUint16(reply, uint16(len(body)))
 	reply = append(reply, body...)
-	reply = append(reply, 0xfd)                           // DONE
-	reply = binary.LittleEndian.AppendUint16(reply, 0x02) // DONE_ERROR
-	reply = binary.LittleEndian.AppendUint16(reply, 0)
-	return binary.LittleEndian.AppendUint64(reply, 0)
+	return append(reply, done(0x02)...) // DONE_ERROR
 }
 
 func ucs2(s string) []byte {
@@ -399,17 +588,108 @@ func TestLazyConnectDefersTheSignInToTheFirstConnection(t *testing.T) {
 // person in, which takes as long as they take, MFA included. Had it dialled first, the
 // connection would sit idle through the sign-in, the gateway would close it, and the login would
 // be written to a closed socket: "write: broken pipe". It signs in first and then dials, so the
-// login follows the prelogin at once.
+// login follows the prelogin at once, and the query runs.
 func TestASlowSignInDoesNotStrandTheConnection(t *testing.T) {
-	const idle = 200 * time.Millisecond
-	server := startGateway(t, idle)
+	for _, ssl := range []string{"true", "strict"} {
+		t.Run("ssl "+ssl, func(t *testing.T) {
+			const idle = 200 * time.Millisecond
+			server := startServer(t, &fakeTDS{inBand: ssl == "true", accept: true, idle: idle})
+			cred := &fakeCredential{clock: newClock(), authenticate: func(ctx context.Context) error {
+				select {
+				case <-time.After(5 * idle):
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}}
+			useCredential(t, cred)
+
+			cfg := interactiveAt(server)
+			cfg.SSL = ssl
+			cfg.LazyConnect = true
+			ds, err := sqlserver.NewDataSourceWithConfig(cfg)
+			require.NoError(t, err)
+			t.Cleanup(func() { assert.NoError(t, ds.Close()) })
+
+			require.NoError(t, sqlDBOf(t, ds).PingContext(context.Background()),
+				"the login reached a connection still open")
+			assert.Zero(t, server.idleCloses(), "no connection sat idle through the sign-in")
+			assert.Equal(t, []bool{true}, server.loginTokens("token-1"), "one connection, with the sign-in's token")
+			assert.Equal(t, [][]string{{"SET XACT_ABORT ON", "select 1;"}}, server.batches(),
+				"the connection ran the session's init before the query")
+			getTokens, authenticates := cred.counts()
+			assert.Equal(t, 1, authenticates)
+			assert.Equal(t, 1, getTokens)
+		})
+	}
+}
+
+// TestConcurrentFirstConnectionsShareOneSignIn: queries that arrive together at a lazy
+// datasource each open a connection, and the person signs in once for all of them. None of them
+// dials while the sign-in is pending.
+//
+// The connections negotiate TLS as ssl: true does. With ssl: strict, go-mssqldb v1.11.2 writes
+// the ALPN protocol into the connector's one tls.Config on every connection (getTLSConn), which
+// the race detector reports once two connections open together.
+func TestConcurrentFirstConnectionsShareOneSignIn(t *testing.T) {
+	const n = 8
+	server := startServer(t, &fakeTDS{inBand: true, accept: true})
+	release := make(chan struct{})
 	cred := &fakeCredential{clock: newClock(), authenticate: func(ctx context.Context) error {
 		select {
-		case <-time.After(5 * idle):
+		case <-release:
 			return nil
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+	}}
+	useCredential(t, cred)
+
+	cfg := interactiveAt(server)
+	cfg.SSL = "true"
+	cfg.LazyConnect = true
+	ds, err := sqlserver.NewDataSourceWithConfig(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, ds.Close()) })
+
+	// Each goroutine holds its connection, so the pool opens n of them rather than reusing one.
+	db := sqlDBOf(t, ds)
+	opened := make(chan error, n)
+	for range n {
+		go func() {
+			conn, err := db.Conn(context.Background())
+			if err == nil {
+				t.Cleanup(func() { _ = conn.Close() })
+			}
+			opened <- err
+		}()
+	}
+	// Whether every query has reached the sign-in by now or arrives after it, what is asserted
+	// below holds; the pause only makes it likelier that they share the one in flight.
+	time.Sleep(100 * time.Millisecond)
+	assert.Zero(t, server.dialCount(), "nothing dials while the person signs in")
+	close(release)
+	for range n {
+		require.NoError(t, waitFor(t, opened, "a connection"))
+	}
+
+	getTokens, authenticates := cred.counts()
+	assert.Equal(t, 1, authenticates, "one sign-in")
+	assert.Equal(t, 1, getTokens, "and one token")
+	assert.Equal(t, n, server.dialCount())
+	assert.Equal(t, []bool{true, true, true, true, true, true, true, true}, server.loginTokens("token-1"))
+	for _, session := range server.batches() {
+		assert.Equal(t, []string{"SET XACT_ABORT ON"}, session, "every connection ran the session's init")
+	}
+}
+
+// TestTheLoginSendsTheTokenTakenBeforeTheDial: the login does not ask the source again. The
+// credential's tokens say nothing of their expiry, so the source keeps none of them and every
+// request is a new one: a second request, in the middle of the handshake, would be token-2.
+func TestTheLoginSendsTheTokenTakenBeforeTheDial(t *testing.T) {
+	server := startServer(t, &fakeTDS{accept: true})
+	cred := &fakeCredential{clock: newClock(), getToken: func(_ context.Context, n int) (azcore.AccessToken, error) {
+		return azcore.AccessToken{Token: fmt.Sprintf("token-%d", n)}, nil
 	}}
 	useCredential(t, cred)
 
@@ -419,11 +699,62 @@ func TestASlowSignInDoesNotStrandTheConnection(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, ds.Close()) })
 
-	err = sqlDBOf(t, ds).PingContext(context.Background())
-	require.Error(t, err, "the fake server refuses every login")
-	assert.Contains(t, err.Error(), "Login failed", "the login reached a connection still open")
-	assert.Zero(t, server.idleCloses(), "no connection sat idle through the sign-in")
-	assert.Equal(t, []bool{true}, server.loginTokens("token-1"), "one connection, with the sign-in's token")
+	require.NoError(t, sqlDBOf(t, ds).PingContext(context.Background()))
+	getTokens, _ := cred.counts()
+	assert.Equal(t, 1, getTokens, "the source was asked once, before the dial")
+	assert.Equal(t, []bool{true}, server.loginTokens("token-1"), "and the login sent that token")
+}
+
+// TestATokenThatExpiresBeforeTheLoginIsReplaced: a connection signs in with the token it took
+// before it dialled, unless that token has expired by the time the login is sent, as one can
+// after a handshake as slow as this. Then it asks the source again, which renews it silently:
+// the person is not asked a second time.
+func TestATokenThatExpiresBeforeTheLoginIsReplaced(t *testing.T) {
+	const lifetime = 100 * time.Millisecond
+	server := startServer(t, &fakeTDS{accept: true, stall: 4 * lifetime})
+	cred := &fakeCredential{clock: newClock(), getToken: func(_ context.Context, n int) (azcore.AccessToken, error) {
+		// The engine judges expiry by the time now, whatever clock the source keeps.
+		expiresOn := time.Now().Add(time.Hour)
+		if n == 1 {
+			expiresOn = time.Now().Add(lifetime)
+		}
+		return azcore.AccessToken{Token: fmt.Sprintf("token-%d", n), ExpiresOn: expiresOn}, nil
+	}}
+	useCredential(t, cred)
+
+	cfg := interactiveAt(server)
+	cfg.LazyConnect = true
+	ds, err := sqlserver.NewDataSourceWithConfig(cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { assert.NoError(t, ds.Close()) })
+
+	require.NoError(t, sqlDBOf(t, ds).PingContext(context.Background()))
+	getTokens, authenticates := cred.counts()
+	assert.Equal(t, 1, authenticates, "the person signed in once")
+	assert.Equal(t, 2, getTokens, "and the source renewed the token that expired during the handshake")
+	assert.Equal(t, []bool{true}, server.loginTokens("token-2"), "the login carried the renewed token")
+}
+
+// TestASQLLoginSignsInAsBefore: a SQL login takes no token from anyone, and runs the session's
+// init on its connection.
+func TestASQLLoginSignsInAsBefore(t *testing.T) {
+	server := startServer(t, &fakeTDS{inBand: true, accept: true})
+	cred := &fakeCredential{clock: newClock()}
+	requests := useCredential(t, cred)
+
+	cfg := interactiveAt(server)
+	cfg.SSL = "true"
+	cfg.Auth = dsconfig.Auth{}
+	cfg.Username, cfg.Password = "sa", standInSecret
+	ds, err := sqlserver.NewDataSourceWithConfig(cfg)
+	require.NoError(t, err, "the constructor connects and pings")
+	t.Cleanup(func() { assert.NoError(t, ds.Close()) })
+
+	assert.Empty(t, *requests, "no credential was built")
+	getTokens, authenticates := cred.counts()
+	assert.Zero(t, getTokens)
+	assert.Zero(t, authenticates)
+	assert.Equal(t, [][]string{{"SET XACT_ABORT ON", "select 1;"}}, server.batches())
 }
 
 // TestCloseAbandonsALazySignInInFlight: a lazy interactive sign-in waits on a person under a
@@ -458,6 +789,7 @@ func TestCloseAbandonsALazySignInInFlight(t *testing.T) {
 	err = waitFor(t, pinged, "the abandoned query's return")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "closed")
+	assert.Zero(t, server.dialCount(), "nothing was dialled without a token")
 	assert.Zero(t, server.loginCount(), "no login was sent without a token")
 	require.NoError(t, ds.Close(), "closing again is harmless")
 }

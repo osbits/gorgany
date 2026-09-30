@@ -373,6 +373,26 @@ func TestAnIgnoredInstanceIsWarnedAboutOnce(t *testing.T) {
 	assert.Contains(t, (*said)[0], `instance "legacy" is ignored for `+azureHost)
 }
 
+// TestTheGuardsWrapATokenSignIn: an Entra ID datasource's connector differs from a SQL login's,
+// and its guards still sit above it, so a refused statement never asks for a token, let alone
+// dials.
+func TestTheGuardsWrapATokenSignIn(t *testing.T) {
+	c := &countingAuthenticator{}
+	cfg := azureCLI(t, c)
+	cfg.LazyConnect = true
+	cfg.ReadOnly = true
+	cfg.ExternalSchema = true
+	ds := construct(t, cfg)
+	gdb := gormOf(t, ds)
+
+	require.ErrorIs(t, gdb.Exec("DELETE FROM [dbo].[2024Orders]").Error, dbCore.ErrReadOnly)
+	require.ErrorIs(t, gdb.Create(&migratedOrder{Status: "new"}).Error, dbCore.ErrReadOnly)
+	require.ErrorIs(t, gdb.Exec("EXEC sp_rename 'dbo.2024Orders', 'Orders'").Error, dbCore.ErrExternalSchema)
+	assert.Zero(t, c.tokens, "nothing asked for a token")
+	assert.Zero(t, ds.sqlDB.Stats().OpenConnections)
+	assert.Equal(t, 10, ds.sqlDB.Stats().MaxOpenConnections, "the pool defaults apply")
+}
+
 func TestSessionsUseTheGuardedConnection(t *testing.T) {
 	cfg := lazy()
 	cfg.ExternalSchema = true

@@ -7,7 +7,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
-## [2.5.0] - 2026-09-27
+## [2.5.0] - 2026-10-01
 
 SQL Server and Azure SQL join PostgreSQL and MySQL, as a second datasource on a schema another
 system owns, such as an EF Core database, or as the `default` gorgany owns. Two datasource
@@ -300,10 +300,11 @@ change what Postgres and MySQL apps see too. No existing interface gains a metho
     Azure SQL answers that the database is resuming or busy (40613, 40501, 40197 and others),
     and failing at once on a failed login (18456) or a database the login cannot open (4060).
     With `lazy_connect` it does neither, and the first query does both. Every connection takes
-    its token before it dials: go-mssqldb asks only after its prelogin, so a sign-in that waits
-    on a person, as the first under `lazy_connect` with `interactive` does, would leave the
-    connection idle until the Azure SQL gateway closed it, failing the query with "write:
-    broken pipe".
+    its token before it dials and signs in with that token, asking again only if it has expired
+    by the time the login is sent: go-mssqldb would ask only after its prelogin and TLS, so a
+    sign-in that waits on a person, as the first under `lazy_connect` with `interactive` or
+    `device_code` does, would leave the connection idle until the Azure SQL gateway dropped it,
+    and the query would fail with "write: broken pipe".
 
   docs/SQLSERVER.md, new, is the guide: the imports, the keys a DataGrip or SSMS connection maps
   to, signing in, adding an externally owned datasource to an app, mapping EF Core tables, SQL
@@ -320,14 +321,16 @@ change what Postgres and MySQL apps see too. No existing interface gains a metho
 #### SQL Server: signing in with Microsoft Entra ID
 
 - An authenticator registry for SQL Server's token sign-ins: `sqlserver.RegisterAuthenticator`,
-  `RegisteredAuthMethods`, and the `Authenticator`, `AuthRequest` and `TokenSource` types, with
-  the method names as `AuthMethod*` constants. `auth.method` picks a registered method, and a
-  datasource asks it for one token source, which the connection uses for every sign-in and
-  whose sign-in in flight `Close` abandons. The Entra ID methods register from a package of
-  their own, `sqlserver.AzureADImportPath`, so an app on a SQL login links no Azure SDK. A
-  built-in Entra ID `auth.method` without that import fails the boot with the import line and
-  the file it goes in, `pkg/provider/bootstrap.go`. A method an app registers, under a name of
-  its own or a built-in one, is used as it is. `auth.login_timeout` defaults to
+  `RegisteredAuthMethods`, and the `Authenticator`, `AuthRequest`, `TokenSource` and
+  `ExpiringTokenSource` types, with the method names as `AuthMethod*` constants. `auth.method`
+  picks a registered method, and a datasource asks it for one token source, which the connection
+  uses for every sign-in and whose sign-in in flight `Close` abandons. A source that is also an
+  `ExpiringTokenSource` says when its tokens expire, so a connection whose token expired during
+  its handshake asks again; the Entra ID package's is. The Entra ID methods register from a
+  package of their own, `sqlserver.AzureADImportPath`, so an app on a SQL login links no Azure
+  SDK. A built-in Entra ID `auth.method` without that import fails the boot with the import line
+  and the file it goes in, `pkg/provider/bootstrap.go`. A method an app registers, under a name
+  of its own or a built-in one, is used as it is. `auth.login_timeout` defaults to
   `sqlserver.DefaultInteractiveLoginTimeout`, five minutes, for `interactive` and `device_code`,
   to `sqlserver.DefaultManagedIdentityLoginTimeout`, two minutes, for `managed_identity`, and to
   `sqlserver.DefaultLoginTimeout`, one minute, for every other method. An `AuthRequest` names
@@ -1089,16 +1092,21 @@ owned `default`", covers each.
   its first run is the push of this release.
 - Microsoft Entra ID: every `auth.method` is tested with stand-in credentials, and the
   datasource end to end, through the engine, the token source and go-mssqldb's connector,
-  against an in-test server that speaks just enough TDS to take a login, and can close a
-  connection left idle after prelogin as the Azure SQL gateway does
-  (`azuread/data_source_test.go`). One method has signed in to a real Azure SQL Database for
-  this release: `interactive`, under `lazy_connect` with the in-memory token cache, from an
-  application built on this tree, as a principal that may only read. No other method has. The
-  manual test against a real database,
+  against an in-test server that speaks just enough TDS to take or refuse a login and answer a
+  batch, over TLS from the first byte (`ssl: strict`) or negotiated in prelogin (`ssl: true`),
+  and that can drop a connection left idle before its login as the Azure SQL gateway does
+  (`azuread/data_source_test.go`). One method has connected to a real Azure SQL Database for
+  this release, from an application built on this branch, as a principal that may only read:
+  `interactive` under `lazy_connect`. Before every connection took its token before it dials, a
+  run that asked the person lost its first connection to the gateway while they signed in, and
+  a later one with `auth.token_cache: persistent` connected by resuming that sign-in from the
+  operating system's credential store. Since, a first run with the in-memory token cache has
+  asked the person, who took about three minutes over the sign-in, and then connected; the
+  in-test server reproduces the lost connection under the old order. No other method has
+  connected. The manual test against a real database,
   `go test -tags=azuresql ./db/sql/driver/sqlserver/azuread -run AzureSQL -v` with the
   `GORGANY_AZURESQL_*` variables, is compiled by CI and has not been run. The persistent token
-  cache's silent sign-in after a restart is tested with a stand-in cache; it has not been tried
-  by hand against a real keychain and Entra ID.
+  cache's other paths are tested with a stand-in cache.
 - `govulncheck ./...` (govulncheck v1.8.0, vulnerability database of 2026-09-24, Go 1.26.6)
   reports no vulnerability in code gorgany calls or in a package it imports. It lists five in
   modules gorgany requires, in packages it does not import: GO-2026-6354 and GO-2026-6355 in

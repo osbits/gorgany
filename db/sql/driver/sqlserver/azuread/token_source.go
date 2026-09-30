@@ -15,11 +15,12 @@ import (
 
 // The durations the token source manages its cached token by.
 //
-// renewBefore is the hard margin, measured back from the token's expiry. Before it, a connection takes the cached token at once, and a
-// renewal that is due runs in the background. Within it, a connection waits for the renewal. A
-// connection signs in with the token as it opens, and a token that expires between the source
-// and the server's check fails the login, so the margin covers a slow dial with room to spare;
-// Microsoft's own libraries renew at the same five minutes.
+// renewBefore is the hard margin, measured back from the token's expiry. Before it, a
+// connection takes the cached token at once, and a renewal that is due runs in the background.
+// Within it, a connection waits for the renewal. A connection takes its token before it dials
+// and signs in with it once the handshake is done, so the margin covers a slow dial with room to
+// spare; one whose token has expired by then asks again (see ExpiringToken). Microsoft's own
+// libraries renew at the same five minutes.
 //
 // lastResort is how long the cached token must still be valid for a connection to take it after
 // a renewal inside the hard margin failed. A minute still covers the dial, and failing a login
@@ -47,10 +48,12 @@ type signInCredential interface {
 // cachingTokenSource is the one sqlserver.TokenSource of one datasource, over its one credential.
 //
 // The engine asks for a token for every physical connection it opens, before it dials and under
-// the context of the dial, and a pool of ten opening together asks ten times at once. azidentity keeps an in-memory
-// cache per credential, but not every credential: the Azure CLI's runs `az` on every call. So the
-// source keeps the token itself, and has one acquisition in flight at a time, which every caller
-// that arrives meanwhile shares.
+// the context of the dial, and a pool of ten opening together asks ten times at once. azidentity
+// keeps an in-memory cache per credential, but not every credential: the Azure CLI's runs `az` on
+// every call. So the source keeps the token itself, and has one acquisition in flight at a time,
+// which every caller that arrives meanwhile shares. It is a sqlserver.ExpiringTokenSource, so a
+// connection whose token expires during its handshake asks again, and is answered from the cache
+// or by a renewal, never by a prompt.
 //
 // A renewal being due and the token being unusable are different things. From the token's
 // RefreshOn, which MSAL sets to half the lifetime of a long-lived token such as a managed
@@ -167,13 +170,27 @@ func target(req sqlserver.AuthRequest) string {
 	return req.Host + "/" + req.Database
 }
 
+var _ sqlserver.ExpiringTokenSource = (*cachingTokenSource)(nil)
+
 // Token returns the cached token while it is usable, starting a renewal in the background once
 // one is due, and otherwise joins, or starts, the one acquisition in flight and waits for it or
 // for ctx. A renewal inside the hard margin that fails leaves the old token to a caller while it
 // is still valid for lastResort.
 func (s *cachingTokenSource) Token(ctx context.Context) (string, error) {
+	tok, err := s.accessToken(ctx)
+	return tok.Token, err
+}
+
+// ExpiringToken is Token with the token's expiry (see sqlserver.ExpiringTokenSource).
+func (s *cachingTokenSource) ExpiringToken(ctx context.Context) (string, time.Time, error) {
+	tok, err := s.accessToken(ctx)
+	return tok.Token, tok.ExpiresOn, err
+}
+
+// accessToken is Token's token with its expiry.
+func (s *cachingTokenSource) accessToken(ctx context.Context) (azcore.AccessToken, error) {
 	if s.root.Err() != nil {
-		return "", fmt.Errorf("azuread: no token for %s: the datasource is closed", s.target)
+		return azcore.AccessToken{}, fmt.Errorf("azuread: no token for %s: the datasource is closed", s.target)
 	}
 
 	s.mu.Lock()
@@ -181,19 +198,19 @@ func (s *cachingTokenSource) Token(ctx context.Context) (string, error) {
 	switch {
 	case s.tok.Token == "":
 	case now.Before(refreshAt(s.tok)):
-		token := s.tok.Token
+		tok := s.tok
 		s.mu.Unlock()
-		return token, nil
+		return tok, nil
 	case usable(s.tok, now, renewBefore) || usable(s.tok, now, lastResort) && now.Before(s.retryAt):
 		// Due, or inside the margin just after a renewal failed: the token still serves, and a
 		// renewal runs in the background unless one is in flight or the last one failed too
 		// recently.
-		token := s.tok.Token
+		tok := s.tok
 		if s.inflight == nil && !now.Before(s.retryAt) {
 			s.startLocked()
 		}
 		s.mu.Unlock()
-		return token, nil
+		return tok, nil
 	}
 	a := s.inflight
 	if a == nil {
@@ -204,14 +221,15 @@ func (s *cachingTokenSource) Token(ctx context.Context) (string, error) {
 	select {
 	case <-a.done:
 		if a.err == nil {
-			return a.tok.Token, nil
+			return a.tok, nil
 		}
-		if token, ok := s.lastResortToken(); ok {
-			return token, nil
+		if tok, ok := s.lastResortToken(); ok {
+			return tok, nil
 		}
-		return "", a.err
+		return azcore.AccessToken{}, a.err
 	case <-ctx.Done():
-		return "", fmt.Errorf("azuread: stopped waiting for the %s token for %s: %w", s.method, s.target, ctx.Err())
+		return azcore.AccessToken{}, fmt.Errorf("azuread: stopped waiting for the %s token for %s: %w",
+			s.method, s.target, ctx.Err())
 	}
 }
 
@@ -226,13 +244,13 @@ func (s *cachingTokenSource) startLocked() *acquisition {
 
 // lastResortToken returns the cached token when it is still valid for lastResort and the
 // datasource is open.
-func (s *cachingTokenSource) lastResortToken() (string, bool) {
+func (s *cachingTokenSource) lastResortToken() (azcore.AccessToken, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.root.Err() != nil || !usable(s.tok, s.now(), lastResort) {
-		return "", false
+		return azcore.AccessToken{}, false
 	}
-	return s.tok.Token, true
+	return s.tok, true
 }
 
 // refreshAt is when tok is due for renewal: its RefreshOn, when it names one before the hard

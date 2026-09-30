@@ -64,7 +64,7 @@ databases:
     # …
   legacy:
     driver: sqlserver_gorm
-    host: ${LEGACY_DB_HOST}            # example.database.windows.net
+    host: ${LEGACY_DB_HOST}            # set_me.database.windows.net
     port: 1433
     db: ${LEGACY_DB_NAME}              # Example-db; hyphens are fine
     username: ${LEGACY_DB_USER}        # interactive: only the account the sign-in suggests
@@ -81,6 +81,9 @@ databases:
       maxOpenConnections: 10
 ```
 
+- The example host is `set_me.database.windows.net`, which resolves nowhere: an Azure SQL
+  server name cannot contain `_`. A real-looking name such as `example.database.windows.net`
+  can be someone else's server, and an Entra ID sign-in would send it your access token.
 - Keep an owned `default`. The sessions table and the `migrations` and `seeders` bookkeeping
   live there, and `auth.session.storage: database` refuses a `default` marked
   `external_schema` or `read_only`.
@@ -170,7 +173,7 @@ reads them; this is what each does on SQL Server.
 |---|---|
 | `external_schema: true` | `db:migrate`, `db:seed` and `db:diff` refuse the datasource before they send any SQL and exit 2, and so does every `db:migrate` or `db:seed` run while a registered migration or seeder targets it. On `default`, `db:migrate` leaves the sessions migrations out, and `auth.session.storage: database` refuses the boot. The connection's guard refuses DDL under T-SQL's rules: `CREATE`, `ALTER`, `DROP`, `TRUNCATE`, `GRANT`, `REVOKE` and `DENY` anywhere outside parentheses, `SELECT … INTO` a permanent table, `sp_rename` and the other procedures that change a schema or who may use it, `DBCC`, `ENABLE TRIGGER` and `DISABLE TRIGGER`, dynamic SQL (`EXEC (…)`, `sp_executesql`), and `OPENQUERY`, `OPENROWSET` and `OPENDATASOURCE`. `#temp` tables are exempt. A `Save` that would cascade into related entities is refused unless the model implements `orm.CascadingSaves`. Rows are read and written as usual. |
 | `read_only: true` | The dialect refuses to render an `INSERT`, `UPDATE`, `DELETE` or upsert, and the connection's guard refuses a write that reaches gorm any other way, reading every statement word by word, the builder's included. It also refuses the table hints that lock. The db commands and database session storage refuse the datasource as for `external_schema`. Each refusal wraps `core.ErrReadOnly`. It also sets `ApplicationIntent=ReadOnly` (below). |
-| `lazy_connect: true` | The constructor opens nothing: no sign-in and no ping at boot. The first query signs in, bounded by `auth.login_timeout`, and then connects, so an unreachable server or a credential that does not work surfaces there instead of failing the deploy. |
+| `lazy_connect: true` | The constructor opens nothing: no sign-in and no ping at boot. The first query signs in, bounded by `auth.login_timeout`, and then connects, so an unreachable server or a credential that does not work surfaces there instead of failing the deploy. The sign-in finishes before the first connection is opened, as every connection takes its token before it dials, so a sign-in that waits on a person, as `interactive` and `device_code` do, cannot leave a connection idle for the Azure SQL gateway to drop. |
 
 Both refusal flags are a safety net, not a permission. The guards recognise statements; they
 do not see what server code does ([Known limitations](#known-limitations)). The principal's
@@ -247,18 +250,21 @@ and scope, may be handed the same token too. Every connection signs in with the 
 - Within five minutes of the expiry, a connection waits for the renewal. If the renewal fails
   while the token is still valid for a minute, the connection uses the old token.
 - Connections that open together share one request for a token.
+- A connection takes its token before it dials, and signs in with that token once its handshake
+  is done. One whose token has expired by then, after a handshake that slow, takes a renewed
+  token instead of sending one the server would refuse.
 
 So an outage of Entra ID or of the instance metadata service fails connections only when the
 token it last issued is about to expire.
 
 `interactive` and `device_code` ask the person once per datasource: at boot, or on the first
-connection when `lazy_connect` is set. An app with two such datasources asks twice, and with
-`lazy_connect` on the second, the second prompt waits for its first query. After the sign-in, a
-token that cannot be renewed without the person fails with "the interactive sign-in for … could
-not be renewed silently", which names the likely causes, and the next connection tries again. It
-never opens another prompt. If the error persists, restart the process to sign in again, or use
-`azure_cli`. A sign-in that failed has signed nobody in, so the next connection asks again.
-`azure_cli` never prompts.
+query when `lazy_connect` is set, before its connection is opened. An app with two such
+datasources asks twice, and with `lazy_connect` on the second, the second prompt waits for its
+first query. After the sign-in, a token that cannot be renewed without the person fails with
+"the interactive sign-in for … could not be renewed silently", which names the likely causes,
+and the next connection tries again. It never opens another prompt. If the error persists,
+restart the process to sign in again, or use `azure_cli`. A sign-in that failed has signed
+nobody in, so the next connection asks again. `azure_cli` never prompts.
 
 ### Development and deployed apps
 
@@ -447,7 +453,7 @@ the [PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md) layout, under the name `legacy`
 
    ```
    # legacy: SQL Server host (docs/SQLSERVER.md); production: yes; not secret
-   LEGACY_DB_HOST=example.database.windows.net
+   LEGACY_DB_HOST=set_me.database.windows.net
    # legacy: database name; production: yes; not secret
    LEGACY_DB_NAME=Example-db
    # legacy: account an interactive sign-in suggests; development only; not secret

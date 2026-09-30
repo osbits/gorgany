@@ -98,8 +98,13 @@ func newConnector(dsn string, tokens *datasourceTokens) (driver.Connector, error
 // though the sign-in worked. Taken first, the token is in hand when the connection opens, and
 // the login follows the prelogin at once.
 //
-// The token rides the dial's context to the login (see loginToken), so the connection signs in
-// with the token taken for it, without asking the source again.
+// The token rides the context go-mssqldb connects under to the login (see loginToken), so the
+// connection signs in with the token taken for it, and the source is not asked again in the
+// middle of the handshake, where a slow answer would strand the connection as before. The one
+// exception is a token that has expired by the time the login is sent, which the server would
+// refuse: that is asked for again (see ExpiringTokenSource). The context also carries it to a
+// routing redirect's login and a failover partner's, which send the same token, or the one
+// asked for in its place.
 type tokenFirstConnector struct {
 	connector *mssql.Connector
 	tokens    *datasourceTokens
@@ -110,35 +115,69 @@ func (c *tokenFirstConnector) Connect(ctx context.Context) (driver.Conn, error) 
 	if err != nil {
 		return nil, err
 	}
-	return c.connector.Connect(context.WithValue(ctx, takenTokenKey{}, &takenToken{token: token}))
+	return c.connector.Connect(context.WithValue(ctx, takenTokenKey{}, &token))
 }
 
 func (c *tokenFirstConnector) Driver() driver.Driver { return c.connector.Driver() }
 
 // takenTokenKey is the context key under which tokenFirstConnector hands its token to the
-// login, as a *takenToken. A context prints the values it carries, a string as it is and a
-// pointer to a struct as its type alone, so a logger that prints the context go-mssqldb hands
-// it never prints the token.
+// login, as a *accessToken.
 type takenTokenKey struct{}
 
-type takenToken struct{ token string }
-
 // tokenTaken returns the token tokenFirstConnector took for the connection ctx opens.
-func tokenTaken(ctx context.Context) (string, bool) {
-	taken, ok := ctx.Value(takenTokenKey{}).(*takenToken)
-	if !ok {
-		return "", false
-	}
-	return taken.token, true
+func tokenTaken(ctx context.Context) (*accessToken, bool) {
+	taken, ok := ctx.Value(takenTokenKey{}).(*accessToken)
+	return taken, ok
 }
 
 // loginToken is the token go-mssqldb's login asks for: the one tokenFirstConnector took before
-// the dial, or a fresh one from the source should a connection arrive without it.
+// the dial. The source is asked again only when that token has expired by now, and the answer
+// takes its place, so that a later login of the same connection, after a routing redirect or
+// on a failover partner, sends it without asking again. go-mssqldb logs a connection in once
+// at a time, so nothing else touches the token meanwhile. A connection that arrives without a
+// token, which none that database/sql opens does, is given one from the source.
 func (t *datasourceTokens) loginToken(ctx context.Context) (string, error) {
-	if token, ok := tokenTaken(ctx); ok {
-		return token, nil
+	taken, ok := tokenTaken(ctx)
+	if ok && !taken.expired(time.Now()) {
+		return taken.value(), nil
 	}
-	return t.token(ctx)
+	token, err := t.token(ctx)
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		*taken = token
+	}
+	return token.value(), nil
+}
+
+// accessToken is a token a connection signs in with, and when it expires: zero when its source
+// does not say.
+//
+// It holds the token behind a func, which fmt prints as an address whatever the verb, where a
+// string field is printed as it is by every verb that is not a Stringer's. The login's token
+// rides a context, which prints the values it carries, and go-mssqldb hands that context to its
+// logger and its dialer.
+type accessToken struct {
+	token     func() string
+	expiresOn time.Time
+}
+
+func newAccessToken(token string, expiresOn time.Time) accessToken {
+	return accessToken{token: func() string { return token }, expiresOn: expiresOn}
+}
+
+// value is the token itself, empty for the zero accessToken.
+func (a accessToken) value() string {
+	if a.token == nil {
+		return ""
+	}
+	return a.token()
+}
+
+// expired reports whether the token has expired at now. One whose expiry is unknown never has.
+func (a accessToken) expired(now time.Time) bool {
+	return !a.expiresOn.IsZero() && !now.Before(a.expiresOn)
 }
 
 // retryPolicy is how often, and how patiently, pingWithRetry tries.
@@ -261,10 +300,11 @@ type datasourceTokens struct {
 	cancel context.CancelFunc
 }
 
-// token asks the source for a token, under ctx and the datasource's lifetime both: a request
-// is abandoned when the dial that made it gives up, and when the datasource is closed, even
-// by a source that watches only the context it is handed.
-func (t *datasourceTokens) token(ctx context.Context) (string, error) {
+// token asks the source for a token, with its expiry when the source says (see
+// ExpiringTokenSource), under ctx and the datasource's lifetime both: a request is abandoned
+// when the dial that made it gives up, and when the datasource is closed, even by a source
+// that watches only the context it is handed.
+func (t *datasourceTokens) token(ctx context.Context) (accessToken, error) {
 	ctx, cancel := context.WithCancelCause(ctx)
 	stop := context.AfterFunc(t.root, func() { cancel(errClosed) })
 	defer func() {
@@ -272,17 +312,26 @@ func (t *datasourceTokens) token(ctx context.Context) (string, error) {
 		cancel(nil)
 	}()
 
-	token, err := t.source.Token(ctx)
+	var (
+		token     string
+		expiresOn time.Time
+		err       error
+	)
+	if expiring, ok := t.source.(ExpiringTokenSource); ok {
+		token, expiresOn, err = expiring.ExpiringToken(ctx)
+	} else {
+		token, err = t.source.Token(ctx)
+	}
 	if err != nil {
 		if errors.Is(context.Cause(ctx), errClosed) {
-			return "", errClosed
+			return accessToken{}, errClosed
 		}
-		return "", err
+		return accessToken{}, err
 	}
 	if token == "" {
-		return "", errors.New("sqlserver: the token source returned an empty token")
+		return accessToken{}, errors.New("sqlserver: the token source returned an empty token")
 	}
-	return token, nil
+	return newAccessToken(token, expiresOn), nil
 }
 
 // connectError is the error a datasource that cannot connect fails with. It names the server
